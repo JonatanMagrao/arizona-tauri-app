@@ -1,73 +1,145 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { callFunction } from "tauri-plugin-python-api";
+import JobPanel from "./panels/JobPanel";
+import LinksPanel from "./panels/LinksPanel";
 import "./App.css";
+import previewImg from "./assets/hierarquia_pracas.jpg";
+
+// ÍCONES (svg como imagem)
+import pastaIcon from "./assets/icones/project.svg";
+import linkIcon from "./assets/icones/link.svg";
+import imageIcon from "./assets/icones/hierarchy.svg";
+
+const TABS = { JOBS: "jobs", LINKS: "links", IMAGE: "image" };
 
 function App() {
-  const [jobaoCod, setJobaoCod] = useState('');
-  const [jobinhoCod, setJobinhoCod] = useState('');
+  const [activeTab, setActiveTab] = useState(TABS.JOBS);
 
-  const openVisto = async () => await callFunction("openVisto", []);
-  const openPip = async () => await callFunction("openPip", []);
-  const openBitrix = async () => await callFunction("openBitrix", []);
-  const openClaro = async () => await callFunction("openClaro", []);
-  const openLinks = async () => await callFunction("openLinks", []);
-  const openJobao = async () => await callFunction("openJobao", [jobaoCod])
-  const openJobinho = async () => await callFunction("openJobinho", [jobaoCod, jobinhoCod])
-  const abrirAE = async () => await callFunction("abrirAE", [jobaoCod, jobinhoCod])
+  // estados
+  const [jobaoCod, setJobaoCod] = useState("");
+  const [jobinhoCod, setJobinhoCod] = useState("");
+  const [videoFormat, setVideoFormat] = useState(".mp4");
 
+  // ==== Toast (erro no rodapé) ====
+  const [toast, setToast] = useState({ open: false, message: "", variant: "error" });
+  const hideTimerRef = useRef(null);
+
+  const hideToast = () => {
+    setToast(t => ({ ...t, open: false }));
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+  };
+  const showError = (msg) => {
+    setToast({ open: true, message: msg, variant: "error" });
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = setTimeout(hideToast, 5000); // 5s
+  };
+  useEffect(() => () => hideToast(), []); // limpa timer ao desmontar
+
+  // Helper: chama Python e mostra toast se vier erro ou exception
+  const run = async (fnName, args, fallbackMsg) => {
+    try {
+      const res = await callFunction(fnName, args);
+      if (res && res.ok === false) showError(res.message || fallbackMsg);
+      // quando ok==true, não faz nada
+    } catch (e) {
+      showError(fallbackMsg || "Falha ao executar ação.");
+    }
+  };
+
+  // ações
+  const openJobao   = async () => run("openJobao",   [jobaoCod],                 "Não foi possível abrir o Jobão.");
+  const openJobinho = async () => run("openJobinho", [jobaoCod, jobinhoCod],     "Não foi possível abrir o Jobinho.");
+  const abrirAE     = async () => run("abrirAE",     [jobaoCod, jobinhoCod],     "Não foi possível abrir o projeto no After Effects.");
+  const openRender  = async () => run("openRender",  [jobaoCod, videoFormat],    "Não foi possível abrir a pasta OUT/RENDER.");
+
+  const openVisto   = async () => run("openVisto",   [], "Falha ao abrir o Visto.");
+  const openPip     = async () => run("openPip",     [], "Falha ao abrir o Pip.");
+  const openBitrix  = async () => run("openBitrix",  [], "Falha ao abrir o Bitrix.");
+  const openClaro   = async () => run("openClaro",   [], "Falha ao abrir o Claro.");
+  const openLinks   = async () => run("openLinks",   [], "Falha ao abrir os links.");
 
   return (
-    <div className="container">
-      <h1 className="title">Atalhos de Job</h1>
+    <div className="layout layout--with-leftbar">
+      <aside className="iconbar" aria-label="Painéis">
+        {/* JOBÃO & JOBINHO */}
+        <button
+          className={`icon-tab ${activeTab === TABS.JOBS ? "icon-tab--active" : ""}`}
+          onClick={() => setActiveTab(TABS.JOBS)}
+          title="Jobão & Jobinho"
+          aria-label="Jobão & Jobinho"
+        >
+          <img src={pastaIcon} alt="Jobão & Jobinho" />
+        </button>
 
-      <div className="card">
-        <div className="form-row">
-          <label className="label" htmlFor="jobao">Cod Jobão</label>
-          <input
-            id="jobao"
-            className="input"
-            type="text"
-            name="jobao"
-            value={jobaoCod}
-            onChange={(e) => setJobaoCod(e.target.value)}
-            placeholder="Ex: 12345"
-          />
-          <button className="btn" onClick={openJobao} disabled={!jobaoCod.trim()}>
-            Buscar
-          </button>
-        </div>
+        {/* LINKS */}
+        <button
+          className={`icon-tab ${activeTab === TABS.LINKS ? "icon-tab--active" : ""}`}
+          onClick={() => setActiveTab(TABS.LINKS)}
+          title="Abrir Links"
+          aria-label="Abrir Links"
+        >
+          <img src={linkIcon} alt="Abrir Links" />
+        </button>
 
-        <div className="form-row">
-          <label className="label" htmlFor="jobinho">Cod Jobinho</label>
-          <input
-            id="jobinho"
-            className="input"
-            type="text"
-            name="jobinho"
-            value={jobinhoCod}
-            onChange={(e) => setJobinhoCod(e.target.value)}
-            placeholder="Ex: A-001"
+        {/* IMAGEM */}
+        <button
+          className={`icon-tab ${activeTab === TABS.IMAGE ? "icon-tab--active" : ""}`}
+          onClick={() => setActiveTab(TABS.IMAGE)}
+          title="Mostrar Imagem"
+          aria-label="Mostrar Imagem"
+        >
+          <img src={imageIcon} alt="Mostrar Imagem" />
+        </button>
+      </aside>
+
+      <main className="content">
+        {activeTab === TABS.JOBS && (
+          <JobPanel
+            jobaoCod={jobaoCod}
+            setJobaoCod={setJobaoCod}
+            jobinhoCod={jobinhoCod}
+            setJobinhoCod={setJobinhoCod}
+            openJobao={openJobao}
+            openJobinho={openJobinho}
+            abrirAE={abrirAE}
+            openRender={openRender}
+            videoFormat={videoFormat}
+            setVideoFormat={setVideoFormat}
           />
-          <div className="btn-group">
-            <button className="btn" onClick={openJobinho} disabled={!jobaoCod.trim() || !jobinhoCod.trim()}>
-              Buscar
-            </button>
-            <button className="btn btn-secondary" onClick={abrirAE} disabled={!jobaoCod.trim() || !jobinhoCod.trim()}>
-              Abrir AE
-            </button>
+        )}
+
+        {activeTab === TABS.LINKS && (
+          <LinksPanel
+            openVisto={openVisto}
+            openPip={openPip}
+            openBitrix={openBitrix}
+            openClaro={openClaro}
+            openLinks={openLinks}
+          />
+        )}
+
+        {activeTab === TABS.IMAGE && (
+          <div className="card">
+            <img
+              src={previewImg}
+              alt="Preview"
+              style={{ maxWidth: "100%", height: "auto", display: "block", borderRadius: "10px" }}
+            />
           </div>
-        </div>
-      </div>
+        )}
+      </main>
 
-      <div className="card">
-        <div className="actions-grid">
-          <button className="btn btn-outline" onClick={openVisto}>Abrir Visto</button>
-          <button className="btn btn-outline" onClick={openPip}>Abrir Pip</button>
-          <button className="btn btn-outline" onClick={openBitrix}>Abrir Bitrix</button>
-          <button className="btn btn-outline" onClick={openClaro}>Abrir Claro</button>
-          <button className="btn btn-primary" onClick={openLinks}>Abrir Todos</button>
+      {/* ===== Toast no rodapé ===== */}
+      {toast.open && (
+        <div
+          className={`toast ${toast.variant === "error" ? "toast--error" : ""}`}
+          role="alert"
+          aria-live="polite"
+        >
+          <span className="toast__text">{toast.message}</span>
+          <button className="toast__close" onClick={hideToast} aria-label="Fechar">×</button>
         </div>
-      </div>
+      )}
     </div>
   );
 }

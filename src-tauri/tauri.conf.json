@@ -12,9 +12,11 @@
   "app": {
     "windows": [
       {
-        "title": "arizona-app",
-        "width": 800,
-        "height": 600
+        "title": "Arizona App",
+        "width": 570,
+        "height": 270,
+        "center": true,
+        "resizable": false
       }
     ],
     "security": {
@@ -23,18 +25,16 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
     "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
+      "icons/arizona_icon.ico"
     ],
     "resources": {
       "src-python/": "src-python/",
-      "../.venv/Include/": "src-python/.venv/Include/",
-      "../.venv/Lib/": "src-python/.venv/Lib/"
+      "target/pyembed/python3.dll": "python3.dll",
+      "target/pyembed/python310.dll": "python310.dll",
+      "target/pyembed/stdlib/": "lib/",
+      "target/pyembed/lib": "lib/"
     }
   }
 }

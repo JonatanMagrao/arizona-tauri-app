@@ -2,14 +2,40 @@ import os
 import re
 import subprocess
 from time import sleep
+from datetime import datetime
 
 class Arizona:
-    def __init__(self, ae_version):
+    MONTH_NAMES_PT = {
+        1: "JANEIRO", 2: "FEVEREIRO", 3: "MARCO", 4: "ABRIL",
+        5: "MAIO", 6: "JUNHO", 7: "JULHO", 8: "AGOSTO",
+        9: "SETEMBRO", 10: "OUTUBRO", 11: "NOVEMBRO", 12: "DEZEMBRO"
+    }
+
+    def __init__(self, ae_version, months_back=2):
         self.carrefour_path = os.path.normpath("J:/Drives compartilhados/Phx CRF")
         self.claro_path = os.path.normpath("J:/Drives compartilhados/Phx Talent/CLARO/2025")
         self.after_fx = os.path.normpath(f"C:/Program Files/Adobe/Adobe After Effects {ae_version}/Support Files/AfterFX.exe")
         self.photoshop = os.path.normpath(f"C:/Program Files/Adobe/Adobe Photoshop 2024/Photoshop.exe")
-        self.meses = ["09_SETEMBRO","08_AGOSTO"]
+        # meses dinâmicos: mês atual + N anteriores
+        self.meses = self._build_month_labels(months_back)
+
+    def _build_month_labels(self, months_back: int):
+        """
+        Retorna lista como ['08_AGOSTO', '07_JULHO', ...] começando do mês atual
+        e voltando 'months_back' meses. Ex.: months_back=2 => [atual, -1, -2]
+        """
+        today = datetime.today()
+        cur_m = today.month
+        labels = []
+        for i in range(months_back + 1):  # inclui o mês atual
+            # volta i meses
+            m = ((cur_m - i - 1) % 12) + 1
+            labels.append(f"{m:02d}_{self.MONTH_NAMES_PT[m]}")
+        return labels
+
+    def set_month_range(self, months_back: int):
+        """Permite ajustar o range em runtime."""
+        self.meses = self._build_month_labels(months_back)
 
     def open_visto(self):
         subprocess.run(["start", "https://carrefour.visto.global/app/workspace/tasks"], shell=True)
@@ -27,142 +53,99 @@ class Arizona:
     def open_produtos(self):
         subprocess.run(["explorer", os.path.join(self.carrefour_path, "CARREFOUR", "ASSETS", "_PRODUTOS")], shell=True)
 
-    def open_render(self,jobao_cod,format):
-        jobao_path = self.get_jobao_path(jobao_cod)        
-
-        if(format.lower() == ".mp4" or format.lower() == ".mov"):   
-            set_format = "MP4" if format.lower() == ".mp4" else "MOV"
-            subprocess.run(["explorer", os.path.join(jobao_path, "OUT", "RENDER",set_format)], shell=True)
-        elif(format.lower() == "raiz"):
+    def open_render(self, jobao_cod, format):
+        jobao_path = self.get_jobao_path(jobao_cod)
+        if not jobao_path:
+            return
+        fmt = format.lower()
+        if fmt in (".mp4", ".mov"):
+            set_format = "MP4" if fmt == ".mp4" else "MOV"
+            subprocess.run(["explorer", os.path.join(jobao_path, "OUT", "RENDER", set_format)], shell=True)
+        elif fmt == "raiz":
             subprocess.run(["explorer", os.path.join(jobao_path, "OUT", "RENDER")], shell=True)
 
     def open_claro_folder(self):
         subprocess.run(["explorer", "I:\\Drives compartilhados\\Phx Talent\\CLARO\\2025\\02_FEVEREIRO"], shell=True)
 
     def criar_novo_projeto_claro(self, claro_cod):
-
         MESES = self.meses
-
         for mes in MESES:
             projeto_path = os.path.join(self.claro_path, mes)
-            
             if os.path.exists(projeto_path):
                 novo_projeto_path = os.path.join(projeto_path, f"CLARO - {claro_cod}")
                 os.mkdir(novo_projeto_path)
-                sleep(1)
-                os.mkdir(os.path.join(novo_projeto_path, "OUT"))
-                sleep(1)
-                os.mkdir(os.path.join(novo_projeto_path, "PROJETO"))
-                sleep(1)
-                subprocess.run(["explorer", novo_projeto_path])
+                sleep(1); os.mkdir(os.path.join(novo_projeto_path, "OUT"))
+                sleep(1); os.mkdir(os.path.join(novo_projeto_path, "PROJETO"))
+                sleep(1); subprocess.run(["explorer", novo_projeto_path])
                 return
-            
-        print(f"Não foi possível criar o projeto CLARO - {claro_cod} em {MESES[0]} nem em {MESES[1]}.")
-
-            
+        raise Exception(f"Não foi possível criar o projeto CLARO - {claro_cod} em {MESES[0]} nem em {MESES[1]}.")
 
     def open_tiago_folder(self):
-        tiago_path = os.path.join(self.claro_path,"Tiago Leifert")
-        subprocess.run(["explorer",tiago_path])        
+        tiago_path = os.path.join(self.claro_path, "Tiago Leifert")
+        subprocess.run(["explorer", tiago_path])
 
     def open_claro_projeto(self, claro_cod):
-
         MESES = self.meses
         for mes in MESES:
             projeto_path = os.path.join(self.claro_path, mes, f"CLARO - {claro_cod}", "PROJETO")
-            
             if os.path.exists(projeto_path):
-                subprocess.run(["explorer", projeto_path])
-                return
-            
-        print(f'O projeto "{claro_cod}" não foi encontrado em {MESES[0]} nem em {MESES[1]}!')
-        return None
-
+                subprocess.run(["explorer", projeto_path]); return
+        raise Exception(f'O projeto "{claro_cod}" não foi encontrado em {MESES[0]} nem em {MESES[1]}!')
 
     def open_claro_out(self, claro_cod):
-
         MESES = self.meses
         for mes in MESES:
             projeto_path = os.path.join(self.claro_path, mes, f"CLARO - {claro_cod}", "OUT")
-            
             if os.path.exists(projeto_path):
-                subprocess.run(["explorer", projeto_path])
-                return
-            
-        print(f'O projeto "{claro_cod}" não foi encontrado em {MESES[0]} nem em {MESES[1]}!')
-        return None
-
+                subprocess.run(["explorer", projeto_path]); return
+        raise Exception(f'O projeto "{claro_cod}" não foi encontrado em {MESES[0]} nem em {MESES[1]}!')
 
     def open_claro_aep(self, claro_cod):
-
         MESES = self.meses
         for mes in MESES:
             projeto_path = os.path.join(self.claro_path, mes, f"CLARO - {claro_cod}", "PROJETO")
-            
             if os.path.exists(projeto_path):
-                after_proj = [arquivo for arquivo in os.listdir(projeto_path) if arquivo.endswith(".aep")]
-                
+                after_proj = [a for a in os.listdir(projeto_path) if a.endswith(".aep")]
                 if after_proj:
                     after_proj_path = os.path.join(projeto_path, after_proj[0])
-                    subprocess.Popen([self.after_fx, "-project", after_proj_path])
-                    return None
+                    subprocess.Popen([self.after_fx, "-project", after_proj_path]); return None
                 else:
-                    print(f'Nenhum arquivo .aep foi encontrado no projeto "{claro_cod}".')
-                    return None
-
-        print(f'O projeto "{claro_cod}" não foi encontrado em {MESES[0]} nem em {MESES[1]}!')
-        return None
-    
+                    raise Exception(f'Nenhum arquivo .aep foi encontrado no projeto "{claro_cod}".'); return None
+        raise Exception(f'O projeto "{claro_cod}" não foi encontrado em {MESES[0]} nem em {MESES[1]}!'); return None
 
     def open_claro_psd(self, claro_cod):
-
         MESES = self.meses
-
         for mes in MESES:
             projeto_path = os.path.join(self.claro_path, mes, f"CLARO - {claro_cod}")
-            
             if os.path.exists(projeto_path):
-                photoshop_proj = [arquivo for arquivo in os.listdir(projeto_path) if arquivo.endswith(".psd")]
-                
+                photoshop_proj = [a for a in os.listdir(projeto_path) if a.endswith(".psd")]
                 if photoshop_proj:
                     photoshop_path = os.path.join(projeto_path, photoshop_proj[0])
-                    subprocess.Popen([self.photoshop, photoshop_path])
-                    return None
+                    subprocess.Popen([self.photoshop, photoshop_path]); return None
                 else:
-                    print(f'Nenhum arquivo .psd foi encontrado no projeto "{claro_cod}".')
-                    return None
-
-        print(f'O projeto "{claro_cod}" não foi encontrado em {MESES[0]} nem em {MESES[1]}!')
-        return None
-   
+                    raise Exception(f'Nenhum arquivo .psd foi encontrado no projeto "{claro_cod}".'); return None
+        raise Exception(f'O projeto "{claro_cod}" não foi encontrado em {MESES[0]} nem em {MESES[1]}!'); return None
 
     def get_jobao_path(self, jobao_cod):
         reg_exp = re.compile(rf'\d{{2}}_{jobao_cod}_\d{{5,6}}_w*')
 
         def get_directories(source):
             return [
-                dirent for dirent in os.listdir(source)
-                if os.path.isdir(os.path.join(source, dirent)) and re.match(r'\d{2}', dirent)
+                d for d in os.listdir(source)
+                if os.path.isdir(os.path.join(source, d)) and re.match(r'\d{2}', d)
             ]
 
         MESES = self.meses
-
         for mes in MESES:
             projeto_path = os.path.join(self.carrefour_path, "CARREFOUR", "FILMES", "2025", mes)
+            if not os.path.exists(projeto_path):
+                continue
             pastas = get_directories(projeto_path)
-
             for pasta in pastas:
                 if reg_exp.search(pasta):
-                    pasta_jobao = os.path.join(projeto_path, pasta)
-                    return pasta_jobao
+                    return os.path.join(projeto_path, pasta)
 
-        if jobao_cod == "":
-            print("Campo Jobão vazio!")
-        else:
-            print(f'Jobão "{jobao_cod}" não encontrado em {MESES[0]} nem em {MESES[1]}!')
-        
-        return None
-
+        raise Exception(f'Jobão "{jobao_cod}" não encontrado em {MESES[0]} nem em {MESES[1]}!')
 
     def open_jobao(self, jobao_cod):
         jobao_path = self.get_jobao_path(jobao_cod)
@@ -177,9 +160,7 @@ class Arizona:
     def open_jobinhos_folder(self, jobao_cod, jobinho_cod):
         jobao_path = os.path.join(self.get_jobao_path(jobao_cod), "PROJETOS", "AE")
         reg_exp = re.compile(rf'{jobinho_cod}_')
-
-        arquivos = [arquivo for arquivo in os.listdir(jobao_path) if arquivo.endswith(".aep")]
-
+        arquivos = [a for a in os.listdir(jobao_path) if a.endswith(".aep")]
         for arquivo in arquivos:
             if reg_exp.search(arquivo):
                 subprocess.run(["explorer", jobao_path], shell=True)
@@ -188,41 +169,20 @@ class Arizona:
     def abrir_jobinho(self, jobao_cod, jobinho_cod):
         jobao_path = os.path.join(self.get_jobao_path(jobao_cod), "PROJETOS", "AE")
         reg_exp = re.compile(rf'{jobinho_cod}_')
-
-        arquivos = [arquivo for arquivo in os.listdir(jobao_path) if arquivo.endswith(".aep")]
-
+        arquivos = [a for a in os.listdir(jobao_path) if a.endswith(".aep")]
         for arquivo in arquivos:
             if reg_exp.search(arquivo):
                 subprocess.Popen([self.after_fx, "-project", os.path.join(jobao_path, arquivo)])
                 return
-        
-        print(f'Código Jobinho "{jobinho_cod}" inválido!')
-        return False
-            
+        raise Exception(f'Código Jobinho "{jobinho_cod}" inválido!')
+
     def find_prod(self, pesquisa):
-        # Percorre todos os diretórios e subdiretórios
         found_files = []
-        for root, dirs, files in os.walk(os.path.join(self.carrefour_path,"CARREFOUR","ASSETS","_PRODUTOS")):
-            # Verifica se algum arquivo contém a palavra de pesquisa
+        for root, dirs, files in os.walk(os.path.join(self.carrefour_path, "CARREFOUR", "ASSETS", "_PRODUTOS")):
             for file in files:
                 if ".psd" in file.lower() and pesquisa.lower() in file:
-                    found_files.append({
-                        "nome":file,
-                        "path":"./icons/img.png"
-                    })
+                    found_files.append({"nome": file, "path": "./icons/img.png"})
                     continue
-
                 if pesquisa.lower() in file.lower():
-                    # Retorna o caminho completo do arquivo encontrado
-                    # return os.path.join(root, file)
-                    found_files.append({
-                        "nome":file,
-                        "path":os.path.join(root,file)
-                    })
-        
-        # Retorna False se o arquivo não for encontrado
-        return found_files if found_files else [{"nome":"Não existe no Banco de Dados","path":"./icons/sad.png"}]
-
-# Para usar o módulo:
-# from arizona import Arizona
-# instance = Arizona("2023")
+                    found_files.append({"nome": file, "path": os.path.join(root, file)})
+        return found_files if found_files else [{"nome": "Não existe no Banco de Dados", "path": "./icons/sad.png"}]
