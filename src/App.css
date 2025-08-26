@@ -1,0 +1,173 @@
+:root{
+  --bg: #0f1115;
+  --panel: #151923;
+  --border: #242a38;
+  --text: #eaeef6;
+  --muted: #9aa3b2;
+  --primary: #4f8cff;
+  --primary-600: #3d76e6;
+  --secondary: #7c4dff;
+  --secondary-600: #6a3ee6;
+  --outline: #2c3445;
+  --success: #22c55e;
+  --radius: 14px;
+  --space: 12px;
+  --space-lg: 18px;
+  --shadow: 0 6px 24px rgba(0,0,0,.25);
+  --shadow-inset: inset 0 0 0 1px var(--border);
+  font-synthesis-weight: none;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  background: radial-gradient(1200px 800px at 80% -10%, #1a2030 0%, #0f1115 60%);
+  color: var(--text);
+}
+
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
+}
+
+/* Layout principal */
+.container{
+  max-width: 880px;
+  margin: 36px auto;
+  padding: 0 16px;
+  display: grid;
+  gap: 16px;
+}
+
+.title{
+  margin: 0 0 6px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: .2px;
+  color: var(--text);
+}
+
+/* Cartões */
+.card{
+  background: linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,0)) , var(--panel);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow), var(--shadow-inset);
+  padding: 16px;
+  border: 1px solid var(--border);
+}
+
+/* Linhas de formulário */
+.form-row{
+  display: grid;
+  grid-template-columns: 130px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.label{
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.input{
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #0f1420;
+  border: 1px solid var(--outline);
+  color: var(--text);
+  outline: none;
+  transition: border .15s ease, box-shadow .15s ease;
+}
+
+.input:focus{
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(79,140,255,.15);
+}
+
+.input::placeholder{
+  color: #6f7a8b;
+}
+
+/* Grupo de botões ao lado do input */
+.btn-group{
+  display: flex;
+  gap: 8px;
+}
+
+/* Grid de ações (botões grandes) */
+.actions-grid{
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+}
+
+@media (max-width: 720px){
+  .form-row{
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+  .actions-grid{
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* Botões */
+.btn{
+  appearance: none;
+  border: 1px solid var(--outline);
+  background: #141a27;
+  color: var(--text);
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-weight: 600;
+  letter-spacing: .2px;
+  cursor: pointer;
+  transition: transform .04s ease, filter .15s ease, border-color .15s ease, background .15s ease;
+  user-select: none;
+}
+
+.btn:hover{
+  border-color: var(--primary);
+  filter: brightness(1.05);
+}
+
+.btn:active{
+  transform: translateY(1px);
+}
+
+.btn:disabled{
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+/* Variações */
+.btn-primary{
+  background: linear-gradient(180deg, rgba(79,140,255,.2), transparent) , var(--primary);
+  border-color: transparent;
+}
+
+.btn-primary:hover{
+  background: var(--primary-600);
+}
+
+.btn-secondary{
+  background: linear-gradient(180deg, rgba(124,77,255,.2), transparent) , var(--secondary);
+  border-color: transparent;
+}
+.btn-secondary:hover{
+  background: var(--secondary-600);
+}
+
+.btn-outline{
+  background: #101625;
+  border-color: var(--outline);
+}
+
+/* Pequenos toques */
+button + button{
+  /* leve separação quando há botões consecutivos fora de grids */
+  margin-left: 6px;
+}
