@@ -18,7 +18,7 @@ function App() {
   // estados
   const [jobaoCod, setJobaoCod] = useState("");
   const [jobinhoCod, setJobinhoCod] = useState("");
-  const [videoFormat, setVideoFormat] = useState(".mp4");
+  const [outOption, setOutOption] = useState("mp4");
 
   // ==== Toast (erro no rodapé) ====
   const [toast, setToast] = useState({ open: false, message: "", variant: "error" });
@@ -50,7 +50,7 @@ function App() {
   const openJobao   = async () => run("openJobao",   [jobaoCod],                 "Não foi possível abrir o Jobão.");
   const openJobinho = async () => run("openJobinho", [jobaoCod, jobinhoCod],     "Não foi possível abrir o Jobinho.");
   const abrirAE     = async () => run("abrirAE",     [jobaoCod, jobinhoCod],     "Não foi possível abrir o projeto no After Effects.");
-  const openRender  = async () => run("openRender",  [jobaoCod, videoFormat],    "Não foi possível abrir a pasta OUT/RENDER.");
+  const openOut     = async () => run("openOut",     [jobaoCod, outOption],    "Não foi possível abrir a pasta OUT/RENDER.");
 
   const openVisto   = async () => run("openVisto",   [], "Falha ao abrir o Visto.");
   const openPip     = async () => run("openPip",     [], "Falha ao abrir o Pip.");
@@ -65,10 +65,10 @@ function App() {
         <button
           className={`icon-tab ${activeTab === TABS.JOBS ? "icon-tab--active" : ""}`}
           onClick={() => setActiveTab(TABS.JOBS)}
-          title="Jobão & Jobinho"
-          aria-label="Jobão & Jobinho"
+          title="Projetos"
+          aria-label="Projetos"
         >
-          <img src={pastaIcon} alt="Jobão & Jobinho" />
+          <img src={pastaIcon} alt="Projetos" />
         </button>
 
         {/* LINKS */}
@@ -85,10 +85,10 @@ function App() {
         <button
           className={`icon-tab ${activeTab === TABS.IMAGE ? "icon-tab--active" : ""}`}
           onClick={() => setActiveTab(TABS.IMAGE)}
-          title="Mostrar Imagem"
-          aria-label="Mostrar Imagem"
+          title="Praças CRF"
+          aria-label="Praças CRF"
         >
-          <img src={imageIcon} alt="Mostrar Imagem" />
+          <img src={imageIcon} alt="Praças CRF" />
         </button>
       </aside>
 
@@ -102,9 +102,9 @@ function App() {
             openJobao={openJobao}
             openJobinho={openJobinho}
             abrirAE={abrirAE}
-            openRender={openRender}
-            videoFormat={videoFormat}
-            setVideoFormat={setVideoFormat}
+            openOut={openOut}
+            outOption={outOption}
+            setOutOption={setOutOption}
           />
         )}
 

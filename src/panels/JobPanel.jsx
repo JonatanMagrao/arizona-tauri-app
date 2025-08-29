@@ -12,9 +12,9 @@ function JobPanel({
   openJobao,
   openJobinho,
   abrirAE,
-  openRender,
-  videoFormat,
-  setVideoFormat,
+  openOut,
+  outOption,
+  setOutOption,
 }) {
   return (
     // sobrescreve a CSS variable --icon-size só dentro deste card
@@ -85,21 +85,23 @@ function JobPanel({
 
       {/* Linha Render */}
       <div className="form-row">
-        <label className="label" htmlFor="render">Pasta OUT</label>
+        <label className="label" htmlFor="render">Pastas utilitárias</label>
         <select
           id="render"
           name="render"
           className="input input-code"
-          value={videoFormat}
-          onChange={(e) => setVideoFormat(e.target.value)}
+          value={outOption}
+          onChange={(e) => setOutOption(e.target.value)}
         >
-          <option value=".mp4">MP4</option>
-          <option value=".mov">MOV</option>
-          <option value="raiz">Raiz</option>
+          <option value="mp4">MP4</option>
+          <option value="mov">MOV</option>
+          <option value="roteiro">Roteiro</option>
+          <option value="print">Print</option>
+          <option value="copia">Cópia</option>
         </select>
         <button
           className="btn"
-          onClick={openRender}
+          onClick={openOut}
           disabled={!jobaoCod.trim()}
           aria-label="Buscar Pasta OUT"
           title="Buscar"

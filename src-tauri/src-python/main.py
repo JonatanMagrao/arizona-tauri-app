@@ -26,7 +26,7 @@ _tauri_plugin_functions = [
     "openJobao",
     "openJobinho",
     "abrirAE",
-    "openRender"
+    "openOut"
 ]
 
 ARIZONA = Arizona(CONFIG)
@@ -115,16 +115,16 @@ def abrirAE(jobao_cod, jobinho_cod):
         return _err(str(e))
 
 
-def openRender(jobao_cod, formato):
+def openOut(jobao_cod, option):
     path = ARIZONA.get_jobao_path(jobao_cod)
     if not path:
         return _err(f'Jobão "{jobao_cod or "(vazio)"}" não encontrado.')
     try:
-        ARIZONA.open_render(jobao_cod, formato)
+        ARIZONA.open_out(jobao_cod, option)
         return _ok()
     except Exception as e:
         return _err(str(e))
 
 
 if __name__ == "__main__":
-    ARIZONA.open_jobao("895")
+    ARIZONA.open_out("895","roteiro")
