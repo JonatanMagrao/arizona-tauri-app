@@ -1,8 +1,7 @@
-import os
-import re
-import subprocess
+import os, re, json, subprocess
 from time import sleep
 from datetime import datetime
+from pathlib import Path
 
 class Arizona:
     MONTH_NAMES_PT = {
@@ -11,12 +10,23 @@ class Arizona:
         9: "SETEMBRO", 10: "OUTUBRO", 11: "NOVEMBRO", 12: "DEZEMBRO"
     }
 
-    def __init__(self, ae_version, months_back=2):
-        self.carrefour_path = os.path.normpath(r"J:/Drives compartilhados/Phx CRF")
-        self.claro_path = os.path.normpath(r"J:/Drives compartilhados/Phx Talent/CLARO/2025")
-        self.after_fx = os.path.normpath(rf"C:/Program Files/Adobe/Adobe After Effects {ae_version}/Support Files/AfterFX.exe")
-        self.photoshop = os.path.normpath(rf"C:/Program Files/Adobe/Adobe Photoshop 2024/Photoshop.exe")
-        # meses dinâmicos: mês atual + N anteriores
+    def __init__(self, config: dict, months_back=2):
+        ae_version = config.get("ae_version")
+        drive_root = os.path.normpath(config.get("drive"))
+
+        if not ae_version or not drive_root:
+            raise ValueError("Configuração inválida! É necessário ter 'ae_version' e 'drive'.")
+
+        self.carrefour_path = os.path.join(drive_root, "Phx CRF")
+        self.claro_path = os.path.join(drive_root, "Phx Talent", "CLARO", "2025")
+
+        self.after_fx = os.path.normpath(
+            rf"C:/Program Files/Adobe/Adobe After Effects {ae_version}/Support Files/AfterFX.exe"
+        )
+        self.photoshop = os.path.normpath(
+            r"C:/Program Files/Adobe/Adobe Photoshop 2024/Photoshop.exe"
+        )
+
         self.meses = self._build_month_labels(months_back)
 
     def _build_month_labels(self, months_back: int):
