@@ -1,3 +1,17 @@
+# ================================================================
+#  Criado por: Jonatan Magrão
+#  Email:      magrao@jonatanmagrao.com.br
+#  LinkedIn:   https://www.linkedin.com/in/jonatanmagrao/
+#  Instagram:  @nerd_do_after
+#
+#  Direitos Autorais © 2025 - Todos os direitos reservados
+#
+#  ⚠️ Este código é fornecido exclusivamente para uso interno
+#  da versão enviada por Jonatan Magrão. É proibida a alteração,
+#  modificação, redistribuição ou utilização parcial/total sem
+#  autorização prévia por escrito do autor.
+# ================================================================
+
 import os, re, json, subprocess
 from time import sleep
 from datetime import datetime

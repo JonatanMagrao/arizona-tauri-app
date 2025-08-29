@@ -1,11 +1,19 @@
+# ================================================================
+#  Criado por: Jonatan Magrão
+#  Email:      magrao@jonatanmagrao.com.br
+#  LinkedIn:   https://www.linkedin.com/in/jonatanmagrao/
+#  Instagram:  @nerd_do_after
+#
+#  Direitos Autorais © 2025 - Todos os direitos reservados
+#
+#  ⚠️ Este código é fornecido exclusivamente para uso interno
+#  da versão enviada por Jonatan Magrão. É proibida a alteração,
+#  modificação, redistribuição ou utilização parcial/total sem
+#  autorização prévia por escrito do autor.
+# ================================================================
+
 from pathlib import Path
 import sys
-
-# https://github.com/PyO3/pyo3/discussions/3726
-# sys.path.append(r"E:\local_code_folders\tauri_app_test\thumbnail\.venv\Lib\site-packages")
-
-# code below provided with chatgpt
-
 
 def load_site_packages_from_venv(base_path: Path) -> None:
     site_pkgs = base_path.parent / ".venv" / "Lib" / "site-packages"
