@@ -12,25 +12,44 @@ class Arizona:
     }
 
     def __init__(self, ae_version, months_back=2):
-        self.carrefour_path = os.path.normpath("J:/Drives compartilhados/Phx CRF")
-        self.claro_path = os.path.normpath("J:/Drives compartilhados/Phx Talent/CLARO/2025")
-        self.after_fx = os.path.normpath(f"C:/Program Files/Adobe/Adobe After Effects {ae_version}/Support Files/AfterFX.exe")
-        self.photoshop = os.path.normpath(f"C:/Program Files/Adobe/Adobe Photoshop 2024/Photoshop.exe")
+        self.carrefour_path = os.path.normpath(r"J:/Drives compartilhados/Phx CRF")
+        self.claro_path = os.path.normpath(r"J:/Drives compartilhados/Phx Talent/CLARO/2025")
+        self.after_fx = os.path.normpath(rf"C:/Program Files/Adobe/Adobe After Effects {ae_version}/Support Files/AfterFX.exe")
+        self.photoshop = os.path.normpath(rf"C:/Program Files/Adobe/Adobe Photoshop 2024/Photoshop.exe")
         # meses dinâmicos: mês atual + N anteriores
         self.meses = self._build_month_labels(months_back)
 
     def _build_month_labels(self, months_back: int):
         """
-        Retorna lista como ['08_AGOSTO', '07_JULHO', ...] começando do mês atual
-        e voltando 'months_back' meses. Ex.: months_back=2 => [atual, -1, -2]
+        Retorna lista como ['09_SETEMBRO', '08_AGOSTO', ...]
+        começando do mês seguinte ao atual (se existir),
+        caso contrário, começa no mês atual, e depois vai voltando.
         """
         today = datetime.today()
         cur_m = today.month
         labels = []
-        for i in range(months_back + 1):  # inclui o mês atual
-            # volta i meses
+
+        # paths base para validar existência
+        base_carrefour = os.path.join(self.carrefour_path, "CARREFOUR", "FILMES", "2025")
+
+        # mês seguinte
+        next_month = (cur_m % 12) + 1
+        next_month_label = f"{next_month:02d}_{self.MONTH_NAMES_PT[next_month]}"
+        next_month_path = os.path.join(base_carrefour, next_month_label)
+
+        # verifica se existe pasta do mês seguinte
+        if os.path.exists(next_month_path):
+            labels.append(next_month_label)
+        else:
+            # fallback para mês atual
+            cur_label = f"{cur_m:02d}_{self.MONTH_NAMES_PT[cur_m]}"
+            labels.append(cur_label)
+
+        # meses anteriores
+        for i in range(months_back):
             m = ((cur_m - i - 1) % 12) + 1
             labels.append(f"{m:02d}_{self.MONTH_NAMES_PT[m]}")
+
         return labels
 
     def set_month_range(self, months_back: int):
@@ -65,7 +84,7 @@ class Arizona:
             subprocess.run(["explorer", os.path.join(jobao_path, "OUT", "RENDER")], shell=True)
 
     def open_claro_folder(self):
-        subprocess.run(["explorer", "I:\\Drives compartilhados\\Phx Talent\\CLARO\\2025\\02_FEVEREIRO"], shell=True)
+        subprocess.run(["explorer", "J:\\Drives compartilhados\\Phx Talent\\CLARO\\2025\\02_FEVEREIRO"], shell=True)
 
     def criar_novo_projeto_claro(self, claro_cod):
         MESES = self.meses

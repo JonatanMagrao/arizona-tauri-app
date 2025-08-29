@@ -62,6 +62,7 @@ def openJobao(jobao_cod):
     ARIZONA.open_jobao(jobao_cod)
     return _ok()
   except Exception as e:
+    print(e)
     return _err(str(e))
 
 def openJobinho(jobao_cod, jobinho_cod):
@@ -72,6 +73,7 @@ def openJobinho(jobao_cod, jobinho_cod):
     ARIZONA.open_jobinhos_folder(jobao_cod, jobinho_cod)
     return _ok()
   except Exception as e:
+    print(e)
     return _err(str(e))
 
 def abrirAE(jobao_cod, jobinho_cod):
@@ -84,6 +86,7 @@ def abrirAE(jobao_cod, jobinho_cod):
       return _err(f'Código Jobinho "{jobinho_cod}" inválido.')
     return _ok()
   except Exception as e:
+    print(e)
     return _err(str(e))
 
 def openRender(jobao_cod, formato):
@@ -95,3 +98,4 @@ def openRender(jobao_cod, formato):
     return _ok()
   except Exception as e:
     return _err(str(e))
+
