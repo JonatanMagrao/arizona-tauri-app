@@ -8,6 +8,7 @@
   "permissions": [
     "core:default",
     "opener:default",
-    "python:default"
+    "python:default",
+    "core:webview:allow-create-webview-window"
   ]
 }

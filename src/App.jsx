@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { callFunction } from "tauri-plugin-python-api";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import JobPanel from "./panels/JobPanel";
 import LinksPanel from "./panels/LinksPanel";
 import CopyPanel from "./panels/CopyPanel";
@@ -15,6 +16,16 @@ import copyIcon from "./assets/icones/folder.svg"; // você pode trocar por outr
 const TABS = { JOBS: "jobs", LINKS: "links", IMAGE: "image", COPY: "copy" };
 
 function App() {
+
+  const openProductLog = () => {
+    new WebviewWindow("product-log", {
+      url: "product-log.html", // vai carregar o HTML que criamos no public/
+      title: "Product Log",
+      width: 800,
+      height: 400,
+      center: true,
+    });
+  };
   const [activeTab, setActiveTab] = useState(TABS.JOBS);
 
   // estados
@@ -50,16 +61,16 @@ function App() {
   };
 
   // ações
-  const openJobao   = async () => run("openJobao",   [jobaoCod],                 "Não foi possível abrir o Jobão.");
-  const openJobinho = async () => run("openJobinho", [jobaoCod, jobinhoCod],     "Não foi possível abrir o Jobinho.");
-  const abrirAE     = async () => run("abrirAE",     [jobaoCod, jobinhoCod],     "Não foi possível abrir o projeto no After Effects.");
-  const openOut     = async () => run("openOut",     [jobaoCod, outOption],      "Não foi possível abrir a pasta OUT/RENDER.");
+  const openJobao = async () => run("openJobao", [jobaoCod], "Não foi possível abrir o Jobão.");
+  const openJobinho = async () => run("openJobinho", [jobaoCod, jobinhoCod], "Não foi possível abrir o Jobinho.");
+  const abrirAE = async () => run("abrirAE", [jobaoCod, jobinhoCod], "Não foi possível abrir o projeto no After Effects.");
+  const openOut = async () => run("openOut", [jobaoCod, outOption], "Não foi possível abrir a pasta OUT/RENDER.");
 
-  const openVisto   = async () => run("openVisto",   [], "Falha ao abrir o Visto.");
-  const openPip     = async () => run("openPip",     [], "Falha ao abrir o Pip.");
-  const openBitrix  = async () => run("openBitrix",  [], "Falha ao abrir o Bitrix.");
-  const openClaro   = async () => run("openClaro",   [], "Falha ao abrir o Claro.");
-  const openLinks   = async () => run("openLinks",   [], "Falha ao abrir os links.");
+  const openVisto = async () => run("openVisto", [], "Falha ao abrir o Visto.");
+  const openPip = async () => run("openPip", [], "Falha ao abrir o Pip.");
+  const openBitrix = async () => run("openBitrix", [], "Falha ao abrir o Bitrix.");
+  const openClaro = async () => run("openClaro", [], "Falha ao abrir o Claro.");
+  const openLinks = async () => run("openLinks", [], "Falha ao abrir os links.");
 
   // ação de copiar arquivos
   const importProducts = async () => run("importProducts", [copyCode], "Não foi possível copiar os arquivos.");
@@ -164,6 +175,10 @@ function App() {
           <button className="toast__close" onClick={hideToast} aria-label="Fechar">×</button>
         </div>
       )}
+      <div style={{ padding: 20 }}>
+        <h1>🌟 Janela Principal</h1>
+        <button onClick={openProductLog}>Abrir Product Log</button>
+      </div>
     </div>
   );
 }
