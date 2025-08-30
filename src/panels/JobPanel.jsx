@@ -33,7 +33,7 @@ function JobPanel({
           autoComplete="off"
           spellCheck={false}
           autoCorrect="off"
-          autoCapizalise="off"
+          autoCapitalize="off"
         />
         <button
           className="btn"
@@ -61,7 +61,7 @@ function JobPanel({
           autoComplete="off"
           spellCheck={false}
           autoCorrect="off"
-          autoCapizalise="off"
+          autoCapitalize="off"
         />
         <button
           className="btn"

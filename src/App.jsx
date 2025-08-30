@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { callFunction } from "tauri-plugin-python-api";
 import JobPanel from "./panels/JobPanel";
 import LinksPanel from "./panels/LinksPanel";
+import CopyPanel from "./panels/CopyPanel";
 import "./App.css";
 import previewImg from "./assets/hierarquia_pracas.jpg";
 
@@ -9,8 +10,9 @@ import previewImg from "./assets/hierarquia_pracas.jpg";
 import pastaIcon from "./assets/icones/project.svg";
 import linkIcon from "./assets/icones/link.svg";
 import imageIcon from "./assets/icones/hierarchy.svg";
+import copyIcon from "./assets/icones/folder.svg"; // você pode trocar por outro ícone depois
 
-const TABS = { JOBS: "jobs", LINKS: "links", IMAGE: "image" };
+const TABS = { JOBS: "jobs", LINKS: "links", IMAGE: "image", COPY: "copy" };
 
 function App() {
   const [activeTab, setActiveTab] = useState(TABS.JOBS);
@@ -19,6 +21,7 @@ function App() {
   const [jobaoCod, setJobaoCod] = useState("");
   const [jobinhoCod, setJobinhoCod] = useState("");
   const [outOption, setOutOption] = useState("mp4");
+  const [copyCode, setCopyCode] = useState("");
 
   // ==== Toast (erro no rodapé) ====
   const [toast, setToast] = useState({ open: false, message: "", variant: "error" });
@@ -50,13 +53,16 @@ function App() {
   const openJobao   = async () => run("openJobao",   [jobaoCod],                 "Não foi possível abrir o Jobão.");
   const openJobinho = async () => run("openJobinho", [jobaoCod, jobinhoCod],     "Não foi possível abrir o Jobinho.");
   const abrirAE     = async () => run("abrirAE",     [jobaoCod, jobinhoCod],     "Não foi possível abrir o projeto no After Effects.");
-  const openOut     = async () => run("openOut",     [jobaoCod, outOption],    "Não foi possível abrir a pasta OUT/RENDER.");
+  const openOut     = async () => run("openOut",     [jobaoCod, outOption],      "Não foi possível abrir a pasta OUT/RENDER.");
 
   const openVisto   = async () => run("openVisto",   [], "Falha ao abrir o Visto.");
   const openPip     = async () => run("openPip",     [], "Falha ao abrir o Pip.");
   const openBitrix  = async () => run("openBitrix",  [], "Falha ao abrir o Bitrix.");
   const openClaro   = async () => run("openClaro",   [], "Falha ao abrir o Claro.");
   const openLinks   = async () => run("openLinks",   [], "Falha ao abrir os links.");
+
+  // ação de copiar arquivos
+  const importProducts = async () => run("importProducts", [copyCode], "Não foi possível copiar os arquivos.");
 
   return (
     <div className="layout layout--with-leftbar">
@@ -89,6 +95,16 @@ function App() {
           aria-label="Praças CRF"
         >
           <img src={imageIcon} alt="Praças CRF" />
+        </button>
+
+        {/* COPY (nova aba) */}
+        <button
+          className={`icon-tab ${activeTab === TABS.COPY ? "icon-tab--active" : ""}`}
+          onClick={() => setActiveTab(TABS.COPY)}
+          title="Copiar Arquivos"
+          aria-label="Copiar Arquivos"
+        >
+          <img src={copyIcon} alt="Copiar Arquivos" />
         </button>
       </aside>
 
@@ -126,6 +142,14 @@ function App() {
               style={{ maxWidth: "100%", height: "auto", display: "block", borderRadius: "10px" }}
             />
           </div>
+        )}
+
+        {activeTab === TABS.COPY && (
+          <CopyPanel
+            copyCode={copyCode}
+            setCopyCode={setCopyCode}
+            importProducts={importProducts}
+          />
         )}
       </main>
 

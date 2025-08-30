@@ -16,6 +16,8 @@ import os
 import re
 import json
 import subprocess
+import shutil
+from openpyxl import load_workbook
 from time import sleep
 from datetime import datetime
 from pathlib import Path
@@ -30,6 +32,7 @@ class Arizona:
 
     def __init__(self, config: dict, months_back=2):
         ae_version = config.get("ae_version")
+        self.produtos = config.get("produtos","PRODUTOS")
         drive_root = os.path.normpath(config.get("drive"))
 
         if not ae_version or not drive_root:
@@ -39,15 +42,15 @@ class Arizona:
         self.carrefour_path = os.path.join(drive_root, "Phx CRF")
         self.claro_path = os.path.join(
             drive_root, "Phx Talent", "CLARO", "2025")
-
         self.after_fx = os.path.normpath(
-            rf"C:/Program Files/Adobe/Adobe After Effects {ae_version}/Support Files/AfterFX.exe"
-        )
+            rf"C:/Program Files/Adobe/Adobe After Effects {ae_version}/Support Files/AfterFX.exe")
         self.photoshop = os.path.normpath(
-            r"C:/Program Files/Adobe/Adobe Photoshop 2024/Photoshop.exe"
-        )
+            r"C:/Program Files/Adobe/Adobe Photoshop 2024/Photoshop.exe")
+        self.product_folder_path = os.path.join(
+            rf"{self.carrefour_path}/CARREFOUR/ASSETS/_FOTOS FLOW")
 
         self.meses = self._build_month_labels(months_back)
+        self.sheet_name = "Consolidado"
 
     def _build_month_labels(self, months_back: int):
         """
@@ -241,6 +244,17 @@ class Arizona:
         if jobao_path:
             subprocess.run(["explorer", jobao_path], shell=True)
 
+    def find_spreadsheet(self, folder_path):
+        folder = Path(folder_path)
+        for file in folder.iterdir():
+            if file.suffix == ".xlsx":
+                return file
+
+    def read_product_spreadsheet(self, jobao_cod):
+        jobao_path = self.get_jobao_path(jobao_cod)
+        produtos_folder = Path(jobao_path / "PRODUTOS")
+        spreadsheet = self.find_spreadsheet(produtos_folder)
+
     def open_produtos_jobao(self, jobao_cod):
         jobao_path = self.get_jobao_path(jobao_cod)
         if jobao_path:
@@ -281,3 +295,50 @@ class Arizona:
                     found_files.append(
                         {"nome": file, "path": os.path.join(root, file)})
         return found_files if found_files else [{"nome": "Não existe no Banco de Dados", "path": "./icons/sad.png"}]
+
+    def importar_produtos(self, dstn_folder, lista_codigos):
+        origem = Path(self.product_folder_path)
+        destino = Path(dstn_folder)
+
+        arquivos = list(origem.iterdir())
+        imported_files = []
+        not_found_files = []
+
+        for codigo in lista_codigos:
+            encontrados = [f for f in arquivos if codigo in f.stem]
+
+            if encontrados:
+                for arquivo in encontrados:
+                    print(arquivo)
+                    print(destino)
+                    print(arquivo.name)
+                    try:
+                        shutil.copy(arquivo, destino / arquivo.name)
+                        imported_files.append(arquivo.name)
+                    except Exception as e:
+                        raise Exception(f"⚠️ Erro ao copiar {arquivo.name}: {e}")
+            else:
+                not_found_files.append(codigo)
+
+        return {
+            "imported_files": imported_files,
+            "not_found_files": not_found_files,
+            "total_files": len(lista_codigos)
+        }
+
+    def images_list_from_xl(self,jobao_cod):
+        #! mudar o nome da pasta PRODUTOS_2 para PRODUTOS
+        product_path = os.path.join(self.get_jobao_path(jobao_cod),self.produtos)
+        sheet_path = os.path.join(product_path,"Consolidado.xlsx")
+        planilha = load_workbook(sheet_path)
+        aba = planilha[self.sheet_name]
+        valores_unicos = set()
+
+        for row in aba.iter_rows(values_only=True):
+            if row[0] is not None:  # só processa se houver valor
+                partes = [p.strip() for p in str(row[0]).split(";")]
+                for texto in partes:
+                    valores_unicos.add(texto.split(".")[0])
+
+        valores_unicos_lista = list(valores_unicos)
+        return product_path, valores_unicos_lista

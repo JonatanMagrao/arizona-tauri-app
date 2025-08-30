@@ -26,7 +26,8 @@ _tauri_plugin_functions = [
     "openJobao",
     "openJobinho",
     "abrirAE",
-    "openOut"
+    "openOut",
+    "importProducts"
 ]
 
 ARIZONA = Arizona(CONFIG)
@@ -124,7 +125,16 @@ def openOut(jobao_cod, option):
         return _ok()
     except Exception as e:
         return _err(str(e))
+    
+def importProducts(jobao_cod):
+    product_path, product_list = ARIZONA.images_list_from_xl(jobao_cod)
+
+    try:
+        resultado = ARIZONA.importar_produtos(product_path, product_list)
+        return _ok()
+    except Exception as e:
+        return _err(str(e))
 
 
 if __name__ == "__main__":
-    ARIZONA.open_out("895","roteiro")
+    importProducts("895")
