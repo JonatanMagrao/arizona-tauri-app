@@ -1,168 +1,214 @@
-# ui_log.py
-import threading
+# ui_log.py — versão PySide6
+import os
 import sys
+import threading
+import time
+from pathlib import Path
+
+# (Opcional) Bootstrap do runtime Qt empacotado:
+# Ajuste se você levar Qt junto (ex.: resources/Qt/bin e resources/Qt/plugins)
+try:
+    base_dir = Path(sys.executable).parent
+    qt_bin = base_dir / "Qt" / "bin"
+    qt_plugins = base_dir / "Qt" / "plugins"
+    if qt_bin.exists():
+        os.add_dll_directory(str(qt_bin))  # Windows 10+ / Py3.8+
+    if qt_plugins.exists():
+        os.environ.setdefault("QT_PLUGIN_PATH", str(qt_plugins))
+except Exception:
+    pass
 
 try:
-    import tkinter as tk
-    TK_OK = True
+    from PySide6.QtCore import Qt, QObject, Signal, Slot
+    from PySide6.QtGui import QFont
+    from PySide6.QtWidgets import (
+        QApplication, QMainWindow, QWidget, QLabel, QScrollArea,
+        QVBoxLayout, QHBoxLayout, QFrame, QSizePolicy, QSpacerItem
+    )
+    QT_OK = True
 except Exception as e:
-    TK_OK = False
-    TK_ERR = e
+    QT_OK = False
+    QT_ERR = e
 
-_root = None
+# ===== Estado global =====
+_app = None
 _ui_thread = None
-_container = None
-_canvas = None
+_bridge = None
+_window = None
 
-# === Paleta (dark minimal) ===
-BG = "#1f2329"          # fundo geral
-TEXT = "#ffffff"        # texto principal
-TEXT_MUTED = "#cbd5e1"  # texto secundário
-BORDER = "#2e3440"      # divisor sutil
+# Paleta
+BG = "#1f2329"
+TEXT = "#ffffff"
+TEXT_MUTED = "#cbd5e1"
+BORDER = "#2e3440"
 
-def _start_ui_loop():
-    """Sobe o mainloop do Tk em uma thread daemon (uma vez)."""
+
+class Bridge(QObject):
+    update_payload = Signal(dict)
+    show_and_raise = Signal()
+
+
+class ProductLogWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Product Log")
+        self.resize(860, 600)
+        self._setup_style()
+        self._build_ui()
+
+    def _setup_style(self):
+        # Estilo dark minimal
+        self.setStyleSheet(f"""
+            QWidget {{ background: {BG}; color: {TEXT}; font-family: 'Segoe UI', Arial, sans-serif; }}
+            QLabel[muted="true"] {{ color: {TEXT_MUTED}; }}
+            QFrame#line {{ background: {BORDER}; min-height: 1px; max-height: 1px; }}
+            QScrollArea {{ border: none; }}
+        """)
+
+    def _build_ui(self):
+        central = QWidget()
+        outer = QVBoxLayout(central)
+        outer.setContentsMargins(12, 12, 12, 12)
+        outer.setSpacing(0)
+
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+
+        self.content = QWidget()
+        self.vbox = QVBoxLayout(self.content)
+        self.vbox.setContentsMargins(0, 0, 0, 0)
+        self.vbox.setSpacing(8)
+
+        self.scroll.setWidget(self.content)
+        outer.addWidget(self.scroll)
+        self.setCentralWidget(central)
+
+    def closeEvent(self, event):
+        # Esconde ao fechar (igual ao Tk)
+        event.ignore()
+        self.hide()
+
+    @Slot(dict)
+    def render(self, payload: dict):
+        # Limpa
+        while self.vbox.count():
+            item = self.vbox.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+        imported = payload.get("imported_files") or []
+        not_found = payload.get("not_found_files") or []
+        total = payload.get("total_files") or 0
+
+        self._add_label("📦 Product Log", size=16, bold=True, pady=6)
+        self._add_label(
+            f"Total solicitado: {total} · ✅ encontrados: {len(imported)} · ❌ não encontrados: {len(not_found)}",
+            muted=True, pady=10
+        )
+
+        # ❌ Não encontrados (em cima)
+        if not_found:
+            self._add_label("--- Não encontrados ---", size=12, bold=True, pady=6)
+            for i, code in enumerate(not_found):
+                self._add_row("❌", code)
+                if i < len(not_found) - 1:
+                    self._add_divider()
+            self._add_divider(pady=10)
+
+        # ☑️ Importados (embaixo)
+        if imported:
+            self._add_label("--- Importados ---", size=12, bold=True, pady=6)
+            for i, name in enumerate(imported):
+                self._add_row("✅", name)
+                if i < len(imported) - 1:
+                    self._add_divider()
+
+    def _add_label(self, text, size=10, bold=False, muted=False, pady=0):
+        lbl = QLabel(text)
+        f = QFont()
+        f.setPointSize(size)
+        f.setBold(bold)
+        lbl.setFont(f)
+        lbl.setWordWrap(True)
+        if muted:
+            lbl.setProperty("muted", True)
+        self.vbox.addWidget(lbl)
+        if pady:
+            self.vbox.addItem(QSpacerItem(0, pady, QSizePolicy.Minimum, QSizePolicy.Fixed))
+        return lbl
+
+    def _add_divider(self, pady=6):
+        line = QFrame()
+        line.setObjectName("line")
+        self.vbox.addWidget(line)
+        if pady:
+            self.vbox.addItem(QSpacerItem(0, pady, QSizePolicy.Minimum, QSizePolicy.Fixed))
+
+    def _add_row(self, emoji, text):
+        row = QWidget()
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(10)
+
+        em = QLabel(emoji)
+        ef = QFont("Segoe UI Emoji", 12)
+        em.setFont(ef)
+        em.setFixedWidth(24)
+
+        tx = QLabel(text)
+        tx.setWordWrap(True)
+
+        h.addWidget(em, 0, Qt.AlignTop)
+        h.addWidget(tx, 1)
+
+        self.vbox.addWidget(row)
+
+
+def _ui_loop():
+    global _app, _window, _bridge
+    _app = QApplication.instance() or QApplication(sys.argv)
+    _app.setQuitOnLastWindowClosed(False)
+
+    _bridge = Bridge()
+    _window = ProductLogWindow()
+
+    _bridge.update_payload.connect(_window.render, Qt.QueuedConnection)
+    _bridge.show_and_raise.connect(lambda: (_window.show(), _window.raise_(), _window.activateWindow()),
+                                   Qt.QueuedConnection)
+
+    _window.show()
+    _app.exec()
+
+
+def _ensure_ui_thread():
     global _ui_thread
     if _ui_thread and _ui_thread.is_alive():
         return
-
-    def _loop():
-        global _root, _container, _canvas
-
-        _root = tk.Tk()
-        _root.title("Product Log")
-        _root.geometry("860x600")
-        _root.configure(bg=BG)
-        _root.protocol("WM_DELETE_WINDOW", _root.withdraw)  # esconder ao fechar
-
-        # ===== Canvas + Scrollbar =====
-        wrapper = tk.Frame(_root, bg=BG)
-        wrapper.pack(fill="both", expand=True)
-
-        _canvas = tk.Canvas(wrapper, bg=BG, highlightthickness=0, bd=0)
-        vscroll = tk.Scrollbar(wrapper, orient="vertical", command=_canvas.yview)
-        _canvas.configure(yscrollcommand=vscroll.set)
-
-        _canvas.pack(side="left", fill="both", expand=True)
-        vscroll.pack(side="right", fill="y")
-
-        # Frame interno rolável
-        _container = tk.Frame(_canvas, bg=BG)
-        _canvas_window = _canvas.create_window((0, 0), window=_container, anchor="nw")
-
-        def _on_frame_configure(event=None):
-            _canvas.configure(scrollregion=_canvas.bbox("all"))
-        _container.bind("<Configure>", _on_frame_configure)
-
-        def _on_canvas_configure(event):
-            _canvas.itemconfig(_canvas_window, width=event.width)
-        _canvas.bind("<Configure>", _on_canvas_configure)
-
-        # ===== Scroll do mouse =====
-        def _on_mousewheel(event):
-            if sys.platform == "darwin":
-                _canvas.yview_scroll(int(-1 * (event.delta)), "units")
-            else:
-                _canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        _canvas.bind_all("<MouseWheel>", _on_mousewheel)
-        _canvas.bind_all("<Button-4>", lambda e: _canvas.yview_scroll(-1, "units"))  # Linux up
-        _canvas.bind_all("<Button-5>", lambda e: _canvas.yview_scroll( 1, "units"))  # Linux down
-
-        _root.mainloop()
-
-    _ui_thread = threading.Thread(target=_loop, daemon=True)
+    _ui_thread = threading.Thread(target=_ui_loop, daemon=True)
     _ui_thread.start()
-
-
-def _label(parent, text, size=10, bold=False, fg=TEXT, bg=BG, pady=0):
-    font = ("Segoe UI", size, "bold" if bold else "normal")
-    lbl = tk.Label(parent, text=text, fg=fg, bg=bg, font=font, justify="left", anchor="w")
-    if pady:
-        lbl.pack(anchor="w", pady=pady)
-    else:
-        lbl.pack(anchor="w")
-    return lbl
-
-def _divider(parent, pad_y=6):
-    # linha divisória sutil
-    tk.Frame(parent, bg=BORDER, height=1).pack(fill="x", pady=pad_y)
-
-def _row(parent, emoji, text):
-    # linha simples: emoji + texto, sem cores adicionais
-    row = tk.Frame(parent, bg=BG)
-    row.pack(fill="x", pady=2)
-    tk.Label(row, text=emoji, fg=TEXT, bg=BG, font=("Segoe UI Emoji", 12)).pack(side="left", padx=(0, 10))
-    tk.Label(row, text=text, fg=TEXT, bg=BG, wraplength=780, justify="left", anchor="w")\
-        .pack(side="left", fill="x", expand=True)
-
-def _render(payload: dict):
-    global _root, _container
-    if not _root or not _container:
-        return
-
-    # limpa
-    for w in list(_container.winfo_children()):
-        w.destroy()
-
-    imported = payload.get("imported_files", []) or []
-    not_found = payload.get("not_found_files", []) or []
-    total = payload.get("total_files", 0)
-
-    # Header
-    _label(_container, "📦 Product Log", size=16, bold=True, pady=6)
-    _label(
-        _container,
-        f"Total solicitado: {total} · ☑️ encontrados: {len(imported)} · ❌ não encontrados: {len(not_found)}",
-        fg=TEXT_MUTED,
-        pady=10
-    )
-
-    # ===== ❌ Não encontrados (EM CIMA) =====
-    if not_found:
-        _label(_container, "❌ Não encontrados", size=12, bold=True, pady=6)
-        for i, code in enumerate(not_found):
-            _row(_container, "❌", code)
-            if i < len(not_found) - 1:
-                _divider(_container, pad_y=4)
-        _divider(_container, pad_y=10)
-
-    # ===== ☑️ Importados (EMBAIXO) =====
-    if imported:
-        _label(_container, "☑️ Importados", size=12, bold=True, pady=6)
-        for i, name in enumerate(imported):
-            _row(_container, "☑️", name)
-            if i < len(imported) - 1:
-                _divider(_container, pad_y=4)
-
-    # sem botão de fechar — usa o X da própria janela
 
 
 def show_product_log(payload: dict):
     """Abre/atualiza a janela com o payload do log (dark, linhas simples, não encontrados primeiro)."""
-    if not TK_OK:
-        return {"ok": False, "message": f"Tkinter indisponível: {TK_ERR}"}
+    if not QT_OK:
+        return {"ok": False, "message": f"PySide6 indisponível: {QT_ERR}"}
 
-    _start_ui_loop()
+    _ensure_ui_thread()
 
-    def _update():
-        try:
-            if _root.state() == "withdrawn":
-                _root.deiconify()
-            _root.lift()
-            _root.focus_force()
-            _render(payload or {})
-        except Exception as e:
-            print("Erro ao renderizar Product Log:", e)
+    # Espera ponte ficar pronta
+    for _ in range(200):
+        if _bridge and _window:
+            break
+        time.sleep(0.01)
 
-    # aguarda o Tk iniciar e agenda a atualização
-    import time
-    for _ in range(50):
-        if _root:
-            try:
-                _root.after(0, _update)
-                break
-            except:
-                pass
-        time.sleep(0.02)
+    if not (_bridge and _window):
+        return {"ok": False, "message": "Falha ao iniciar UI Qt."}
 
-    return {"ok": True}
+    # Atualiza e traz à frente
+    try:
+        _bridge.update_payload.emit(payload or {})
+        _bridge.show_and_raise.emit()
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "message": f"Erro ao atualizar UI: {e}"}
