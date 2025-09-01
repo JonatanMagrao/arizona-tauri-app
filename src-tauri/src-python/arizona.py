@@ -309,9 +309,6 @@ class Arizona:
 
             if encontrados:
                 for arquivo in encontrados:
-                    print(arquivo)
-                    print(destino)
-                    print(arquivo.name)
                     try:
                         shutil.copy(arquivo, destino / arquivo.name)
                         imported_files.append(arquivo.name)

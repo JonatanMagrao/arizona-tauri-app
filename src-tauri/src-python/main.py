@@ -16,6 +16,7 @@
 import bootstrap
 from arizona import Arizona
 from config import CONFIG
+from ui_log import show_product_log
 
 _tauri_plugin_functions = [
     "openVisto",
@@ -32,7 +33,7 @@ _tauri_plugin_functions = [
 
 ARIZONA = Arizona(CONFIG)
 
-def _ok(msg=None): return {"ok": True,  "message": msg}
+def _ok(msg=None,data=None): return {"ok": True,  "message": msg, "data": data}
 def _err(msg): return {"ok": False, "message": msg or "Ocorreu um erro."}
 
 
@@ -127,14 +128,14 @@ def openOut(jobao_cod, option):
         return _err(str(e))
     
 def importProducts(jobao_cod):
-    product_path, product_list = ARIZONA.images_list_from_xl(jobao_cod)
-
     try:
+        product_path, product_list = ARIZONA.images_list_from_xl(jobao_cod)
         resultado = ARIZONA.importar_produtos(product_path, product_list)
-        return _ok()
+        show_product_log(resultado)
+        return _ok(data=resultado)
     except Exception as e:
         return _err(str(e))
 
 
 if __name__ == "__main__":
-    importProducts("895")
+    log = importProducts("895")

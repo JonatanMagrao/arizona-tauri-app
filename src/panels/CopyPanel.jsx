@@ -14,7 +14,7 @@ function CopyPanel({ copyCode, setCopyCode, importProducts }) {
           type="text"
           value={copyCode}
           onChange={(e) => setCopyCode(e.target.value)}
-          placeholder="Ex: 38563"
+          placeholder="Ex: 895"
           autoComplete="off"
           spellCheck={false}
           autoCorrect="off"

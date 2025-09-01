@@ -53,11 +53,30 @@ function App() {
   const run = async (fnName, args, fallbackMsg) => {
     try {
       const res = await callFunction(fnName, args);
-      if (res && res.ok === false) showError(res.message || fallbackMsg);
-      // quando ok==true, não faz nada
+      if (res && res.ok === false) {
+        showError(res.message || fallbackMsg);
+      }
+      return res;
     } catch (e) {
       showError(fallbackMsg || "Falha ao executar ação.");
+      return { ok: false, message: e?.message || fallbackMsg };
     }
+  };
+
+  const openOrFocusProductLog = async () => {
+    let win = WebviewWindow.getByLabel("product-log");
+    if (!win) {
+      win = new WebviewWindow("product-log", {
+        url: "product-log.html",
+        title: "Product Log",
+        width: 800,
+        height: 500,
+        center: true,
+      });
+    } else {
+      await win.setFocus();
+    }
+    return win;
   };
 
   // ações
@@ -73,7 +92,13 @@ function App() {
   const openLinks = async () => run("openLinks", [], "Falha ao abrir os links.");
 
   // ação de copiar arquivos
-  const importProducts = async () => run("importProducts", [copyCode], "Não foi possível copiar os arquivos.");
+  const importProducts = async () => {
+    const res = await run("importProducts", [copyCode], "Não foi possível copiar os arquivos.");
+    if (res?.ok && res?.data) {
+      await openOrFocusProductLog();
+      await emit("product-log-data", res.data);
+    }
+  };
 
   return (
     <div className="layout layout--with-leftbar">
@@ -88,14 +113,14 @@ function App() {
           <img src={pastaIcon} alt="Projetos" />
         </button>
 
-        {/* LINKS */}
+        {/* COPY (nova aba) */}
         <button
-          className={`icon-tab ${activeTab === TABS.LINKS ? "icon-tab--active" : ""}`}
-          onClick={() => setActiveTab(TABS.LINKS)}
-          title="Abrir Links"
-          aria-label="Abrir Links"
+          className={`icon-tab ${activeTab === TABS.COPY ? "icon-tab--active" : ""}`}
+          onClick={() => setActiveTab(TABS.COPY)}
+          title="Copiar Arquivos"
+          aria-label="Copiar Arquivos"
         >
-          <img src={linkIcon} alt="Abrir Links" />
+          <img src={copyIcon} alt="Copiar Arquivos" />
         </button>
 
         {/* IMAGEM */}
@@ -108,15 +133,15 @@ function App() {
           <img src={imageIcon} alt="Praças CRF" />
         </button>
 
-        {/* COPY (nova aba) */}
-        <button
-          className={`icon-tab ${activeTab === TABS.COPY ? "icon-tab--active" : ""}`}
-          onClick={() => setActiveTab(TABS.COPY)}
-          title="Copiar Arquivos"
-          aria-label="Copiar Arquivos"
+        {/* LINKS */}
+        {/* <button
+          className={`icon-tab ${activeTab === TABS.LINKS ? "icon-tab--active" : ""}`}
+          onClick={() => setActiveTab(TABS.LINKS)}
+          title="Abrir Links"
+          aria-label="Abrir Links"
         >
-          <img src={copyIcon} alt="Copiar Arquivos" />
-        </button>
+          <img src={linkIcon} alt="Abrir Links" />
+        </button> */}
       </aside>
 
       <main className="content">
@@ -175,10 +200,6 @@ function App() {
           <button className="toast__close" onClick={hideToast} aria-label="Fechar">×</button>
         </div>
       )}
-      <div style={{ padding: 20 }}>
-        <h1>🌟 Janela Principal</h1>
-        <button onClick={openProductLog}>Abrir Product Log</button>
-      </div>
     </div>
   );
 }
