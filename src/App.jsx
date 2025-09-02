@@ -77,15 +77,25 @@ function App() {
           <img src={pastaIcon} alt="Projetos" />
         </button>
 
-        {/* LINKS */}
+        {/* COPY (nova aba) */}
         <button
+          className={`icon-tab ${activeTab === TABS.COPY ? "icon-tab--active" : ""}`}
+          onClick={() => setActiveTab(TABS.COPY)}
+          title="Copiar Arquivos"
+          aria-label="Copiar Arquivos"
+        >
+          <img src={copyIcon} alt="Copiar Arquivos" />
+        </button>
+
+        {/* LINKS */}
+        {/* <button
           className={`icon-tab ${activeTab === TABS.LINKS ? "icon-tab--active" : ""}`}
           onClick={() => setActiveTab(TABS.LINKS)}
           title="Abrir Links"
           aria-label="Abrir Links"
         >
           <img src={linkIcon} alt="Abrir Links" />
-        </button>
+        </button> */}
 
         {/* IMAGEM */}
         <button
@@ -97,15 +107,7 @@ function App() {
           <img src={imageIcon} alt="Praças CRF" />
         </button>
 
-        {/* COPY (nova aba) */}
-        <button
-          className={`icon-tab ${activeTab === TABS.COPY ? "icon-tab--active" : ""}`}
-          onClick={() => setActiveTab(TABS.COPY)}
-          title="Copiar Arquivos"
-          aria-label="Copiar Arquivos"
-        >
-          <img src={copyIcon} alt="Copiar Arquivos" />
-        </button>
+        
       </aside>
 
       <main className="content">

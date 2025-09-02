@@ -14,6 +14,7 @@
 
 # -*- coding: utf-8 -*-
 import bootstrap
+from log_txt import (create_temp_log, append_produtos_log)
 from arizona import Arizona
 from config import CONFIG
 
@@ -31,6 +32,7 @@ _tauri_plugin_functions = [
 ]
 
 ARIZONA = Arizona(CONFIG)
+
 
 def _ok(msg=None): return {"ok": True,  "message": msg}
 def _err(msg): return {"ok": False, "message": msg or "Ocorreu um erro."}
@@ -125,12 +127,17 @@ def openOut(jobao_cod, option):
         return _ok()
     except Exception as e:
         return _err(str(e))
-    
+
+
 def importProducts(jobao_cod):
     product_path, product_list = ARIZONA.images_list_from_xl(jobao_cod)
 
     try:
         resultado = ARIZONA.importar_produtos(product_path, product_list)
+        log_path = create_temp_log()
+        append_produtos_log(log_path, resultado)
+        import os
+        os.startfile(log_path)
         return _ok()
     except Exception as e:
         return _err(str(e))

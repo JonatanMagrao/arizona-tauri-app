@@ -305,7 +305,10 @@ class Arizona:
         not_found_files = []
 
         for codigo in lista_codigos:
-            encontrados = [f for f in arquivos if codigo in f.stem]
+            codigo_lower = codigo.lower()
+
+            # compara nomes ignorando maiúsculas/minúsculas
+            encontrados = [f for f in arquivos if codigo_lower in f.stem.lower()]
 
             if encontrados:
                 for arquivo in encontrados:
@@ -325,6 +328,7 @@ class Arizona:
             "not_found_files": not_found_files,
             "total_files": len(lista_codigos)
         }
+
 
     def images_list_from_xl(self,jobao_cod):
         #! mudar o nome da pasta PRODUTOS_2 para PRODUTOS

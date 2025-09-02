@@ -33,8 +33,10 @@
     ],
     "resources": {
       "src-python/": "src-python/",
-      "../.venv/Include/": "src-python/.venv/Include/",
-      "../.venv/Lib/": "src-python/.venv/Lib/"
+      "target/pyembed/python3.dll": "python3.dll",
+      "target/pyembed/python310.dll": "python310.dll",
+      "target/pyembed/stdlib/": "lib/",
+      "target/pyembed/lib": "lib/"
     }
   }
 }
