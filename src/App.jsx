@@ -97,7 +97,7 @@ function App() {
         <button
           className={`icon-tab ${activeTab === TABS.JOBS ? "icon-tab--active" : ""}`}
           onClick={() => setActiveTab(TABS.JOBS)}
-          tabindex="-1"
+          tabIndex="-1"
           title="Projetos"
           aria-label="Projetos"
         >
@@ -108,7 +108,7 @@ function App() {
         <button
           className={`icon-tab ${activeTab === TABS.COPY ? "icon-tab--active" : ""}`}
           onClick={() => setActiveTab(TABS.COPY)}
-          tabindex="-1"
+          tabIndex="-1"
           title="Copiar Arquivos"
           aria-label="Copiar Arquivos"
         >
@@ -129,7 +129,7 @@ function App() {
         <button
           className={`icon-tab ${activeTab === TABS.IMAGE ? "icon-tab--active" : ""}`}
           onClick={() => setActiveTab(TABS.IMAGE)}
-          tabindex="-1"
+          tabIndex="-1"
           title="Praças CRF"
           aria-label="Praças CRF"
         >

@@ -76,7 +76,7 @@ function JobPanel({
           autoCapitalize="off"
         />
         <button
-          tabindex="-1"
+          tabIndex="-1"
           className="btn"
           onClick={openJobao}
           disabled={!jobaoCod.trim()}
@@ -106,7 +106,7 @@ function JobPanel({
           autoCapitalize="off"
         />
         <button
-          tabindex="-1"
+          tabIndex="-1"
           className="btn"
           onClick={openJobinho}
           disabled={!jobaoCod.trim() || !jobinhoCod.trim()}
@@ -116,7 +116,7 @@ function JobPanel({
           <img src={searchIcon} alt="" aria-hidden="true" />
         </button>
         <button
-          tabindex="-1"
+          tabIndex="-1"
           className="btn btn-secondary"
           onClick={abrirAE}
           disabled={!jobaoCod.trim() || !jobinhoCod.trim()}
@@ -149,7 +149,7 @@ function JobPanel({
               disabled={!jobaoCod.trim()}
               title={`Abrir ${label}`}
               aria-label={`Abrir ${label}`}
-              tabindex="-1"
+              tabIndex="-1"
             >
               <img src={icon} alt="" aria-hidden="true" />
             </button>
