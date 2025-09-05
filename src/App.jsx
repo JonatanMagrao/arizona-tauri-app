@@ -21,7 +21,9 @@ function App() {
   const [jobaoCod, setJobaoCod] = useState("");
   const [jobinhoCod, setJobinhoCod] = useState("");
   const [outOption, setOutOption] = useState("mp4");
+  const [isOpeningOut, setIsOpeningOut] = useState(false);
   const [copyCode, setCopyCode] = useState("");
+
 
   // ==== Loading simples para importação ====
   const [isImporting, setIsImporting] = useState(false);
@@ -53,16 +55,25 @@ function App() {
   };
 
   // ações
-  const openJobao   = async () => run("openJobao",   [jobaoCod],                 "Não foi possível abrir o Jobão.");
-  const openJobinho = async () => run("openJobinho", [jobaoCod, jobinhoCod],     "Não foi possível abrir o Jobinho.");
-  const abrirAE     = async () => run("abrirAE",     [jobaoCod, jobinhoCod],     "Não foi possível abrir o projeto no After Effects.");
-  const openOut     = async () => run("openOut",     [jobaoCod, outOption],      "Não foi possível abrir a pasta OUT/RENDER.");
+  const openJobao = async () => run("openJobao", [jobaoCod], "Não foi possível abrir o Jobão.");
+  const openJobinho = async () => run("openJobinho", [jobaoCod, jobinhoCod], "Não foi possível abrir o Jobinho.");
+  const abrirAE = async () => run("abrirAE", [jobaoCod, jobinhoCod], "Não foi possível abrir o projeto no After Effects.");
+  const openOut = async (opt) => {
+    if (isOpeningOut) return;                 // evita chamadas sobrepostas
+    setIsOpeningOut(true);
+    const chosen = opt ?? outOption;          // usa o param se vier, senão o estado atual
+    try {
+      await run("openOut", [jobaoCod, chosen], "Não foi possível abrir a pasta OUT/RENDER.");
+    } finally {
+      setIsOpeningOut(false);
+    }
+  };
 
-  const openVisto   = async () => run("openVisto",   [], "Falha ao abrir o Visto.");
-  const openPip     = async () => run("openPip",     [], "Falha ao abrir o Pip.");
-  const openBitrix  = async () => run("openBitrix",  [], "Falha ao abrir o Bitrix.");
-  const openClaro   = async () => run("openClaro",   [], "Falha ao abrir o Claro.");
-  const openLinks   = async () => run("openLinks",   [], "Falha ao abrir os links.");
+  const openVisto = async () => run("openVisto", [], "Falha ao abrir o Visto.");
+  const openPip = async () => run("openPip", [], "Falha ao abrir o Pip.");
+  const openBitrix = async () => run("openBitrix", [], "Falha ao abrir o Bitrix.");
+  const openClaro = async () => run("openClaro", [], "Falha ao abrir o Claro.");
+  const openLinks = async () => run("openLinks", [], "Falha ao abrir os links.");
 
   // ação de copiar arquivos — COM LOADING
   const importProducts = async () => {
@@ -139,6 +150,7 @@ function App() {
             openOut={openOut}
             outOption={outOption}
             setOutOption={setOutOption}
+            isOpeningOut={isOpeningOut}
           />
         )}
 

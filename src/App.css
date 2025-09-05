@@ -369,3 +369,49 @@ textarea:focus{
 }
 
 
+.util-row {
+  display: flex;
+  flex-direction: row;   /* garante fileira horizontal */
+  gap: 8px;
+  align-items: center;
+  flex-wrap: nowrap;     /* evita quebrar linha */
+}
+
+
+/* === Util buttons: ícones “fantasma” (sem borda/fundo) === */
+.util-square{
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  background: transparent;   /* remove fundo */
+  border: none;              /* remove borda */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background .15s ease, transform .06s ease;
+}
+
+.util-square img{
+  width: 35px;
+  height: 35px;
+  pointer-events: none;
+  display: block;
+}
+
+.util-square:hover{
+  background: rgba(255,255,255,.08);  /* só destaque no hover */
+  transform: translateY(-1px);
+}
+
+.util-square:disabled{
+  opacity: .4;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.util-square:focus-visible{
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}

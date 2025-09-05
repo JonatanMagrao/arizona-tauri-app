@@ -32,7 +32,7 @@ class Arizona:
 
     def __init__(self, config: dict, months_back=2):
         ae_version = config.get("ae_version")
-        self.produtos = config.get("produtos","PRODUTOS")
+        self.produtos = config.get("produtos", "PRODUTOS")
         drive_root = os.path.normpath(config.get("drive"))
 
         if not ae_version or not drive_root:
@@ -118,7 +118,9 @@ class Arizona:
             "mov": os.path.join(jobao_path, "OUT", "RENDER", "MOV"),
             "roteiro": os.path.join(jobao_path, "ROTEIRO", "LOCUCAO"),
             "print": os.path.join(jobao_path, "OUT", "PRINT"),
-            "copia": os.path.join(jobao_path, "OUT", "COPIA")
+            "copia": os.path.join(jobao_path, "OUT", "COPIA"),
+            "produtos": os.path.join(jobao_path, "PRODUTOS"),
+            "claquetes": os.path.join(jobao_path, "CLAQUETES"),
         }
 
         try:
@@ -308,7 +310,8 @@ class Arizona:
             codigo_lower = codigo.lower()
 
             # compara nomes ignorando maiúsculas/minúsculas
-            encontrados = [f for f in arquivos if codigo_lower in f.stem.lower()]
+            encontrados = [
+                f for f in arquivos if codigo_lower in f.stem.lower()]
 
             if encontrados:
                 for arquivo in encontrados:
@@ -319,7 +322,8 @@ class Arizona:
                         shutil.copy(arquivo, destino / arquivo.name)
                         imported_files.append(arquivo.name)
                     except Exception as e:
-                        raise Exception(f"⚠️ Erro ao copiar {arquivo.name}: {e}")
+                        raise Exception(
+                            f"⚠️ Erro ao copiar {arquivo.name}: {e}")
             else:
                 not_found_files.append(codigo)
 
@@ -329,11 +333,11 @@ class Arizona:
             "total_files": len(lista_codigos)
         }
 
-
-    def images_list_from_xl(self,jobao_cod):
+    def images_list_from_xl(self, jobao_cod):
         #! mudar o nome da pasta PRODUTOS_2 para PRODUTOS
-        product_path = os.path.join(self.get_jobao_path(jobao_cod),self.produtos)
-        sheet_path = os.path.join(product_path,"Consolidado.xlsx")
+        product_path = os.path.join(
+            self.get_jobao_path(jobao_cod), self.produtos)
+        sheet_path = os.path.join(product_path, "Consolidado.xlsx")
         planilha = load_workbook(sheet_path)
         aba = planilha[self.sheet_name]
         valores_unicos = set()

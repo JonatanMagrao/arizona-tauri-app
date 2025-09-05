@@ -1,6 +1,13 @@
 // panels/JobPanel.jsx
 import searchIcon from "../assets/icones/folder.svg";
 import aeIcon from "../assets/icones/aeft_icon.svg";
+import copyIcon from "../assets/icones/file_copy.svg";
+import roteiroIcon from "../assets/icones/roteiro.svg";
+import printIcon from "../assets/icones/print.svg";
+import videoIconMP4 from "../assets/icones/video_mp4.svg";
+import videoIconMOV from "../assets/icones/video_mov.svg";
+import productIcon from "../assets/icones/product.svg";
+import claqueteIcon from "../assets/icones/claquete.svg";
 
 const ICON_SIZE = 32; // altere aqui que todos os ícones do formulário mudam
 
@@ -15,6 +22,7 @@ function JobPanel({
   openOut,
   outOption,
   setOutOption,
+  isOpeningOut,
 }) {
 
   const handleJobaoKeyDown = (e) => {
@@ -32,11 +40,20 @@ function JobPanel({
     // Para a combinação de teclas Ctrl + Enter
     if (e.key === "Enter" && e.shiftKey && jobaoCod.trim() && jobinhoCod.trim()) {
       e.preventDefault();
-      // abrirAE();
+      //! abrirAE();
       alert("abrir ae")
     }
   };
 
+  const handlers = {
+    mp4: () => openOut("mp4"),
+    mov: () => openOut("mov"),
+    roteiro: () => openOut("roteiro"),
+    print: () => openOut("print"),
+    copia: () => openOut("copia"),
+    produtos: () => openOut("produtos"),
+    claquete: () => openOut("claquetes"),
+  };
 
   return (
     // sobrescreve a CSS variable --icon-size só dentro deste card
@@ -110,35 +127,36 @@ function JobPanel({
         </button>
       </div>
 
-      {/* Linha Render */}
-      <div className="form-row">
-        <label className="label" htmlFor="render">Pastas utilitárias</label>
-        <select
-          tabindex="-1"
-          id="render"
-          name="render"
-          className="input input-code"
-          value={outOption}
-          onChange={(e) => setOutOption(e.target.value)}
-        >
-          <option value="mp4">MP4</option>
-          <option value="mov">MOV</option>
-          <option value="roteiro">Roteiro</option>
-          <option value="print">Print</option>
-          <option value="copia">Cópia</option>
-        </select>
-        <button
-          tabindex="-1"
-          className="btn"
-          onClick={openOut}
-          disabled={!jobaoCod.trim()}
-          aria-label="Buscar Pasta OUT"
-          title="Abrir pasta"
-        >
-          <img src={searchIcon} alt="" aria-hidden="true" />
-        </button>
-        <span aria-hidden="true"></span>
+      {/* Linha Pastas utilitárias – só botões */}
+      <div className="form-row form-row--util">
+        <div className="util-row" role="toolbar" aria-label="Pastas utilitárias">
+
+
+          {[
+            { id: "mp4", icon: videoIconMP4, label: "MP4" },
+            { id: "mov", icon: videoIconMOV, label: "MOV" },
+            { id: "roteiro", icon: roteiroIcon, label: "Roteiro" }, // placeholder
+            { id: "print", icon: printIcon, label: "Print" },
+            { id: "copia", icon: copyIcon, label: "Cópia" },   // placeholder
+            { id: "produtos", icon: productIcon, label: "Produtos" },   // placeholder
+            { id: "claquete", icon: claqueteIcon, label: "Claquete" },   // placeholder
+          ].map(({ id, icon, label }) => (
+            <button
+              key={id}
+              type="button"
+              className="util-square"
+              onClick={handlers[id]}
+              disabled={!jobaoCod.trim()}
+              title={`Abrir ${label}`}
+              aria-label={`Abrir ${label}`}
+              tabindex="-1"
+            >
+              <img src={icon} alt="" aria-hidden="true" />
+            </button>
+          ))}
+        </div>
       </div>
+
     </div>
   );
 }
