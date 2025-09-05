@@ -23,6 +23,9 @@ function App() {
   const [outOption, setOutOption] = useState("mp4");
   const [copyCode, setCopyCode] = useState("");
 
+  // ==== Loading simples para importação ====
+  const [isImporting, setIsImporting] = useState(false);
+
   // ==== Toast (erro no rodapé) ====
   const [toast, setToast] = useState({ open: false, message: "", variant: "error" });
   const hideTimerRef = useRef(null);
@@ -61,8 +64,20 @@ function App() {
   const openClaro   = async () => run("openClaro",   [], "Falha ao abrir o Claro.");
   const openLinks   = async () => run("openLinks",   [], "Falha ao abrir os links.");
 
-  // ação de copiar arquivos
-  const importProducts = async () => run("importProducts", [copyCode], "Não foi possível copiar os arquivos.");
+  // ação de copiar arquivos — COM LOADING
+  const importProducts = async () => {
+    setIsImporting(true);
+    try {
+      const res = await callFunction("importProducts", [copyCode]);
+      if (res && res.ok === false) {
+        showError(res.message || "Não foi possível copiar os arquivos.");
+      }
+    } catch (e) {
+      showError("Não foi possível copiar os arquivos.");
+    } finally {
+      setIsImporting(false);
+    }
+  };
 
   return (
     <div className="layout layout--with-leftbar">
@@ -71,6 +86,7 @@ function App() {
         <button
           className={`icon-tab ${activeTab === TABS.JOBS ? "icon-tab--active" : ""}`}
           onClick={() => setActiveTab(TABS.JOBS)}
+          tabindex="-1"
           title="Projetos"
           aria-label="Projetos"
         >
@@ -81,6 +97,7 @@ function App() {
         <button
           className={`icon-tab ${activeTab === TABS.COPY ? "icon-tab--active" : ""}`}
           onClick={() => setActiveTab(TABS.COPY)}
+          tabindex="-1"
           title="Copiar Arquivos"
           aria-label="Copiar Arquivos"
         >
@@ -101,13 +118,12 @@ function App() {
         <button
           className={`icon-tab ${activeTab === TABS.IMAGE ? "icon-tab--active" : ""}`}
           onClick={() => setActiveTab(TABS.IMAGE)}
+          tabindex="-1"
           title="Praças CRF"
           aria-label="Praças CRF"
         >
           <img src={imageIcon} alt="Praças CRF" />
         </button>
-
-        
       </aside>
 
       <main className="content">
@@ -151,9 +167,17 @@ function App() {
             copyCode={copyCode}
             setCopyCode={setCopyCode}
             importProducts={importProducts}
+            isImporting={isImporting}
           />
         )}
       </main>
+
+      {/* ===== Overlay de loading ===== */}
+      {isImporting && (
+        <div className="overlay" role="status" aria-live="polite" aria-busy="true">
+          <div className="loader">Copiando arquivos...</div>
+        </div>
+      )}
 
       {/* ===== Toast no rodapé ===== */}
       {toast.open && (

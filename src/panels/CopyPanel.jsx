@@ -3,7 +3,7 @@ import fileCopy from "../assets/icones/file_copy.svg";
 
 const ICON_SIZE = 32;
 
-function CopyPanel({ copyCode, setCopyCode, importProducts }) {
+function CopyPanel({ copyCode, setCopyCode, importProducts, isImporting }) {
   return (
     <div className="card" style={{ '--icon-size': `${ICON_SIZE}px` }}>
       <div className="form-row">
@@ -19,15 +19,16 @@ function CopyPanel({ copyCode, setCopyCode, importProducts }) {
           spellCheck={false}
           autoCorrect="off"
           autoCapitalize="off"
+          disabled={isImporting}
         />
         <button
           className="btn"
           onClick={importProducts}
-          disabled={!copyCode.trim()}
+          disabled={!copyCode.trim() || isImporting}
           aria-label="Copiar produtos"
-          title="Copiar produtos"
+          title={isImporting ? "Copiando..." : "Copiar produtos"}
         >
-          <img src={fileCopy} alt="" aria-hidden="true" />
+          {isImporting ? "..." : <img src={fileCopy} alt="" aria-hidden="true" />}
         </button>
       </div>
     </div>

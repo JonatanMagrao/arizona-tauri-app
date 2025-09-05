@@ -17,6 +17,8 @@ import bootstrap
 from log_txt import (create_temp_log, append_produtos_log)
 from arizona import Arizona
 from config import CONFIG
+from pathlib import Path
+import os, re
 
 _tauri_plugin_functions = [
     "openVisto",
@@ -28,7 +30,9 @@ _tauri_plugin_functions = [
     "openJobinho",
     "abrirAE",
     "openOut",
-    "importProducts"
+    "importProducts",
+    "openVideo",
+    "openRoteiro"
 ]
 
 ARIZONA = Arizona(CONFIG)
@@ -142,6 +146,73 @@ def importProducts(jobao_cod):
     except Exception as e:
         return _err(str(e))
 
+def openRoteiro(jobao_cod,cod_jobinho):
+    jobao = ARIZONA.get_jobao_path(jobao_cod)
+
+    if not jobao:
+        return _err(f'Jobão "{jobao_cod or "(vazio)"}" não encontrado.')
+
+    roteiros = Path(jobao) / "ROTEIRO" / "LOCUCAO"
+    jobinho = Path(jobao) / "PROJETOS" / "AE"
+    praca = None
+    roteiro = None
+
+    for job in jobinho.iterdir():
+        if re.match(cod_jobinho,job.name):
+            praca = job.name.split("_")[1]
+            break
+
+    for rot in roteiros.iterdir():
+        decupado = rot.stem.split("_")
+        if praca in decupado:
+            roteiro = rot
+            print(rot)
+            break
+    
+    if praca is None:
+        print(f"Praça não encontrada.")
+        return _err("Praça não encontrada.")
+    
+    if roteiro is None:
+        print(f"Roteiro do '{praca}' não encontrado.")
+        return _err("Roteiro não encontrado.")
+    
+    os.startfile(roteiro)
+    
+
+def openVideo(jobao_cod,cod_jobinho):
+    jobao = ARIZONA.get_jobao_path(jobao_cod)
+
+    if not jobao:
+        return _err(f'Jobão "{jobao_cod or "(vazio)"}" não encontrado.')
+
+    videos = Path(jobao) / "OUT" / "RENDER" / "MP4"
+    jobinho = Path(jobao) / "PROJETOS" / "AE"
+    video = None
+    praca = None
+
+    for job in jobinho.iterdir():
+        if re.match(cod_jobinho,job.name):
+            praca = job.stem
+            break
+
+    for vid in videos.iterdir():
+        if re.match(praca,vid.stem):
+            video = vid
+            break
+
+    if praca is None:
+        print(f"Praça não encontrada.")
+        return _err("Praça não encontrada.")
+    
+    if video is None:
+        print(f"Roteiro do '{praca}' não encontrado.")
+        return _err("Roteiro não encontrado.")
+
+    os.startfile(video)   
+
 
 if __name__ == "__main__":
-    importProducts("895")
+    # importProducts("895")
+    # openRoteiro("895","15193")
+    openVideo("895","15193")

@@ -16,6 +16,28 @@ function JobPanel({
   outOption,
   setOutOption,
 }) {
+
+  const handleJobaoKeyDown = (e) => {
+    if (e.key === "Enter" && jobaoCod.trim()) {
+      e.preventDefault();
+      openJobao();
+    }
+  }
+
+  const handleJobinhoKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey && jobaoCod.trim() && jobinhoCod.trim()) {
+      e.preventDefault();
+      openJobinho();
+    }
+    // Para a combinação de teclas Ctrl + Enter
+    if (e.key === "Enter" && e.shiftKey && jobaoCod.trim() && jobinhoCod.trim()) {
+      e.preventDefault();
+      // abrirAE();
+      alert("abrir ae")
+    }
+  };
+
+
   return (
     // sobrescreve a CSS variable --icon-size só dentro deste card
     <div className="card" style={{ '--icon-size': `${ICON_SIZE}px` }}>
@@ -30,17 +52,19 @@ function JobPanel({
           onChange={(e) => setJobaoCod(e.target.value)}
           placeholder="Ex: 895"
 
+          onKeyDown={handleJobaoKeyDown}
           autoComplete="off"
           spellCheck={false}
           autoCorrect="off"
           autoCapitalize="off"
         />
         <button
+          tabindex="-1"
           className="btn"
           onClick={openJobao}
           disabled={!jobaoCod.trim()}
           aria-label="Buscar Jobão"
-          title="Buscar"
+          title="Abri pasta do Jobão"
         >
           <img src={searchIcon} alt="" aria-hidden="true" />
         </button>
@@ -57,22 +81,25 @@ function JobPanel({
           value={jobinhoCod}
           onChange={(e) => setJobinhoCod(e.target.value)}
           placeholder="Ex: 15181"
-          
+
+          onKeyDown={handleJobinhoKeyDown}
           autoComplete="off"
           spellCheck={false}
           autoCorrect="off"
           autoCapitalize="off"
         />
         <button
+          tabindex="-1"
           className="btn"
           onClick={openJobinho}
           disabled={!jobaoCod.trim() || !jobinhoCod.trim()}
           aria-label="Buscar Jobinho"
-          title="Buscar"
+          title="Abrir pasta do Jobinho"
         >
           <img src={searchIcon} alt="" aria-hidden="true" />
         </button>
         <button
+          tabindex="-1"
           className="btn btn-secondary"
           onClick={abrirAE}
           disabled={!jobaoCod.trim() || !jobinhoCod.trim()}
@@ -87,6 +114,7 @@ function JobPanel({
       <div className="form-row">
         <label className="label" htmlFor="render">Pastas utilitárias</label>
         <select
+          tabindex="-1"
           id="render"
           name="render"
           className="input input-code"
@@ -100,11 +128,12 @@ function JobPanel({
           <option value="copia">Cópia</option>
         </select>
         <button
+          tabindex="-1"
           className="btn"
           onClick={openOut}
           disabled={!jobaoCod.trim()}
           aria-label="Buscar Pasta OUT"
-          title="Buscar"
+          title="Abrir pasta"
         >
           <img src={searchIcon} alt="" aria-hidden="true" />
         </button>
