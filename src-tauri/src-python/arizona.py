@@ -121,7 +121,7 @@ class Arizona:
             "copia": os.path.join(jobao_path, "OUT", "COPIA"),
             "produtos": os.path.join(jobao_path, "PRODUTOS"),
             "claquetes": os.path.join(jobao_path, "CLAQUETES"),
-            "audio":os.path.join(jobao_path, "AUDIO", "BOUNCE"),
+            "audio": os.path.join(jobao_path, "AUDIO", "BOUNCE"),
         }
 
         try:
@@ -312,7 +312,9 @@ class Arizona:
 
             # compara nomes ignorando maiúsculas/minúsculas
             encontrados = [
-                f for f in arquivos if codigo_lower in f.stem.lower()]
+                f for f in arquivos
+                if f.is_file() and f.stem.lower() == codigo_lower
+            ]
 
             if encontrados:
                 for arquivo in encontrados:
@@ -344,7 +346,8 @@ class Arizona:
                 break
 
         if not sheet_path:
-            raise FileNotFoundError(f"Nenhum .xlsx encontrado em {product_path}")
+            raise FileNotFoundError(
+                f"Nenhum .xlsx encontrado em {product_path}")
         planilha = load_workbook(sheet_path)
         aba = planilha[self.sheet_name]
         valores_unicos = set()
