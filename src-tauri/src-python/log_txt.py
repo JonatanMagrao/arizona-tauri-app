@@ -37,6 +37,3 @@ def append_produtos_log(log_path: Path, dados: dict) -> None:
         f.write("\n=== Produtos Importados ===\n")
         for item in dados.get("imported_files", []):
             f.write(f"✅ {item}\n")
-
-
-

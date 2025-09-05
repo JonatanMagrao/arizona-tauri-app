@@ -55,6 +55,7 @@ function App() {
   };
 
   // ações
+  const openLogFile = async () => run("openLogFile", [], "Não foi possível abrir o arquivo de log.");
   const openJobao = async () => run("openJobao", [jobaoCod], `Não foi possível abrir o Jobão "${jobaoCod}".`);
   const openJobinho = async () => run("openJobinho", [jobaoCod, jobinhoCod], `Não foi possível abrir o Jobinho "${jobinhoCod}".`);
   const abrirAE = async () => run("abrirAE", [jobaoCod, jobinhoCod], `Não foi possível abrir o projeto ${jobinhoCod} no After Effects.`);
@@ -184,6 +185,7 @@ function App() {
             setCopyCode={setCopyCode}
             importProducts={importProducts}
             isImporting={isImporting}
+            openLogFile={openLogFile}
           />
         )}
       </main>

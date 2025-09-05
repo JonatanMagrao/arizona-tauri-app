@@ -18,6 +18,7 @@ from log_txt import (create_temp_log, append_produtos_log)
 from arizona import Arizona
 from config import CONFIG
 from pathlib import Path
+import tempfile
 import os, re, subprocess
 
 _tauri_plugin_functions = [
@@ -32,7 +33,8 @@ _tauri_plugin_functions = [
     "openOut",
     "importProducts",
     "openVideo",
-    "openRoteiro"
+    "openRoteiro",
+    "openLogFile"
 ]
 
 ARIZONA = Arizona(CONFIG)
@@ -210,7 +212,15 @@ def openVideo(jobao_cod,cod_jobinho,media_type="mp4"):
         print(f"Roteiro do '{praca}' não encontrado.")
         return _err("Roteiro não encontrado.")
 
-    os.startfile(video)   
+    os.startfile(video) 
+
+def openLogFile():
+    log_path = Path(tempfile.gettempdir()) / "produtos-log.txt"
+
+    if not log_path.exists():
+        raise FileNotFoundError(f"Log não encontrado em {log_path}")
+    
+    os.startfile(str(log_path))  
 
 def close_folders():
     subprocess.run("taskkill /F /IM explorer.exe && start explorer.exe", shell=True)
@@ -218,5 +228,6 @@ def close_folders():
 if __name__ == "__main__":
     # importProducts("895")
     # openRoteiro("895","15193")
-    openVideo("895","15193")
+    # openVideo("895","15193")
     # close_folders()
+    openLogFile()
