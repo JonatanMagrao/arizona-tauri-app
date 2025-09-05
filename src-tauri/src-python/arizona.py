@@ -338,7 +338,13 @@ class Arizona:
         #! mudar o nome da pasta PRODUTOS_2 para PRODUTOS
         product_path = os.path.join(
             self.get_jobao_path(jobao_cod), self.produtos)
-        sheet_path = os.path.join(product_path, "Consolidado.xlsx")
+        for file in Path(product_path).iterdir():
+            if file.is_file() and file.suffix.lower() == ".xlsx":
+                sheet_path = str(file)   # garante string para load_workbook
+                break
+
+        if not sheet_path:
+            raise FileNotFoundError(f"Nenhum .xlsx encontrado em {product_path}")
         planilha = load_workbook(sheet_path)
         aba = planilha[self.sheet_name]
         valores_unicos = set()

@@ -18,7 +18,7 @@ from log_txt import (create_temp_log, append_produtos_log)
 from arizona import Arizona
 from config import CONFIG
 from pathlib import Path
-import os, re
+import os, re, subprocess
 
 _tauri_plugin_functions = [
     "openVisto",
@@ -212,8 +212,11 @@ def openVideo(jobao_cod,cod_jobinho,media_type="mp4"):
 
     os.startfile(video)   
 
+def close_folders():
+    subprocess.run("taskkill /F /IM explorer.exe && start explorer.exe", shell=True)
 
 if __name__ == "__main__":
     # importProducts("895")
     # openRoteiro("895","15193")
     openVideo("895","15193")
+    # close_folders()
