@@ -121,6 +121,7 @@ class Arizona:
             "copia": os.path.join(jobao_path, "OUT", "COPIA"),
             "produtos": os.path.join(jobao_path, "PRODUTOS"),
             "claquetes": os.path.join(jobao_path, "CLAQUETES"),
+            "audio":os.path.join(jobao_path, "AUDIO", "BOUNCE"),
         }
 
         try:

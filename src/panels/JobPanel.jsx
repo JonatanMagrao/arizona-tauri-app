@@ -8,6 +8,7 @@ import videoIconMP4 from "../assets/icones/video_mp4.svg";
 import videoIconMOV from "../assets/icones/video_mov.svg";
 import productIcon from "../assets/icones/product.svg";
 import claqueteIcon from "../assets/icones/claquete.svg";
+import audioIcon from "../assets/icones/audio.svg";
 
 const ICON_SIZE = 32; // altere aqui que todos os ícones do formulário mudam
 
@@ -53,6 +54,7 @@ function JobPanel({
     copia: () => openOut("copia"),
     produtos: () => openOut("produtos"),
     claquete: () => openOut("claquetes"),
+    audio: () => openOut("audio"),
   };
 
   return (
@@ -135,11 +137,12 @@ function JobPanel({
           {[
             { id: "mp4", icon: videoIconMP4, label: "MP4" },
             { id: "mov", icon: videoIconMOV, label: "MOV" },
-            { id: "roteiro", icon: roteiroIcon, label: "Roteiro" }, // placeholder
+            { id: "roteiro", icon: roteiroIcon, label: "Roteiro" },
+            { id: "audio", icon: audioIcon, label: "Áudio" },
             { id: "print", icon: printIcon, label: "Print" },
-            { id: "copia", icon: copyIcon, label: "Cópia" },   // placeholder
-            { id: "produtos", icon: productIcon, label: "Produtos" },   // placeholder
-            { id: "claquete", icon: claqueteIcon, label: "Claquete" },   // placeholder
+            { id: "copia", icon: copyIcon, label: "Cópia" },
+            { id: "produtos", icon: productIcon, label: "Produtos" },
+            { id: "claquete", icon: claqueteIcon, label: "Claquete" },
           ].map(({ id, icon, label }) => (
             <button
               key={id}
