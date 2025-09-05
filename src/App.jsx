@@ -55,9 +55,11 @@ function App() {
   };
 
   // ações
-  const openJobao = async () => run("openJobao", [jobaoCod], "Não foi possível abrir o Jobão.");
-  const openJobinho = async () => run("openJobinho", [jobaoCod, jobinhoCod], "Não foi possível abrir o Jobinho.");
-  const abrirAE = async () => run("abrirAE", [jobaoCod, jobinhoCod], "Não foi possível abrir o projeto no After Effects.");
+  const openJobao = async () => run("openJobao", [jobaoCod], `Não foi possível abrir o Jobão "${jobaoCod}".`);
+  const openJobinho = async () => run("openJobinho", [jobaoCod, jobinhoCod], `Não foi possível abrir o Jobinho "${jobinhoCod}".`);
+  const abrirAE = async () => run("abrirAE", [jobaoCod, jobinhoCod], `Não foi possível abrir o projeto ${jobinhoCod} no After Effects.`);
+  const openVideo = async (jobaoCod, jobinhoCod, mediaType) => run("openVideo", [jobaoCod, jobinhoCod, mediaType], `Não foi possível abrir o vídeo do projeto "${jobinhoCod}"`);
+  const openRoteiro = async () => run("openRoteiro", [jobaoCod, jobinhoCod], `Não foi possível abrir o roteiro do projeto "${jobinhoCod}"`);
   const openOut = async (opt) => {
     if (isOpeningOut) return;                 // evita chamadas sobrepostas
     setIsOpeningOut(true);
@@ -151,6 +153,8 @@ function App() {
             outOption={outOption}
             setOutOption={setOutOption}
             isOpeningOut={isOpeningOut}
+            openVideo={openVideo}
+            openRoteiro={openRoteiro}
           />
         )}
 

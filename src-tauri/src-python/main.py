@@ -166,7 +166,6 @@ def openRoteiro(jobao_cod,cod_jobinho):
         decupado = rot.stem.split("_")
         if praca in decupado:
             roteiro = rot
-            print(rot)
             break
     
     if praca is None:
@@ -180,13 +179,15 @@ def openRoteiro(jobao_cod,cod_jobinho):
     os.startfile(roteiro)
     
 
-def openVideo(jobao_cod,cod_jobinho):
+def openVideo(jobao_cod,cod_jobinho,media_type="mp4"):
     jobao = ARIZONA.get_jobao_path(jobao_cod)
 
     if not jobao:
         return _err(f'Jobão "{jobao_cod or "(vazio)"}" não encontrado.')
+    
+    pasta = "MP4" if media_type == "mp4" else "MOV"
+    videos = Path(jobao) / "OUT" / "RENDER" / pasta
 
-    videos = Path(jobao) / "OUT" / "RENDER" / "MP4"
     jobinho = Path(jobao) / "PROJETOS" / "AE"
     video = None
     praca = None

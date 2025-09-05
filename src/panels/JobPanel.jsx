@@ -24,6 +24,8 @@ function JobPanel({
   outOption,
   setOutOption,
   isOpeningOut,
+  openVideo,
+  openRoteiro
 }) {
 
   const handleJobaoKeyDown = (e) => {
@@ -57,6 +59,24 @@ function JobPanel({
     audio: () => openOut("audio"),
   };
 
+  // (Opcional) ações alternativas para Shift + Clique, por id
+  const handlersShift = {
+    // Exemplo:
+    mp4: () => openVideo(jobaoCod, jobinhoCod, "mp4"),
+    mov: () => openVideo(jobaoCod, jobinhoCod, "mov"),
+    roteiro: () => openRoteiro(jobaoCod, jobinhoCod),
+    audio: () => alert("abrir audio")
+  };
+
+  // Clique simples mantém o comportamento atual;
+  // Shift + Clique usa handlersShift[id] se existir, senão cai no padrão.
+  const handleUtilClick = (e, id) => {
+    if (!jobaoCod.trim()) return;
+    const isShift = !!e.shiftKey;
+    const fn = isShift ? (handlersShift[id] || handlers[id]) : handlers[id];
+    fn && fn();
+  };
+
   return (
     // sobrescreve a CSS variable --icon-size só dentro deste card
     <div className="card" style={{ '--icon-size': `${ICON_SIZE}px` }}>
@@ -83,7 +103,7 @@ function JobPanel({
           onClick={openJobao}
           disabled={!jobaoCod.trim()}
           aria-label="Buscar Jobão"
-          title="Abri pasta do Jobão"
+          title="Abri pasta do Jobão (Enter)"
         >
           <img src={searchIcon} alt="" aria-hidden="true" />
         </button>
@@ -113,7 +133,7 @@ function JobPanel({
           onClick={openJobinho}
           disabled={!jobaoCod.trim() || !jobinhoCod.trim()}
           aria-label="Buscar Jobinho"
-          title="Abrir pasta do Jobinho"
+          title="Abrir pasta do Jobinho (Enter)"
         >
           <img src={searchIcon} alt="" aria-hidden="true" />
         </button>
@@ -123,7 +143,7 @@ function JobPanel({
           onClick={abrirAE}
           disabled={!jobaoCod.trim() || !jobinhoCod.trim()}
           aria-label="Abrir AE"
-          title="Abrir AE"
+          title="Abrir AE (Shift + Enter)"
         >
           <img src={aeIcon} alt="" aria-hidden="true" />
         </button>
@@ -148,7 +168,7 @@ function JobPanel({
               key={id}
               type="button"
               className="util-square"
-              onClick={handlers[id]}
+              onClick={(e) => handleUtilClick(e, id)}
               disabled={!jobaoCod.trim()}
               title={`Abrir ${label}`}
               aria-label={`Abrir ${label}`}
