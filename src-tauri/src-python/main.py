@@ -19,7 +19,8 @@ from arizona import Arizona
 from config import CONFIG
 from pathlib import Path
 import tempfile
-import os, re, subprocess
+import os
+import re
 
 _tauri_plugin_functions = [
     "openVisto",
@@ -34,7 +35,8 @@ _tauri_plugin_functions = [
     "importProducts",
     "openVideo",
     "openRoteiro",
-    "openLogFile"
+    "openLogFile",
+    "projectName"
 ]
 
 ARIZONA = Arizona(CONFIG)
@@ -154,7 +156,8 @@ def importProducts(jobao_cod):
                 linhas_soltas.append(linha)
 
         # 1) processa códigos soltos
-        codigos_soltos = [linha.split(".")[0].strip() for linha in linhas_soltas if linha.strip()]
+        codigos_soltos = [linha.split(".")[0].strip()
+                          for linha in linhas_soltas if linha.strip()]
         if codigos_soltos:
             res = ARIZONA.importar_produtos(product_path, codigos_soltos)
             imported_normais.extend(res["imported_files"])
@@ -162,7 +165,8 @@ def importProducts(jobao_cod):
 
         # 2) processa grupos no final
         for idx, linha in enumerate(linhas_com_grupo, start=1):
-            partes = [p.strip().split(".")[0] for p in linha.split(";") if p.strip()]
+            partes = [p.strip().split(".")[0]
+                      for p in linha.split(";") if p.strip()]
             subpasta = Path(product_path) / f"produtos_{idx:02d}"
             subpasta.mkdir(parents=True, exist_ok=True)
 
@@ -181,8 +185,10 @@ def importProducts(jobao_cod):
             total_processados = len(codigos_soltos) + sum(
                 len(g["imported_files"]) + len(g["not_found_files"]) for g in grupos_resultados
             )
-            total_importados = len(imported_normais) + sum(len(g["imported_files"]) for g in grupos_resultados)
-            total_nao_encontrados = len(not_found_normais) + sum(len(g["not_found_files"]) for g in grupos_resultados)
+            total_importados = len(
+                imported_normais) + sum(len(g["imported_files"]) for g in grupos_resultados)
+            total_nao_encontrados = len(
+                not_found_normais) + sum(len(g["not_found_files"]) for g in grupos_resultados)
 
             logf.write("=== Resumo Geral ===\n")
             logf.write(f"Total de códigos processados: {total_processados}\n")
@@ -212,13 +218,13 @@ def importProducts(jobao_cod):
                 logf.write("=== Grupos ===\n\n")
                 for g in grupos_resultados:
                     logf.write(f"{g['nome_pasta']}\n")
-                    todos = [(f, True) for f in g["imported_files"]] + [(f, False) for f in g["not_found_files"]]
+                    todos = [(f, True) for f in g["imported_files"]] + \
+                        [(f, False) for f in g["not_found_files"]]
                     for i, (f, ok) in enumerate(todos):
                         prefix = " ┣ " if i < len(todos) - 1 else " ┗ "
                         mark = "✅" if ok else "❌"
                         logf.write(f"{prefix}{mark} {f}\n")
                     logf.write("\n")
-
 
         os.startfile(log_path)
         return _ok()
@@ -227,8 +233,7 @@ def importProducts(jobao_cod):
         return _err(str(e))
 
 
-
-def openRoteiro(jobao_cod,cod_jobinho):
+def openRoteiro(jobao_cod, cod_jobinho):
     jobao = ARIZONA.get_jobao_path(jobao_cod)
 
     if not jobao:
@@ -240,7 +245,7 @@ def openRoteiro(jobao_cod,cod_jobinho):
     roteiro = None
 
     for job in jobinho.iterdir():
-        if re.match(cod_jobinho,job.name):
+        if re.match(cod_jobinho, job.name):
             praca = job.name.split("_")[1]
             break
 
@@ -249,24 +254,24 @@ def openRoteiro(jobao_cod,cod_jobinho):
         if praca in decupado:
             roteiro = rot
             break
-    
+
     if praca is None:
         print(f"Praça não encontrada.")
         return _err("Praça não encontrada.")
-    
+
     if roteiro is None:
         print(f"Roteiro do '{praca}' não encontrado.")
         return _err("Roteiro não encontrado.")
-    
-    os.startfile(roteiro)
-    
 
-def openVideo(jobao_cod,cod_jobinho,media_type="mp4"):
+    os.startfile(roteiro)
+
+
+def openVideo(jobao_cod, cod_jobinho, media_type="mp4"):
     jobao = ARIZONA.get_jobao_path(jobao_cod)
 
     if not jobao:
         return _err(f'Jobão "{jobao_cod or "(vazio)"}" não encontrado.')
-    
+
     pasta = "MP4" if media_type == "mp4" else "MOV"
     videos = Path(jobao) / "OUT" / "RENDER" / pasta
 
@@ -275,39 +280,78 @@ def openVideo(jobao_cod,cod_jobinho,media_type="mp4"):
     praca = None
 
     for job in jobinho.iterdir():
-        if re.match(cod_jobinho,job.name):
+        if re.match(cod_jobinho, job.name):
             praca = job.stem
             break
 
     for vid in videos.iterdir():
-        if re.match(praca,vid.stem):
+        if re.match(praca, vid.stem):
             video = vid
             break
 
     if praca is None:
         print(f"Praça não encontrada.")
         return _err("Praça não encontrada.")
-    
+
     if video is None:
         print(f"Roteiro do '{praca}' não encontrado.")
         return _err("Roteiro não encontrado.")
 
-    os.startfile(video) 
+    os.startfile(video)
+
 
 def openLogFile():
     log_path = Path(tempfile.gettempdir()) / "produtos-log.txt"
 
     if not log_path.exists():
         raise FileNotFoundError(f"Log não encontrado em {log_path}")
-    
-    os.startfile(str(log_path))  
 
-def close_folders():
-    subprocess.run("taskkill /F /IM explorer.exe && start explorer.exe", shell=True)
+    os.startfile(str(log_path))
+
+
+def projectName(jobao_cod, jobinho_cod):
+    jobao = ARIZONA.get_jobao_path(jobao_cod)
+
+    if not jobao:
+        return _err(f'Jobão "{jobao_cod or "(vazio)"}" não encontrado.')
+
+    jobinho = Path(jobao) / "PROJETOS" / "AE"
+    for job in jobinho.iterdir():
+       if re.match(jobinho_cod, job.name):
+        praca_code = job.name.split("_")[1].strip().lower()
+        praca_nome = PRACAS.get(praca_code, praca_code)  # pega da tabela; se não houver, mantém o código
+        return _ok(praca_nome)
+
+
+PRACAS = {
+    "cur": "Curitiba",
+    "df": "Distrito Federal",
+    "bh": "Belo Horizonte",
+    "rj": "Rio de Janeiro",
+    "am": "Amazonas",
+    "poa": "POA",
+    "pe": "Pernambuco",
+    "lon": "Londrina",
+    "sc": "Santa Catarina",
+    "jfo": "JFO",
+    "ubl": "UBL",
+    "cg": "CG",
+    "bcg": "BCG",
+    "es": "Espírito Santo",
+    "go": "Goiás",
+    "rs-int": "Rio Grande do Sul",
+    "al": "Alagoas",
+    "pb": "Paraíba",
+    "rn": "Rio Grande do Norte",
+    "sp2": "São Paulo",
+    "camp": "Campinas",
+    "srjppp": "SRJPPP",
+
+}
 
 if __name__ == "__main__":
     # importProducts("895")
     # openRoteiro("895","15193")
     # openVideo("895","15193")
-    # close_folders()
-    openLogFile()
+    # openLogFile()
+    print(projectName("895", "15180"))

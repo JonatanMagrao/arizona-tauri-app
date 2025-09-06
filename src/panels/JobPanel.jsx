@@ -43,8 +43,8 @@ function JobPanel({
     // Para a combinação de teclas Ctrl + Enter
     if (e.key === "Enter" && e.shiftKey && jobaoCod.trim() && jobinhoCod.trim()) {
       e.preventDefault();
-      //! abrirAE();
-      alert("abrir ae")
+      abrirAE();
+      // alert("abrir ae")
     }
   };
 
