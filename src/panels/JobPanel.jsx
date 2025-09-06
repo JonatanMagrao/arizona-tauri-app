@@ -68,12 +68,22 @@ function JobPanel({
     audio: () => alert("abrir audio")
   };
 
-  // Clique simples mantém o comportamento atual;
-  // Shift + Clique usa handlersShift[id] se existir, senão cai no padrão.
+  // whitelist para Shift+Clique único
+  const SHIFT_SINGLE_ALLOWED = new Set(["mp4", "mov", "roteiro", "audio"]);
+  const ENABLE_SINGLE_CLICK = false; // mude para true p/ voltar a 1-clique
+
+  // double click = comportamento normal (abre pasta)
+  const handleUtilDoubleClick = (e, id) => {
+    if (!jobaoCod.trim()) return;
+    handlers[id]?.(); // duplo clique = ação normal
+  };
+
+  // single click só dispara se Shift estiver pressionado E o id estiver permitido
   const handleUtilClick = (e, id) => {
     if (!jobaoCod.trim()) return;
-    const isShift = !!e.shiftKey;
-    const fn = isShift ? (handlersShift[id] || handlers[id]) : handlers[id];
+    if (ENABLE_SINGLE_CLICK && !e.shiftKey) return handlers[id]?.();
+    if (!e.shiftKey || !SHIFT_SINGLE_ALLOWED.has(id)) return;
+    const fn = handlersShift[id] || handlers[id];
     fn && fn();
   };
 
@@ -100,7 +110,7 @@ function JobPanel({
         <button
           tabIndex="-1"
           className="btn"
-          onClick={openJobao}
+          onDoubleClick={openJobao}
           disabled={!jobaoCod.trim()}
           aria-label="Buscar Jobão"
           title="Abri pasta do Jobão (Enter)"
@@ -130,7 +140,7 @@ function JobPanel({
         <button
           tabIndex="-1"
           className="btn"
-          onClick={openJobinho}
+          onDoubleClick={openJobinho}
           disabled={!jobaoCod.trim() || !jobinhoCod.trim()}
           aria-label="Buscar Jobinho"
           title="Abrir pasta do Jobinho (Enter)"
@@ -140,7 +150,7 @@ function JobPanel({
         <button
           tabIndex="-1"
           className="btn btn-secondary"
-          onClick={abrirAE}
+          onDoubleClick={abrirAE}
           disabled={!jobaoCod.trim() || !jobinhoCod.trim()}
           aria-label="Abrir AE"
           title="Abrir AE (Shift + Enter)"
@@ -152,7 +162,6 @@ function JobPanel({
       {/* Linha Pastas utilitárias – só botões */}
       <div className="form-row form-row--util">
         <div className="util-row" role="toolbar" aria-label="Pastas utilitárias">
-
 
           {[
             { id: "mp4", icon: videoIconMP4, label: "MP4" },
@@ -168,15 +177,17 @@ function JobPanel({
               key={id}
               type="button"
               className="util-square"
-              onClick={(e) => handleUtilClick(e, id)}
+              onClick={(e) => handleUtilClick(e, id)}              // Shift+clique (whitelist)
+              onDoubleClick={(e) => handleUtilDoubleClick(e, id)}  // duplo clique = padrão
               disabled={!jobaoCod.trim()}
-              title={`Abrir ${label}`}
+              title={`Abrir ${label} (Duplo clique) — Shift+Clique: ação rápida${SHIFT_SINGLE_ALLOWED.has(id) ? "" : " (não disponível)"}`}
               aria-label={`Abrir ${label}`}
               tabIndex="-1"
             >
               <img src={icon} alt="" aria-hidden="true" />
             </button>
           ))}
+
         </div>
       </div>
 
