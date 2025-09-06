@@ -136,17 +136,97 @@ def openOut(jobao_cod, option):
 
 
 def importProducts(jobao_cod):
-    product_path, product_list = ARIZONA.images_list_from_xl(jobao_cod)
+    product_path, linhas_visiveis = ARIZONA.get_visible_rows_from_xl(jobao_cod)
 
     try:
-        resultado = ARIZONA.importar_produtos(product_path, product_list)
+        # listas para consolidar resultados
+        imported_normais = []
+        not_found_normais = []
+        grupos_resultados = []
+
+        # separar linhas com ";" (grupos) e sem (soltos)
+        linhas_soltas = []
+        linhas_com_grupo = []
+        for linha in linhas_visiveis:
+            if ";" in linha:
+                linhas_com_grupo.append(linha)
+            else:
+                linhas_soltas.append(linha)
+
+        # 1) processa códigos soltos
+        codigos_soltos = [linha.split(".")[0].strip() for linha in linhas_soltas if linha.strip()]
+        if codigos_soltos:
+            res = ARIZONA.importar_produtos(product_path, codigos_soltos)
+            imported_normais.extend(res["imported_files"])
+            not_found_normais.extend(res["not_found_files"])
+
+        # 2) processa grupos no final
+        for idx, linha in enumerate(linhas_com_grupo, start=1):
+            partes = [p.strip().split(".")[0] for p in linha.split(";") if p.strip()]
+            subpasta = Path(product_path) / f"produtos_{idx:02d}"
+            subpasta.mkdir(parents=True, exist_ok=True)
+
+            res = ARIZONA.importar_produtos(subpasta, partes)
+
+            grupos_resultados.append({
+                "nome_pasta": f"produtos_{idx:02d}",
+                "imported_files": res["imported_files"],
+                "not_found_files": res["not_found_files"]
+            })
+
+        # 3) monta log consolidado
         log_path = create_temp_log()
-        append_produtos_log(log_path, resultado)
-        import os
+        with open(log_path, "w", encoding="utf-8") as logf:
+            # resumo geral
+            total_processados = len(codigos_soltos) + sum(
+                len(g["imported_files"]) + len(g["not_found_files"]) for g in grupos_resultados
+            )
+            total_importados = len(imported_normais) + sum(len(g["imported_files"]) for g in grupos_resultados)
+            total_nao_encontrados = len(not_found_normais) + sum(len(g["not_found_files"]) for g in grupos_resultados)
+
+            logf.write("=== Resumo Geral ===\n")
+            logf.write(f"Total de códigos processados: {total_processados}\n")
+            logf.write(f"Importados: {total_importados}\n")
+            logf.write(f"Não encontrados: {total_nao_encontrados}\n")
+            logf.write(f"Grupos detectados: {len(grupos_resultados)}\n\n")
+
+            # não encontrados (repetidos logo no início)
+            logf.write("=== Produtos Não Encontrados ===\n")
+            for f in not_found_normais:
+                logf.write(f"❌ {f}\n")
+            for g in grupos_resultados:
+                for nf in g["not_found_files"]:
+                    logf.write(f"❌ {nf}\n")
+            logf.write("\n")
+
+            # importados normais
+            logf.write("=== Produtos Importados ===\n")
+            for f in imported_normais:
+                logf.write(f"✅ {f}\n")
+            for nf in not_found_normais:
+                logf.write(f"❌ {nf}\n")
+            logf.write("\n")
+
+            # grupos em formato árvore
+            if grupos_resultados:
+                logf.write("=== Grupos ===\n\n")
+                for g in grupos_resultados:
+                    logf.write(f"{g['nome_pasta']}\n")
+                    todos = [(f, True) for f in g["imported_files"]] + [(f, False) for f in g["not_found_files"]]
+                    for i, (f, ok) in enumerate(todos):
+                        prefix = " ┣ " if i < len(todos) - 1 else " ┗ "
+                        mark = "✅" if ok else "❌"
+                        logf.write(f"{prefix}{mark} {f}\n")
+                    logf.write("\n")
+
+
         os.startfile(log_path)
         return _ok()
+
     except Exception as e:
         return _err(str(e))
+
+
 
 def openRoteiro(jobao_cod,cod_jobinho):
     jobao = ARIZONA.get_jobao_path(jobao_cod)

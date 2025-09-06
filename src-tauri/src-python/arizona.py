@@ -18,6 +18,7 @@ import json
 import subprocess
 import shutil
 from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 from time import sleep
 from datetime import datetime
 from pathlib import Path
@@ -298,6 +299,42 @@ class Arizona:
                     found_files.append(
                         {"nome": file, "path": os.path.join(root, file)})
         return found_files if found_files else [{"nome": "Não existe no Banco de Dados", "path": "./icons/sad.png"}]
+    
+
+    def get_visible_rows_from_xl(self, jobao_cod):
+        """
+        Retorna apenas os valores da 1ª coluna das LINHAS VISÍVEIS (não ocultas).
+        """
+        product_path = os.path.join(self.get_jobao_path(jobao_cod), self.produtos)
+
+        sheet_path = None
+        for file in Path(product_path).iterdir():
+            if file.is_file() and file.suffix.lower() == ".xlsx":
+                sheet_path = str(file)
+                break
+
+        if not sheet_path:
+            raise FileNotFoundError(f"Nenhum .xlsx encontrado em {product_path}")
+
+        wb = load_workbook(sheet_path)
+        ws = wb[self.sheet_name]
+
+        valores = []
+        for row_idx in range(ws.min_row, ws.max_row + 1):
+            # ignora linha oculta
+            if ws.row_dimensions[row_idx].hidden:
+                continue
+
+            cell_value = ws.cell(row=row_idx, column=1).value
+            if cell_value is None:
+                continue
+
+            txt = str(cell_value).strip()
+            if txt:
+                valores.append(txt)
+
+        wb.close()
+        return product_path, valores
 
     def importar_produtos(self, dstn_folder, lista_codigos):
         origem = Path(self.product_folder_path)
