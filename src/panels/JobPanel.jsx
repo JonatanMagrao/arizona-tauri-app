@@ -70,7 +70,7 @@ function JobPanel({
 
   // whitelist para Shift+Clique único
   const SHIFT_SINGLE_ALLOWED = new Set(["mp4", "mov", "roteiro", "audio"]);
-  const ENABLE_SINGLE_CLICK = false; // mude para true p/ voltar a 1-clique
+  const ENABLE_SINGLE_CLICK = true; // mude para true p/ voltar a 1-clique
 
   // double click = comportamento normal (abre pasta)
   const handleUtilDoubleClick = (e, id) => {
@@ -110,7 +110,7 @@ function JobPanel({
         <button
           tabIndex="-1"
           className="btn"
-          onDoubleClick={openJobao}
+          onClick={openJobao}
           disabled={!jobaoCod.trim()}
           aria-label="Buscar Jobão"
           title="Abri pasta do Jobão (Enter)"
@@ -140,7 +140,7 @@ function JobPanel({
         <button
           tabIndex="-1"
           className="btn"
-          onDoubleClick={openJobinho}
+          onClick={openJobinho}
           disabled={!jobaoCod.trim() || !jobinhoCod.trim()}
           aria-label="Buscar Jobinho"
           title="Abrir pasta do Jobinho (Enter)"
@@ -150,7 +150,7 @@ function JobPanel({
         <button
           tabIndex="-1"
           className="btn btn-secondary"
-          onDoubleClick={abrirAE}
+          onClick={abrirAE}
           disabled={!jobaoCod.trim() || !jobinhoCod.trim()}
           aria-label="Abrir AE"
           title="Abrir AE (Shift + Enter)"
