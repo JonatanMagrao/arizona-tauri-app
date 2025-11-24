@@ -5,6 +5,7 @@ import LinksPanel from "./panels/LinksPanel";
 import CopyPanel from "./panels/CopyPanel";
 import "./App.css";
 import previewImg from "./assets/hierarquia_pracas.jpg";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 // ÍCONES (svg como imagem)
 import pastaIcon from "./assets/icones/project.svg";
@@ -56,7 +57,7 @@ function App() {
 
   // ações
   const openLogFile = async () => run("openLogFile", [], "Não foi possível abrir o arquivo de log.");
-  const projectName = async () => run("projectName", [jobaoCod,jobinhoCod], "Não foi possível recuperar o nome do projeto.");
+  const projectName = async () => run("projectName", [jobaoCod, jobinhoCod], "Não foi possível recuperar o nome do projeto.");
   const openJobao = async () => run("openJobao", [jobaoCod], `Não foi possível abrir o Jobão "${jobaoCod}".`);
   const openJobinho = async () => run("openJobinho", [jobaoCod, jobinhoCod], `Não foi possível abrir o Jobinho "${jobinhoCod}".`);
   const abrirAE = async () => run("abrirAE", [jobaoCod, jobinhoCod], `Não foi possível abrir o projeto ${jobinhoCod} no After Effects.`);
@@ -93,6 +94,10 @@ function App() {
       setIsImporting(false);
     }
   };
+
+  const handleOnTop = async (onTop) => {
+    await getCurrentWindow().setAlwaysOnTop(onTop);
+  }
 
   return (
     <div className="layout layout--with-leftbar">
@@ -139,6 +144,13 @@ function App() {
         >
           <img src={imageIcon} alt="Praças CRF" />
         </button>
+        <div>
+          <input
+            type="checkbox"
+            title="Manter sempre no topo"
+            onChange={(e) => handleOnTop(e.target.checked)}
+          />
+        </div>
       </aside>
 
       <main className="content">

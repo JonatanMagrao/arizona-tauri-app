@@ -1,5 +1,5 @@
 CONFIG = {
-    "ae_version": "2025",
-    "drive": "J:\\Drives compartilhados",
-    "produtos":"PRODUTOS_2"
+    "ae_version": "2024",
+    "drive": "I:\\Drives compartilhados",
+    "produtos":"PRODUTOS"
 }
