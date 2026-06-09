@@ -8,22 +8,15 @@
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "disable-cargo-config": "python scripts/handle_cargo_config.py disable",
-    "enable-cargo-config": "python scripts/handle_cargo_config.py enable",
-    "set:env": "python scripts/set_resources_mode.py",
-    "embed-python": "python scripts/embed_python.py",
-    "setup-cargo": "python scripts/setup_cargo_config.py",
-    "python": "python src-tauri/src-python/main.py",
     "tauri:clean": "cd src-tauri && cargo clean",
-    "tauri:dev": "npm run set:env dev && npm run disable-cargo-config && tauri dev",
-    "tauri:build": "npm run set:env release && npm run embed-python && npm run enable-cargo-config && tauri build"
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0",
-    "tauri-plugin-python-api": "^0.3.4"
+    "react-dom": "^19.1.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

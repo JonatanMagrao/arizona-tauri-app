@@ -30,11 +30,6 @@
     ],
     "icon": [
       "icons/arizona_icon.ico"
-    ],
-    "resources": {
-      "src-python/": "src-python/",
-      "../.venv/Include/": "src-python/.venv/Include/",
-      "../.venv/Lib/": "src-python/.venv/Lib/"
-    }
+    ]
   }
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { callFunction } from "tauri-plugin-python-api";
+import { invoke } from "@tauri-apps/api/core";
 import JobPanel from "./panels/JobPanel";
 import LinksPanel from "./panels/LinksPanel";
 import CopyPanel from "./panels/CopyPanel";
@@ -47,7 +47,7 @@ function App() {
   // Helper: chama Python e mostra toast se vier erro ou exception
   const run = async (fnName, args, fallbackMsg) => {
     try {
-      const res = await callFunction(fnName, args);
+      const res = await invoke(fnName, args);
       if (res && res.ok === false) showError(res.message || fallbackMsg);
       // quando ok==true, não faz nada
     } catch (e) {
@@ -56,35 +56,35 @@ function App() {
   };
 
   // ações
-  const openLogFile = async () => run("openLogFile", [], "Não foi possível abrir o arquivo de log.");
-  const projectName = async () => run("projectName", [jobaoCod, jobinhoCod], "Não foi possível recuperar o nome do projeto.");
-  const openJobao = async () => run("openJobao", [jobaoCod], `Não foi possível abrir o Jobão "${jobaoCod}".`);
-  const openJobinho = async () => run("openJobinho", [jobaoCod, jobinhoCod], `Não foi possível abrir o Jobinho "${jobinhoCod}".`);
-  const abrirAE = async () => run("abrirAE", [jobaoCod, jobinhoCod], `Não foi possível abrir o projeto ${jobinhoCod} no After Effects.`);
-  const openVideo = async (jobaoCod, jobinhoCod, mediaType) => run("openVideo", [jobaoCod, jobinhoCod, mediaType], `Não foi possível abrir o vídeo do projeto "${jobinhoCod}"`);
-  const openRoteiro = async () => run("openRoteiro", [jobaoCod, jobinhoCod], `Não foi possível abrir o roteiro do projeto "${jobinhoCod}"`);
+  const openLogFile = async () => run("open_log_file", {}, "Não foi possível abrir o arquivo de log.");
+  const projectName = async () => run("project_name", { jobaoCod, jobinhoCod }, "Não foi possível recuperar o nome do projeto.");
+  const openJobao = async () => run("open_jobao", { jobaoCod }, `Não foi possível abrir o Jobão "${jobaoCod}".`);
+  const openJobinho = async () => run("open_jobinho", { jobaoCod, jobinhoCod }, `Não foi possível abrir o Jobinho "${jobinhoCod}".`);
+  const abrirAE = async () => run("abrir_ae", { jobaoCod, jobinhoCod }, `Não foi possível abrir o projeto ${jobinhoCod} no After Effects.`);
+  const openVideo = async (jobaoCod, jobinhoCod, mediaType) => run("open_video", { jobaoCod, jobinhoCod, mediaType }, `Não foi possível abrir o vídeo do projeto "${jobinhoCod}"`);
+  const openRoteiro = async () => run("open_roteiro", { jobaoCod, jobinhoCod }, `Não foi possível abrir o roteiro do projeto "${jobinhoCod}"`);
   const openOut = async (opt) => {
     if (isOpeningOut) return;                 // evita chamadas sobrepostas
     setIsOpeningOut(true);
     const chosen = opt ?? outOption;          // usa o param se vier, senão o estado atual
     try {
-      await run("openOut", [jobaoCod, chosen], "Não foi possível abrir a pasta OUT/RENDER.");
+      await run("open_out", { jobaoCod, option: chosen }, "Não foi possível abrir a pasta OUT/RENDER.");
     } finally {
       setIsOpeningOut(false);
     }
   };
 
-  const openVisto = async () => run("openVisto", [], "Falha ao abrir o Visto.");
-  const openPip = async () => run("openPip", [], "Falha ao abrir o Pip.");
-  const openBitrix = async () => run("openBitrix", [], "Falha ao abrir o Bitrix.");
-  const openClaro = async () => run("openClaro", [], "Falha ao abrir o Claro.");
-  const openLinks = async () => run("openLinks", [], "Falha ao abrir os links.");
+  const openVisto = async () => run("open_visto", {}, "Falha ao abrir o Visto.");
+  const openPip = async () => run("open_pip", {}, "Falha ao abrir o Pip.");
+  const openBitrix = async () => run("open_bitrix", {}, "Falha ao abrir o Bitrix.");
+  const openClaro = async () => run("open_claro", {}, "Falha ao abrir o Claro.");
+  const openLinks = async () => run("open_links", {}, "Falha ao abrir os links.");
 
   // ação de copiar arquivos — COM LOADING
   const importProducts = async () => {
     setIsImporting(true);
     try {
-      const res = await callFunction("importProducts", [copyCode]);
+      const res = await invoke("import_products", { jobaoCod: copyCode });
       if (res && res.ok === false) {
         showError(res.message || "Não foi possível copiar os arquivos.");
       }
