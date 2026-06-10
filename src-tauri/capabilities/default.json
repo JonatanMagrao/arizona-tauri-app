@@ -7,7 +7,9 @@
   ],
   "permissions": [
     "core:default",
+    "dialog:allow-open",
     "opener:default",
-    "core:window:allow-set-always-on-top"
+    "core:window:allow-set-always-on-top",
+    "core:window:allow-set-title"
   ]
 }

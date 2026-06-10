@@ -294,6 +294,10 @@ html, body, #root, .content{ overflow-x: hidden; }
   border-color: #5a1f2a;
   background: linear-gradient(180deg, rgba(255,99,132,.12), transparent), #1a1216;
 }
+.toast--success{
+  border-color: #1f5a34;
+  background: linear-gradient(180deg, rgba(34,197,94,.12), transparent), #121a16;
+}
 .toast__text{ font-size: 14px; line-height: 1.2; opacity: .95; }
 .toast__close{
   margin-left: auto;
@@ -414,4 +418,111 @@ textarea:focus{
 .util-square:focus-visible{
   outline: 2px solid var(--primary);
   outline-offset: 2px;
+}
+
+/* ===== Modal de configurações ===== */
+.modal-backdrop{
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0,0,0,.52);
+  display: grid;
+  place-items: center;
+  padding: 12px;
+}
+
+.settings-modal{
+  width: min(440px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,0)), var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 18px 46px rgba(0,0,0,.42), var(--shadow-inset);
+}
+
+.settings-modal__header{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-modal__header h2{
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.2;
+  font-weight: 700;
+}
+
+.modal-icon-btn{
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--outline);
+  border-radius: 8px;
+  background: #1a1c1f;
+  color: var(--text);
+  cursor: pointer;
+  line-height: 1;
+  font-size: 18px;
+}
+
+.modal-icon-btn:hover{
+  border-color: var(--primary);
+  background: var(--btn-bg-hover);
+}
+
+.settings-form{
+  display: grid;
+  gap: 8px;
+  padding: 10px 14px 12px;
+}
+
+.settings-field{
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.settings-field span{
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.1;
+}
+
+.settings-drive-row{
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 8px;
+  align-items: center;
+}
+
+.settings-drive-input{
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-short-input{
+  width: 140px;
+  justify-self: start;
+}
+
+.settings-actions{
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.settings-actions .btn,
+.settings-drive-row .btn{
+  min-height: 34px;
+  padding: 8px 12px;
+  border-radius: 9px;
 }

@@ -10,9 +10,8 @@ use std::{
 };
 use zip::ZipArchive;
 
-const AE_VERSION: &str = "2024";
-const DRIVE_ROOT: &str = r"I:\Drives compartilhados";
-const PRODUTOS_FOLDER: &str = "PRODUTOS";
+use crate::settings::AppConfig;
+
 const SHEET_NAME: &str = "Consolidado";
 
 #[derive(Serialize)]
@@ -70,11 +69,12 @@ pub struct Arizona {
 }
 
 impl Arizona {
-    pub fn new() -> Self {
-        let drive_root = PathBuf::from(DRIVE_ROOT);
+    pub fn new(config: AppConfig) -> Self {
+        let drive_root = PathBuf::from(&config.drive);
         let carrefour_path = drive_root.join("Phx CRF");
         let after_fx = PathBuf::from(format!(
-            "C:/Program Files/Adobe/Adobe After Effects {AE_VERSION}/Support Files/AfterFX.exe"
+            "C:/Program Files/Adobe/Adobe After Effects {}/Support Files/AfterFX.exe",
+            config.ae_version
         ));
         let product_folder_path = carrefour_path
             .join("CARREFOUR")
@@ -83,7 +83,7 @@ impl Arizona {
         let meses = build_month_labels(&carrefour_path, 2);
 
         Self {
-            produtos: PRODUTOS_FOLDER.to_string(),
+            produtos: config.produtos,
             carrefour_path,
             after_fx,
             product_folder_path,
@@ -176,7 +176,7 @@ impl Arizona {
         Ok(())
     }
 
-    pub fn abrir_jobinho(&self, jobao_cod: &str, jobinho_cod: &str) -> Result<(), String> {
+    pub fn abrir_jobinho(&self, jobao_cod: &str, jobinho_cod: &str) -> Result<String, String> {
         let jobao_path = self.get_jobao_path(jobao_cod)?.join("PROJETOS").join("AE");
         let reg_exp = Regex::new(&format!(r"{}_", jobinho_cod)).map_err(|err| err.to_string())?;
 
@@ -191,12 +191,13 @@ impl Arizona {
 
             let name = entry.file_name().to_string_lossy().into_owned();
             if reg_exp.is_match(&name) {
+                let project_title = project_title_from_aep_name(&name, jobao_cod, jobinho_cod);
                 Command::new(&self.after_fx)
                     .arg("-project")
                     .arg(path)
                     .spawn()
                     .map_err(|err| err.to_string())?;
-                return Ok(());
+                return Ok(project_title);
             }
         }
 
@@ -211,7 +212,7 @@ impl Arizona {
             "roteiro" => jobao_path.join("ROTEIRO").join("LOCUCAO"),
             "print" => jobao_path.join("OUT").join("PRINT"),
             "copia" => jobao_path.join("OUT").join("COPIA"),
-            "produtos" => jobao_path.join("PRODUTOS"),
+            "produtos" => jobao_path.join(&self.produtos),
             "claquetes" => jobao_path.join("CLAQUETES"),
             "audio" => jobao_path.join("AUDIO").join("BOUNCE"),
             _ => {
@@ -473,12 +474,11 @@ impl Arizona {
             let entry = entry.map_err(|err| err.to_string())?;
             let name = entry.file_name().to_string_lossy().into_owned();
             if reg_exp.is_match(&name) {
-                let praca_code = name
-                    .split('_')
-                    .nth(1)
-                    .map(|part| part.trim().to_lowercase())
-                    .unwrap_or_default();
-                return Ok(ActionResponse::ok_message(praca_name(&praca_code)));
+                return Ok(ActionResponse::ok_message(project_title_from_aep_name(
+                    &name,
+                    jobao_cod,
+                    jobinho_cod,
+                )));
             }
         }
 
@@ -786,6 +786,33 @@ fn products_log_path() -> PathBuf {
     std::env::temp_dir().join("produtos-log.txt")
 }
 
+fn project_title_from_aep_name(
+    file_name: &str,
+    jobao_cod: &str,
+    fallback_jobinho_cod: &str,
+) -> String {
+    let stem = Path::new(file_name)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or(file_name);
+    let mut parts = stem.split('_');
+    let jobinho = parts
+        .next()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(fallback_jobinho_cod)
+        .trim();
+    let region = parts
+        .next()
+        .map(|value| value.trim().to_uppercase())
+        .unwrap_or_default();
+
+    if region.is_empty() {
+        format!("{} - {}", jobao_cod.trim(), jobinho)
+    } else {
+        format!("{} - {} - {}", jobao_cod.trim(), jobinho, region)
+    }
+}
+
 fn write_products_log(
     imported_normais: &[String],
     not_found_normais: &[String],
@@ -862,33 +889,4 @@ fn write_products_log(
     }
 
     Ok(())
-}
-
-fn praca_name(code: &str) -> String {
-    match code {
-        "cur" => "Curitiba",
-        "df" => "Distrito Federal",
-        "bh" => "Belo Horizonte",
-        "rj" => "Rio de Janeiro",
-        "am" => "Amazonas",
-        "poa" => "POA",
-        "pe" => "Pernambuco",
-        "lon" => "Londrina",
-        "sc" => "Santa Catarina",
-        "jfo" => "JFO",
-        "ubl" => "UBL",
-        "cg" => "CG",
-        "bcg" => "BCG",
-        "es" => "Espírito Santo",
-        "go" => "Goiás",
-        "rs-int" => "Rio Grande do Sul",
-        "al" => "Alagoas",
-        "pb" => "Paraíba",
-        "rn" => "Rio Grande do Norte",
-        "sp2" => "São Paulo",
-        "camp" => "Campinas",
-        "srjppp" => "SRJPPP",
-        value => value,
-    }
-    .to_string()
 }
