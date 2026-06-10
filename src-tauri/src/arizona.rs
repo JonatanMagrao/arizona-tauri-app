@@ -60,6 +60,18 @@ struct GroupResult {
     not_found_files: Vec<String>,
 }
 
+#[derive(Clone)]
+pub struct OpenedProject {
+    pub jobao_cod: String,
+    pub jobinho_cod: String,
+    pub region: Option<String>,
+    pub jobao_path: PathBuf,
+    pub ae_project_path: PathBuf,
+    pub mp4_path: Option<PathBuf>,
+    pub mov_path: Option<PathBuf>,
+    pub project_title: String,
+}
+
 pub struct Arizona {
     produtos: String,
     carrefour_path: PathBuf,
@@ -176,28 +188,64 @@ impl Arizona {
         Ok(())
     }
 
-    pub fn abrir_jobinho(&self, jobao_cod: &str, jobinho_cod: &str) -> Result<String, String> {
-        let jobao_path = self.get_jobao_path(jobao_cod)?.join("PROJETOS").join("AE");
-        let reg_exp = Regex::new(&format!(r"{}_", jobinho_cod)).map_err(|err| err.to_string())?;
+    pub fn abrir_jobinho(
+        &self,
+        jobao_cod: &str,
+        jobinho_cod: &str,
+    ) -> Result<OpenedProject, String> {
+        let project = self.project_open_info(jobao_cod, jobinho_cod)?;
+        self.open_after_project(&project.ae_project_path)?;
+        Ok(project)
+    }
 
-        for entry in fs::read_dir(&jobao_path)
-            .map_err(|err| format!("Erro ao ler {}: {err}", jobao_path.display()))?
+    pub fn open_after_project(&self, project_path: &Path) -> Result<(), String> {
+        Command::new(&self.after_fx)
+            .arg("-project")
+            .arg(project_path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    }
+
+    fn project_open_info(
+        &self,
+        jobao_cod: &str,
+        jobinho_cod: &str,
+    ) -> Result<OpenedProject, String> {
+        let jobinho_cod = jobinho_cod.trim();
+        let jobao_path = self.get_jobao_path(jobao_cod)?;
+        let ae_folder = jobao_path.join("PROJETOS").join("AE");
+        let reg_exp = Regex::new(&format!(r"{}_", regex::escape(jobinho_cod)))
+            .map_err(|err| err.to_string())?;
+
+        for entry in fs::read_dir(&ae_folder)
+            .map_err(|err| format!("Erro ao ler {}: {err}", ae_folder.display()))?
         {
             let entry = entry.map_err(|err| err.to_string())?;
-            let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("aep") {
+            let ae_project_path = entry.path();
+            if ae_project_path.extension().and_then(|ext| ext.to_str()) != Some("aep") {
                 continue;
             }
 
             let name = entry.file_name().to_string_lossy().into_owned();
             if reg_exp.is_match(&name) {
+                let project_stem = ae_project_path
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .unwrap_or("")
+                    .to_string();
                 let project_title = project_title_from_aep_name(&name, jobao_cod, jobinho_cod);
-                Command::new(&self.after_fx)
-                    .arg("-project")
-                    .arg(path)
-                    .spawn()
-                    .map_err(|err| err.to_string())?;
-                return Ok(project_title);
+
+                return Ok(OpenedProject {
+                    jobao_cod: jobao_cod.trim().to_string(),
+                    jobinho_cod: jobinho_cod.trim().to_string(),
+                    region: region_from_aep_name(&name),
+                    mp4_path: find_video_path(&jobao_path, &project_stem, "mp4"),
+                    mov_path: find_video_path(&jobao_path, &project_stem, "mov"),
+                    jobao_path,
+                    ae_project_path,
+                    project_title,
+                });
             }
         }
 
@@ -399,54 +447,37 @@ impl Arizona {
         cod_jobinho: &str,
         media_type: &str,
     ) -> Result<ActionResponse, String> {
-        let jobao = self.get_jobao_path(jobao_cod)?;
-        let pasta = if media_type == "mp4" { "MP4" } else { "MOV" };
-        let videos = jobao.join("OUT").join("RENDER").join(pasta);
-        let jobinho = jobao.join("PROJETOS").join("AE");
-        let reg_exp = Regex::new(&format!("^{}", cod_jobinho)).map_err(|err| err.to_string())?;
+        self.handle_video(jobao_cod, cod_jobinho, media_type, open_start_file)
+    }
 
-        let mut praca = None;
-        for entry in fs::read_dir(&jobinho)
-            .map_err(|err| format!("Erro ao ler {}: {err}", jobinho.display()))?
-        {
-            let entry = entry.map_err(|err| err.to_string())?;
-            let path = entry.path();
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if reg_exp.is_match(&name) {
-                praca = path
-                    .file_stem()
-                    .and_then(|stem| stem.to_str())
-                    .map(|stem| stem.to_string());
-                break;
-            }
-        }
+    pub fn reveal_video(
+        &self,
+        jobao_cod: &str,
+        cod_jobinho: &str,
+        media_type: &str,
+    ) -> Result<ActionResponse, String> {
+        self.handle_video(jobao_cod, cod_jobinho, media_type, reveal_in_explorer)
+    }
 
-        let Some(praca) = praca else {
-            return Ok(ActionResponse::err("Praça não encontrada."));
+    fn handle_video(
+        &self,
+        jobao_cod: &str,
+        cod_jobinho: &str,
+        media_type: &str,
+        opener: fn(&Path) -> Result<(), String>,
+    ) -> Result<ActionResponse, String> {
+        let project = self.project_open_info(jobao_cod, cod_jobinho)?;
+        let video = match media_type {
+            "mp4" => project.mp4_path,
+            "mov" => project.mov_path,
+            _ => None,
         };
-
-        let praca_exp = Regex::new(&format!("^{}", praca)).map_err(|err| err.to_string())?;
-        let mut video = None;
-        for entry in fs::read_dir(&videos)
-            .map_err(|err| format!("Erro ao ler {}: {err}", videos.display()))?
-        {
-            let entry = entry.map_err(|err| err.to_string())?;
-            let path = entry.path();
-            let stem = path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .unwrap_or("");
-            if praca_exp.is_match(stem) {
-                video = Some(path);
-                break;
-            }
-        }
 
         let Some(video) = video else {
-            return Ok(ActionResponse::err("Roteiro não encontrado."));
+            return Ok(ActionResponse::err("Vídeo não encontrado."));
         };
 
-        open_start_file(&video)?;
+        opener(&video)?;
         Ok(ActionResponse::ok())
     }
 
@@ -559,7 +590,7 @@ fn open_with_shell(target: &str) -> Result<(), String> {
         .map_err(|err| err.to_string())
 }
 
-fn open_start_file(path: &Path) -> Result<(), String> {
+pub(crate) fn open_start_file(path: &Path) -> Result<(), String> {
     Command::new("cmd")
         .args(["/C", "start", ""])
         .arg(path)
@@ -568,8 +599,17 @@ fn open_start_file(path: &Path) -> Result<(), String> {
         .map_err(|err| err.to_string())
 }
 
-fn open_explorer(path: &Path) -> Result<(), String> {
+pub(crate) fn open_explorer(path: &Path) -> Result<(), String> {
     Command::new("explorer")
+        .arg(path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|err| err.to_string())
+}
+
+pub(crate) fn reveal_in_explorer(path: &Path) -> Result<(), String> {
+    Command::new("explorer")
+        .arg("/select,")
         .arg(path)
         .spawn()
         .map(|_| ())
@@ -784,6 +824,38 @@ fn first_code_part(value: &str) -> Option<String> {
 
 fn products_log_path() -> PathBuf {
     std::env::temp_dir().join("produtos-log.txt")
+}
+
+fn find_video_path(jobao_path: &Path, project_stem: &str, media_type: &str) -> Option<PathBuf> {
+    let pasta = match media_type {
+        "mp4" => "MP4",
+        "mov" => "MOV",
+        _ => return None,
+    };
+    let videos = jobao_path.join("OUT").join("RENDER").join(pasta);
+    let reg_exp = Regex::new(&format!("^{}", regex::escape(project_stem))).ok()?;
+
+    for entry in fs::read_dir(&videos).ok()?.flatten() {
+        let path = entry.path();
+        let stem = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("");
+        if reg_exp.is_match(stem) {
+            return Some(path);
+        }
+    }
+
+    None
+}
+
+fn region_from_aep_name(file_name: &str) -> Option<String> {
+    Path::new(file_name)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .and_then(|stem| stem.split('_').nth(1))
+        .map(|value| value.trim().to_uppercase())
+        .filter(|value| !value.is_empty())
 }
 
 fn project_title_from_aep_name(

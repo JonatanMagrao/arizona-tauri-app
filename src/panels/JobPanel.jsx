@@ -25,6 +25,7 @@ function JobPanel({
   setOutOption,
   isOpeningOut,
   openVideo,
+  revealVideo,
   openRoteiro
 }) {
 
@@ -48,9 +49,14 @@ function JobPanel({
     }
   };
 
+  const openMedia = (mediaType) => {
+    if (jobinhoCod.trim()) return revealVideo(jobaoCod, jobinhoCod, mediaType);
+    return openOut(mediaType);
+  };
+
   const handlers = {
-    mp4: () => openOut("mp4"),
-    mov: () => openOut("mov"),
+    mp4: () => openMedia("mp4"),
+    mov: () => openMedia("mov"),
     roteiro: () => openOut("roteiro"),
     print: () => openOut("print"),
     copia: () => openOut("copia"),

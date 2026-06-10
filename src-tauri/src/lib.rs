@@ -1,4 +1,5 @@
 mod arizona;
+mod history;
 mod settings;
 
 use arizona::{ActionResponse, Arizona};
@@ -22,8 +23,17 @@ pub fn run() {
             open_out,
             import_products,
             open_video,
+            reveal_video,
             open_roteiro,
             open_log_file,
+            history_list,
+            history_clear,
+            history_open_jobao_folder,
+            history_reveal_after_project,
+            history_open_after_project,
+            history_reveal_media,
+            history_open_media,
+            history_refresh_entry,
             project_name,
             load_app_config,
             save_app_config
@@ -118,7 +128,10 @@ fn abrir_ae(
     arizona.get_jobao_path(&jobao_cod)?;
 
     Ok(match arizona.abrir_jobinho(&jobao_cod, &jobinho_cod) {
-        Ok(project_title) => ActionResponse::ok_message(project_title),
+        Ok(project) => {
+            history::record_project_opened(&app, &project)?;
+            ActionResponse::ok_message(project.project_title)
+        }
         Err(err) => ActionResponse::err(err),
     })
 }
@@ -156,6 +169,16 @@ fn open_video(
 }
 
 #[tauri::command]
+fn reveal_video(
+    app: AppHandle,
+    jobao_cod: String,
+    jobinho_cod: String,
+    media_type: String,
+) -> Result<ActionResponse, String> {
+    arizona_from_app(&app)?.reveal_video(&jobao_cod, &jobinho_cod, &media_type)
+}
+
+#[tauri::command]
 fn open_roteiro(
     app: AppHandle,
     jobao_cod: String,
@@ -167,6 +190,61 @@ fn open_roteiro(
 #[tauri::command]
 fn open_log_file(app: AppHandle) -> Result<ActionResponse, String> {
     arizona_from_app(&app)?.open_log_file()?;
+    Ok(ActionResponse::ok())
+}
+
+#[tauri::command]
+fn history_list(app: AppHandle) -> Result<Vec<history::HistoryEntry>, String> {
+    history::list(&app)
+}
+
+#[tauri::command]
+fn history_clear(app: AppHandle) -> Result<ActionResponse, String> {
+    history::clear(&app)?;
+    Ok(ActionResponse::ok())
+}
+
+#[tauri::command]
+fn history_open_jobao_folder(app: AppHandle, id: i64) -> Result<ActionResponse, String> {
+    history::open_jobao_folder(&app, id)?;
+    Ok(ActionResponse::ok())
+}
+
+#[tauri::command]
+fn history_reveal_after_project(app: AppHandle, id: i64) -> Result<ActionResponse, String> {
+    history::reveal_after_project(&app, id)?;
+    Ok(ActionResponse::ok())
+}
+
+#[tauri::command]
+fn history_open_after_project(app: AppHandle, id: i64) -> Result<ActionResponse, String> {
+    history::open_after_project(&app, id)?;
+    Ok(ActionResponse::ok())
+}
+
+#[tauri::command]
+fn history_reveal_media(
+    app: AppHandle,
+    id: i64,
+    media_type: String,
+) -> Result<ActionResponse, String> {
+    history::reveal_media(&app, id, &media_type)?;
+    Ok(ActionResponse::ok())
+}
+
+#[tauri::command]
+fn history_open_media(
+    app: AppHandle,
+    id: i64,
+    media_type: String,
+) -> Result<ActionResponse, String> {
+    history::open_media(&app, id, &media_type)?;
+    Ok(ActionResponse::ok())
+}
+
+#[tauri::command]
+fn history_refresh_entry(app: AppHandle, id: i64) -> Result<ActionResponse, String> {
+    history::refresh_entry(&app, id)?;
     Ok(ActionResponse::ok())
 }
 

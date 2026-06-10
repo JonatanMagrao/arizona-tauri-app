@@ -4,6 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import JobPanel from "./panels/JobPanel";
 import LinksPanel from "./panels/LinksPanel";
 import CopyPanel from "./panels/CopyPanel";
+import HistoryWindow from "./HistoryWindow";
 import "./App.css";
 import previewImg from "./assets/hierarquia_pracas.jpg";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -13,6 +14,7 @@ import pastaIcon from "./assets/icones/project.svg";
 import linkIcon from "./assets/icones/link.svg";
 import imageIcon from "./assets/icones/hierarchy.svg";
 import copyIcon from "./assets/icones/folder.svg"; // você pode trocar por outro ícone depois
+import historyIcon from "./assets/icones/history.svg";
 import settingsIcon from "./assets/icones/settings.svg";
 
 const TABS = { JOBS: "jobs", LINKS: "links", IMAGE: "image", COPY: "copy" };
@@ -34,6 +36,7 @@ function App() {
   const [appConfig, setAppConfig] = useState(DEFAULT_SETTINGS);
   const [settingsDraft, setSettingsDraft] = useState(DEFAULT_SETTINGS);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [isChoosingDrive, setIsChoosingDrive] = useState(false);
 
@@ -93,7 +96,7 @@ function App() {
   const setProjectWindowTitle = async (projectTitle) => {
     if (!projectTitle) return;
     try {
-      await getCurrentWindow().setTitle(`Arizona App - ${projectTitle}`);
+      await getCurrentWindow().setTitle(projectTitle);
     } catch (e) {
       // O After abriu; falha no título não deve bloquear o fluxo principal.
     }
@@ -165,6 +168,7 @@ function App() {
     }
   };
   const openVideo = async (jobaoCod, jobinhoCod, mediaType) => run("open_video", { jobaoCod, jobinhoCod, mediaType }, `Não foi possível abrir o vídeo do projeto "${jobinhoCod}"`);
+  const revealVideo = async (jobaoCod, jobinhoCod, mediaType) => run("reveal_video", { jobaoCod, jobinhoCod, mediaType }, `Não foi possível localizar o vídeo do projeto "${jobinhoCod}"`);
   const openRoteiro = async () => run("open_roteiro", { jobaoCod, jobinhoCod }, `Não foi possível abrir o roteiro do projeto "${jobinhoCod}"`);
   const openOut = async (opt) => {
     if (isOpeningOut) return;                 // evita chamadas sobrepostas
@@ -257,7 +261,7 @@ function App() {
           <img src={pastaIcon} alt="Projetos" />
         </button>
 
-        {/* COPY (nova aba) */}
+        {/* COPY (nova aba)
         <button
           className={`icon-tab ${activeTab === TABS.COPY ? "icon-tab--active" : ""}`}
           onClick={() => setActiveTab(TABS.COPY)}
@@ -267,6 +271,7 @@ function App() {
         >
           <img src={copyIcon} alt="Copiar Arquivos" />
         </button>
+        */}
 
         {/* LINKS */}
         {/* <button
@@ -287,6 +292,15 @@ function App() {
           aria-label="Praças CRF"
         >
           <img src={imageIcon} alt="Praças CRF" />
+        </button>
+        <button
+          className="icon-tab"
+          onClick={() => setHistoryOpen(true)}
+          tabIndex="-1"
+          title="Histórico"
+          aria-label="Histórico"
+        >
+          <img src={historyIcon} alt="Histórico" />
         </button>
         <button
           className="icon-tab"
@@ -321,6 +335,7 @@ function App() {
             setOutOption={setOutOption}
             isOpeningOut={isOpeningOut}
             openVideo={openVideo}
+            revealVideo={revealVideo}
             openRoteiro={openRoteiro}
             projectName={projectName}
           />
@@ -346,6 +361,7 @@ function App() {
           </div>
         )}
 
+        {/* COPY (nova aba)
         {activeTab === TABS.COPY && (
           <CopyPanel
             copyCode={copyCode}
@@ -355,6 +371,7 @@ function App() {
             openLogFile={openLogFile}
           />
         )}
+        */}
       </main>
 
       {/* ===== Overlay de loading ===== */}
@@ -446,6 +463,20 @@ function App() {
                 </button>
               </footer>
             </form>
+          </section>
+        </div>
+      )}
+
+      {historyOpen && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setHistoryOpen(false)}>
+          <section
+            className="history-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="history-title"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <HistoryWindow onClose={() => setHistoryOpen(false)} />
           </section>
         </div>
       )}
