@@ -1,5 +1,6 @@
 mod arizona;
 mod history;
+mod media;
 mod settings;
 
 use arizona::{ActionResponse, Arizona};
@@ -22,6 +23,8 @@ pub fn run() {
             abrir_ae,
             open_out,
             import_products,
+            list_identical_mp4_items,
+            duplicate_identical_mp4,
             open_video,
             reveal_video,
             open_roteiro,
@@ -156,6 +159,31 @@ fn import_products(app: AppHandle, jobao_cod: String) -> Result<ActionResponse, 
         Ok(()) => ActionResponse::ok(),
         Err(err) => ActionResponse::err(err),
     })
+}
+
+#[tauri::command]
+fn list_identical_mp4_items(
+    app: AppHandle,
+    jobao_cod: String,
+) -> Result<Vec<arizona::DuplicateMp4Item>, String> {
+    arizona_from_app(&app)?.list_identical_mp4_items(&jobao_cod)
+}
+
+#[tauri::command]
+fn duplicate_identical_mp4(
+    app: AppHandle,
+    jobao_cod: String,
+    source_file_name: String,
+    copy_names: Vec<String>,
+) -> Result<ActionResponse, String> {
+    let arizona = arizona_from_app(&app)?;
+
+    Ok(
+        match arizona.duplicate_identical_mp4(&jobao_cod, &source_file_name, copy_names) {
+            Ok(response) => response,
+            Err(err) => ActionResponse::err(err),
+        },
+    )
 }
 
 #[tauri::command]

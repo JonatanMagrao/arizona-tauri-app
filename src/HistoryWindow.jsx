@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { commandNames, invokeAction, invokeCommand } from "./lib/tauriCommands";
 import folderIcon from "./assets/icones/folder.svg";
 import aeIcon from "./assets/icones/aeft_icon.svg";
 import refreshIcon from "./assets/icones/history.svg";
@@ -23,7 +23,7 @@ function HistoryWindow({ onClose }) {
     setIsLoading(true);
     setMessage("");
     try {
-      const rows = await invoke("history_list");
+      const rows = await invokeCommand(commandNames.historyList);
       setEntries(Array.isArray(rows) ? rows : []);
     } catch (err) {
       setMessage(String(err || "Não foi possível carregar o histórico."));
@@ -38,12 +38,13 @@ function HistoryWindow({ onClose }) {
 
   const runAction = async (fnName, args, refresh = false) => {
     setMessage("");
+    const result = await invokeAction(fnName, args, "Não foi possível executar a ação.");
+    if (!result.ok) {
+      setMessage(result.message);
+      return;
+    }
+
     try {
-      const res = await invoke(fnName, args);
-      if (res?.ok === false) {
-        setMessage(res.message || "Não foi possível executar a ação.");
-        return;
-      }
       if (refresh) await loadHistory();
     } catch (err) {
       setMessage(String(err || "Não foi possível executar a ação."));
@@ -53,33 +54,33 @@ function HistoryWindow({ onClose }) {
   const clearHistory = async () => {
     const confirmed = window.confirm("Apagar todo o histórico?");
     if (!confirmed) return;
-    await runAction("history_clear", {}, true);
+    await runAction(commandNames.historyClear, {}, true);
   };
 
   const openJobao = (entry) => {
-    runAction("history_open_jobao_folder", { id: entry.id });
+    runAction(commandNames.historyOpenJobaoFolder, { id: entry.id });
   };
 
   const handleAfterClick = (event, entry) => {
     if (event.shiftKey) {
-      runAction("history_open_after_project", { id: entry.id }, true);
+      runAction(commandNames.historyOpenAfterProject, { id: entry.id }, true);
       return;
     }
 
-    runAction("history_reveal_after_project", { id: entry.id });
+    runAction(commandNames.historyRevealAfterProject, { id: entry.id });
   };
 
   const handleMediaClick = (event, entry, mediaType) => {
     if (event.shiftKey) {
-      runAction("history_open_media", { id: entry.id, mediaType });
+      runAction(commandNames.historyOpenMedia, { id: entry.id, mediaType });
       return;
     }
 
-    runAction("history_reveal_media", { id: entry.id, mediaType });
+    runAction(commandNames.historyRevealMedia, { id: entry.id, mediaType });
   };
 
   const refreshEntry = (entry) => {
-    runAction("history_refresh_entry", { id: entry.id }, true);
+    runAction(commandNames.historyRefreshEntry, { id: entry.id }, true);
   };
 
   const applySearch = (event) => {

@@ -1,5 +1,4 @@
 use chrono::Local;
-use regex::Regex;
 use rusqlite::{params, Connection, Row};
 use serde::Serialize;
 use std::{
@@ -10,6 +9,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::{
     arizona::{open_explorer, open_start_file, reveal_in_explorer, Arizona, OpenedProject},
+    media::{find_video_path, MediaType},
     settings,
 };
 
@@ -151,10 +151,10 @@ pub fn refresh_entry(app: &AppHandle, id: i64) -> Result<(), String> {
         .file_stem()
         .and_then(|stem| stem.to_str())
         .ok_or_else(|| "Nome do projeto do After inválido.".to_string())?;
-    let mp4_path =
-        find_video_path(&jobao_path, project_stem, "mp4").map(|path| path_to_string(&path));
-    let mov_path =
-        find_video_path(&jobao_path, project_stem, "mov").map(|path| path_to_string(&path));
+    let mp4_path = find_video_path(&jobao_path, project_stem, MediaType::Mp4)
+        .map(|path| path_to_string(&path));
+    let mov_path = find_video_path(&jobao_path, project_stem, MediaType::Mov)
+        .map(|path| path_to_string(&path));
 
     conn.execute(
         r#"
@@ -305,13 +305,14 @@ fn row_to_entry(row: &Row<'_>) -> rusqlite::Result<HistoryEntry> {
 }
 
 fn media_path(entry: &HistoryEntry, media_type: &str) -> Result<PathBuf, String> {
-    let (value, label) = match media_type {
-        "mp4" => (entry.mp4_path.as_deref(), "MP4"),
-        "mov" => (entry.mov_path.as_deref(), "MOV"),
-        _ => return Err("Tipo de vídeo inválido.".to_string()),
+    let media_type =
+        MediaType::parse(media_type).ok_or_else(|| "Tipo de video invalido.".to_string())?;
+    let value = match media_type {
+        MediaType::Mp4 => entry.mp4_path.as_deref(),
+        MediaType::Mov => entry.mov_path.as_deref(),
     };
 
-    optional_path(value, label)
+    optional_path(value, media_type.label())
 }
 
 fn optional_path(value: Option<&str>, label: &str) -> Result<PathBuf, String> {
@@ -329,29 +330,6 @@ fn required_path(value: &str, label: &str) -> Result<PathBuf, String> {
     } else {
         Err(format!("Path do {label} não disponível."))
     }
-}
-
-fn find_video_path(jobao_path: &Path, project_stem: &str, media_type: &str) -> Option<PathBuf> {
-    let pasta = match media_type {
-        "mp4" => "MP4",
-        "mov" => "MOV",
-        _ => return None,
-    };
-    let videos = jobao_path.join("OUT").join("RENDER").join(pasta);
-    let reg_exp = Regex::new(&format!("^{}", regex::escape(project_stem))).ok()?;
-
-    for entry in fs::read_dir(&videos).ok()?.flatten() {
-        let path = entry.path();
-        let stem = path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or("");
-        if reg_exp.is_match(stem) {
-            return Some(path);
-        }
-    }
-
-    None
 }
 
 fn path_to_string(path: &Path) -> String {

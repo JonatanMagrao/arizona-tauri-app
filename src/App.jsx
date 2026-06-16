@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import JobPanel from "./panels/JobPanel";
 import LinksPanel from "./panels/LinksPanel";
 import CopyPanel from "./panels/CopyPanel";
 import HistoryWindow from "./HistoryWindow";
+import DuplicateIdenticalModal from "./DuplicateIdenticalModal";
+import { commandNames, invokeAction, invokeCommand } from "./lib/tauriCommands";
 import "./App.css";
 import previewImg from "./assets/hierarquia_pracas.jpg";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -37,6 +38,7 @@ function App() {
   const [settingsDraft, setSettingsDraft] = useState(DEFAULT_SETTINGS);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [duplicateModalOpen, setDuplicateModalOpen] = useState(false);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [isChoosingDrive, setIsChoosingDrive] = useState(false);
 
@@ -64,7 +66,7 @@ function App() {
 
   useEffect(() => {
     let mounted = true;
-    invoke("load_app_config")
+    invokeCommand(commandNames.loadAppConfig)
       .then((config) => {
         if (!mounted) return;
         setAppConfig(config);
@@ -79,18 +81,13 @@ function App() {
 
   // Helper: chama Rust e mostra toast se vier erro ou exception
   const run = async (fnName, args, fallbackMsg) => {
-    try {
-      const res = await invoke(fnName, args);
-      if (res && res.ok === false) {
-        showError(res.message || fallbackMsg);
-        return res;
-      }
-      // quando ok==true, não faz nada
-      return res;
-    } catch (e) {
-      showError(fallbackMsg || "Falha ao executar ação.");
+    const result = await invokeAction(fnName, args, fallbackMsg);
+    if (!result.ok) {
+      showError(result.message);
       return null;
     }
+
+    return result.response;
   };
 
   const setProjectWindowTitle = async (projectTitle) => {
@@ -128,7 +125,7 @@ function App() {
       if (cancelled) return;
 
       try {
-        const res = await invoke("project_name", { jobaoCod: jobao, jobinhoCod: jobinho });
+        const res = await invokeCommand(commandNames.projectName, { jobaoCod: jobao, jobinhoCod: jobinho });
         if (cancelled) return;
 
         if (res?.ok && res.message) {
@@ -153,12 +150,12 @@ function App() {
   }, [jobaoCod, jobinhoCod, appConfig.drive]);
 
   // ações
-  const openLogFile = async () => run("open_log_file", {}, "Não foi possível abrir o arquivo de log.");
-  const projectName = async () => run("project_name", { jobaoCod, jobinhoCod }, "Não foi possível recuperar o nome do projeto.");
-  const openJobao = async () => run("open_jobao", { jobaoCod }, `Não foi possível abrir o Jobão "${jobaoCod}".`);
-  const openJobinho = async () => run("open_jobinho", { jobaoCod, jobinhoCod }, `Não foi possível abrir o Jobinho "${jobinhoCod}".`);
+  const openLogFile = async () => run(commandNames.openLogFile, {}, "Não foi possível abrir o arquivo de log.");
+  const projectName = async () => run(commandNames.projectName, { jobaoCod, jobinhoCod }, "Não foi possível recuperar o nome do projeto.");
+  const openJobao = async () => run(commandNames.openJobao, { jobaoCod }, `Não foi possível abrir o Jobão "${jobaoCod}".`);
+  const openJobinho = async () => run(commandNames.openJobinho, { jobaoCod, jobinhoCod }, `Não foi possível abrir o Jobinho "${jobinhoCod}".`);
   const abrirAE = async () => {
-    const res = await run("abrir_ae", { jobaoCod, jobinhoCod }, `Não foi possível abrir o projeto ${jobinhoCod} no After Effects.`);
+    const res = await run(commandNames.abrirAe, { jobaoCod, jobinhoCod }, `Não foi possível abrir o projeto ${jobinhoCod} no After Effects.`);
     if (res?.ok) {
       projectTitleRef.current = {
         key: `${appConfig.drive || ""}::${jobaoCod.trim()}::${jobinhoCod.trim()}`,
@@ -167,34 +164,31 @@ function App() {
       await setProjectWindowTitle(res.message);
     }
   };
-  const openVideo = async (jobaoCod, jobinhoCod, mediaType) => run("open_video", { jobaoCod, jobinhoCod, mediaType }, `Não foi possível abrir o vídeo do projeto "${jobinhoCod}"`);
-  const revealVideo = async (jobaoCod, jobinhoCod, mediaType) => run("reveal_video", { jobaoCod, jobinhoCod, mediaType }, `Não foi possível localizar o vídeo do projeto "${jobinhoCod}"`);
-  const openRoteiro = async () => run("open_roteiro", { jobaoCod, jobinhoCod }, `Não foi possível abrir o roteiro do projeto "${jobinhoCod}"`);
+  const openVideo = async (jobaoCod, jobinhoCod, mediaType) => run(commandNames.openVideo, { jobaoCod, jobinhoCod, mediaType }, `Não foi possível abrir o vídeo do projeto "${jobinhoCod}"`);
+  const revealVideo = async (jobaoCod, jobinhoCod, mediaType) => run(commandNames.revealVideo, { jobaoCod, jobinhoCod, mediaType }, `Não foi possível localizar o vídeo do projeto "${jobinhoCod}"`);
+  const openRoteiro = async () => run(commandNames.openRoteiro, { jobaoCod, jobinhoCod }, `Não foi possível abrir o roteiro do projeto "${jobinhoCod}"`);
   const openOut = async (opt) => {
     if (isOpeningOut) return;                 // evita chamadas sobrepostas
     setIsOpeningOut(true);
     const chosen = opt ?? outOption;          // usa o param se vier, senão o estado atual
     try {
-      await run("open_out", { jobaoCod, option: chosen }, "Não foi possível abrir a pasta OUT/RENDER.");
+      await run(commandNames.openOut, { jobaoCod, option: chosen }, "Não foi possível abrir a pasta OUT/RENDER.");
     } finally {
       setIsOpeningOut(false);
     }
   };
 
-  const openVisto = async () => run("open_visto", {}, "Falha ao abrir o Visto.");
-  const openPip = async () => run("open_pip", {}, "Falha ao abrir o Pip.");
-  const openBitrix = async () => run("open_bitrix", {}, "Falha ao abrir o Bitrix.");
-  const openClaro = async () => run("open_claro", {}, "Falha ao abrir o Claro.");
-  const openLinks = async () => run("open_links", {}, "Falha ao abrir os links.");
+  const openVisto = async () => run(commandNames.openVisto, {}, "Falha ao abrir o Visto.");
+  const openPip = async () => run(commandNames.openPip, {}, "Falha ao abrir o Pip.");
+  const openBitrix = async () => run(commandNames.openBitrix, {}, "Falha ao abrir o Bitrix.");
+  const openClaro = async () => run(commandNames.openClaro, {}, "Falha ao abrir o Claro.");
+  const openLinks = async () => run(commandNames.openLinks, {}, "Falha ao abrir os links.");
 
   // ação de copiar arquivos — COM LOADING
   const importProducts = async () => {
     setIsImporting(true);
     try {
-      const res = await invoke("import_products", { jobaoCod: copyCode });
-      if (res && res.ok === false) {
-        showError(res.message || "Não foi possível copiar os arquivos.");
-      }
+      await run(commandNames.importProducts, { jobaoCod: copyCode }, "Não foi possível copiar os arquivos.");
     } catch (e) {
       showError("Não foi possível copiar os arquivos.");
     } finally {
@@ -209,6 +203,10 @@ function App() {
   const openSettings = () => {
     setSettingsDraft(appConfig);
     setSettingsOpen(true);
+  };
+
+  const openDuplicateIdentical = () => {
+    setDuplicateModalOpen(true);
   };
 
   const updateSettingsDraft = (field, value) => {
@@ -235,7 +233,7 @@ function App() {
     e.preventDefault();
     setIsSavingSettings(true);
     try {
-      const saved = await invoke("save_app_config", { config: settingsDraft });
+      const saved = await invokeCommand(commandNames.saveAppConfig, { config: settingsDraft });
       setAppConfig(saved);
       setSettingsDraft(saved);
       setSettingsOpen(false);
@@ -338,6 +336,7 @@ function App() {
             revealVideo={revealVideo}
             openRoteiro={openRoteiro}
             projectName={projectName}
+            openDuplicateIdentical={openDuplicateIdentical}
           />
         )}
 
@@ -482,6 +481,15 @@ function App() {
       )}
 
       {/* ===== Toast no rodapé ===== */}
+      {duplicateModalOpen && (
+        <DuplicateIdenticalModal
+          initialJobaoCod={jobaoCod}
+          onClose={() => setDuplicateModalOpen(false)}
+          showError={showError}
+          showSuccess={showSuccess}
+        />
+      )}
+
       {toast.open && (
         <div
           className={`toast ${toast.variant === "error" ? "toast--error" : toast.variant === "success" ? "toast--success" : ""}`}
