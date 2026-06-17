@@ -3,8 +3,9 @@ mod history;
 mod media;
 mod settings;
 
-use arizona::{ActionResponse, Arizona};
+use arizona::{ActionResponse, Arizona, MediaFile};
 use settings::AppConfig;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, LogicalSize, Manager};
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -29,6 +30,8 @@ pub fn run() {
             list_identical_mp4_items,
             duplicate_identical_mp4,
             open_video,
+            open_audio,
+            open_media_native,
             reveal_video,
             open_roteiro,
             open_log_file,
@@ -175,6 +178,9 @@ const SECONDARY_WINDOW_HEIGHT: f64 = 600.0;
 struct SecondaryWindowState {
     view: String,
     jobao_cod: Option<String>,
+    media_path: Option<String>,
+    media_kind: Option<String>,
+    media_title: Option<String>,
 }
 
 #[tauri::command]
@@ -187,18 +193,29 @@ fn open_secondary_window(
     let state = SecondaryWindowState {
         view: normalized_view.to_string(),
         jobao_cod: normalize_optional_text(jobao_cod),
+        media_path: None,
+        media_kind: None,
+        media_title: None,
     };
+    show_secondary_window(app, state)
+}
+
+fn show_secondary_window(
+    app: AppHandle,
+    state: SecondaryWindowState,
+) -> Result<ActionResponse, String> {
+    let window_title = secondary_window_state_title(&state);
     let state_json = serde_json::to_string(&state).map_err(|err| err.to_string())?;
     let window = app
         .get_webview_window(SECONDARY_WINDOW_LABEL)
-        .ok_or_else(|| "Janela secundaria nao foi inicializada.".to_string())?;
+        .ok_or_else(|| "Janela secundária não foi inicializada.".to_string())?;
     let script = format!(
         "window.__ARIZONA_SECONDARY_STATE__ = {state_json}; window.dispatchEvent(new CustomEvent('arizona-secondary:set-view', {{ detail: {state_json} }}));"
     );
 
     let _ = window.eval(script);
     window
-        .set_title(secondary_window_title(normalized_view))
+        .set_title(&window_title)
         .map_err(|err| err.to_string())?;
     window
         .set_size(LogicalSize::new(
@@ -245,17 +262,33 @@ fn normalize_secondary_view(view: &str) -> Result<&'static str, String> {
         "duplicate" | "duplicate-identical" => Ok("duplicate"),
         "history" | "historico" => Ok("history"),
         "places" | "pracas" | "crf" => Ok("places"),
-        _ => Err("Tela secundaria invalida.".to_string()),
+        "media" | "midia" => Ok("media"),
+        _ => Err("Tela secundária inválida.".to_string()),
     }
 }
 
 fn secondary_window_title(view: &str) -> &'static str {
     match view {
-        "duplicate" => "Produtos identicos",
-        "history" => "Historico",
-        "places" => "Pracas CRF",
+        "duplicate" => "Produtos idênticos",
+        "history" => "Histórico",
+        "places" => "Praças CRF",
+        "media" => "Mídia",
         _ => "Arizona",
     }
+}
+
+fn secondary_window_state_title(state: &SecondaryWindowState) -> String {
+    if state.view == "media" {
+        return state
+            .media_title
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| secondary_window_title("media"))
+            .to_string();
+    }
+
+    secondary_window_title(&state.view).to_string()
 }
 
 fn normalize_optional_text(value: Option<String>) -> Option<String> {
@@ -296,7 +329,39 @@ fn open_video(
     jobinho_cod: String,
     media_type: String,
 ) -> Result<ActionResponse, String> {
-    arizona_from_app(&app)?.open_video(&jobao_cod, &jobinho_cod, &media_type)
+    match arizona_from_app(&app)?.video_file(&jobao_cod, &jobinho_cod, &media_type) {
+        Ok(media) => show_media_window(app, media),
+        Err(err) => Ok(ActionResponse::err(err)),
+    }
+}
+
+#[tauri::command]
+fn open_audio(
+    app: AppHandle,
+    jobao_cod: String,
+    jobinho_cod: String,
+) -> Result<ActionResponse, String> {
+    match arizona_from_app(&app)?.audio_file(&jobao_cod, &jobinho_cod) {
+        Ok(media) => show_media_window(app, media),
+        Err(err) => Ok(ActionResponse::err(err)),
+    }
+}
+
+#[tauri::command]
+fn open_media_native(media_path: String) -> Result<ActionResponse, String> {
+    let path = PathBuf::from(media_path.trim());
+    if !path.is_file() {
+        return Ok(ActionResponse::err("Mídia não encontrada."));
+    }
+
+    if !is_media_path(&path) {
+        return Ok(ActionResponse::err("Tipo de mídia inválido."));
+    }
+
+    Ok(match arizona::open_start_file(&path) {
+        Ok(()) => ActionResponse::ok(),
+        Err(err) => ActionResponse::err(err),
+    })
 }
 
 #[tauri::command]
@@ -369,8 +434,9 @@ fn history_open_media(
     id: i64,
     media_type: String,
 ) -> Result<ActionResponse, String> {
-    history::open_media(&app, id, &media_type)?;
-    Ok(ActionResponse::ok())
+    let path = history::media_file(&app, id, &media_type)?;
+    let title = media_title_from_path(&path);
+    show_media_path_with_title(app, path, "video", title)
 }
 
 #[tauri::command]
@@ -412,4 +478,55 @@ fn save_app_config(app: AppHandle, config: AppConfig) -> Result<AppConfig, Strin
 
 fn arizona_from_app(app: &AppHandle) -> Result<Arizona, String> {
     Ok(Arizona::new(settings::load(app)?))
+}
+
+fn show_media_window(app: AppHandle, media: MediaFile) -> Result<ActionResponse, String> {
+    let MediaFile { path, kind, title } = media;
+    show_media_path_with_title(app, path, &kind, title)
+}
+
+fn show_media_path_with_title(
+    app: AppHandle,
+    path: PathBuf,
+    media_kind: &str,
+    title: String,
+) -> Result<ActionResponse, String> {
+    let state = SecondaryWindowState {
+        view: "media".to_string(),
+        jobao_cod: None,
+        media_path: Some(path.to_string_lossy().into_owned()),
+        media_kind: Some(media_kind.to_string()),
+        media_title: Some(title),
+    };
+
+    show_secondary_window(app, state)
+}
+
+fn media_title_from_path(path: &Path) -> String {
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| path.to_string_lossy().into_owned())
+}
+
+fn is_media_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "mp4"
+                    | "mov"
+                    | "wav"
+                    | "mp3"
+                    | "m4a"
+                    | "aac"
+                    | "flac"
+                    | "ogg"
+                    | "aif"
+                    | "aiff"
+                    | "wma"
+            )
+        })
+        .unwrap_or(false)
 }

@@ -8,7 +8,7 @@ use std::{
 use tauri::{AppHandle, Manager};
 
 use crate::{
-    arizona::{open_explorer, open_start_file, reveal_in_explorer, Arizona, OpenedProject},
+    arizona::{open_explorer, reveal_in_explorer, Arizona, OpenedProject},
     media::{find_video_path, MediaType},
     settings,
 };
@@ -136,10 +136,10 @@ pub fn reveal_media(app: &AppHandle, id: i64, media_type: &str) -> Result<(), St
     reveal_in_explorer(&media_path(&entry, media_type)?)
 }
 
-pub fn open_media(app: &AppHandle, id: i64, media_type: &str) -> Result<(), String> {
+pub fn media_file(app: &AppHandle, id: i64, media_type: &str) -> Result<PathBuf, String> {
     let conn = open_connection(app)?;
     let entry = get_entry(&conn, id)?;
-    open_start_file(&media_path(&entry, media_type)?)
+    media_path(&entry, media_type)
 }
 
 pub fn refresh_entry(app: &AppHandle, id: i64) -> Result<(), String> {

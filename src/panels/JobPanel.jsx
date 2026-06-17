@@ -26,6 +26,7 @@ function JobPanel({
   setOutOption,
   isOpeningOut,
   openVideo,
+  openAudio,
   revealVideo,
   openRoteiro,
   openDuplicateIdentical
@@ -73,7 +74,10 @@ function JobPanel({
     mp4: () => openVideo(jobaoCod, jobinhoCod, "mp4"),
     mov: () => openVideo(jobaoCod, jobinhoCod, "mov"),
     roteiro: () => openRoteiro(jobaoCod, jobinhoCod),
-    audio: () => alert("abrir audio")
+    audio: () => {
+      if (jobinhoCod.trim()) return openAudio(jobaoCod, jobinhoCod);
+      return openOut("audio");
+    }
   };
 
   // whitelist para Shift+Clique único

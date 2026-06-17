@@ -167,6 +167,7 @@ function MainApp() {
     }
   };
   const openVideo = async (jobaoCod, jobinhoCod, mediaType) => run(commandNames.openVideo, { jobaoCod, jobinhoCod, mediaType }, `Não foi possível abrir o vídeo do projeto "${jobinhoCod}"`);
+  const openAudio = async (jobaoCod, jobinhoCod) => run(commandNames.openAudio, { jobaoCod, jobinhoCod }, `Não foi possível abrir o áudio do projeto "${jobinhoCod}"`);
   const revealVideo = async (jobaoCod, jobinhoCod, mediaType) => run(commandNames.revealVideo, { jobaoCod, jobinhoCod, mediaType }, `Não foi possível localizar o vídeo do projeto "${jobinhoCod}"`);
   const openRoteiro = async () => run(commandNames.openRoteiro, { jobaoCod, jobinhoCod }, `Não foi possível abrir o roteiro do projeto "${jobinhoCod}"`);
   const openOut = async (opt) => {
@@ -349,6 +350,7 @@ function MainApp() {
             setOutOption={setOutOption}
             isOpeningOut={isOpeningOut}
             openVideo={openVideo}
+            openAudio={openAudio}
             revealVideo={revealVideo}
             openRoteiro={openRoteiro}
             projectName={projectName}
@@ -496,7 +498,7 @@ function isSecondaryWindow() {
 
   try {
     const view = new URLSearchParams(window.location.search).get("view");
-    return ["secondary", "duplicate", "duplicate-identical", "history", "places"].includes(view);
+    return ["secondary", "duplicate", "duplicate-identical", "history", "places", "media", "midia"].includes(view);
   } catch (error) {
     return false;
   }
