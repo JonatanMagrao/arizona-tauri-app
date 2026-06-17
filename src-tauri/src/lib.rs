@@ -5,7 +5,7 @@ mod settings;
 
 use arizona::{ActionResponse, Arizona};
 use settings::AppConfig;
-use tauri::AppHandle;
+use tauri::{AppHandle, LogicalSize, Manager};
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 pub fn run() {
@@ -23,6 +23,9 @@ pub fn run() {
             abrir_ae,
             open_out,
             import_products,
+            open_secondary_window,
+            close_secondary_window,
+            open_duplicate_identical_window,
             list_identical_mp4_items,
             duplicate_identical_mp4,
             open_video,
@@ -37,6 +40,7 @@ pub fn run() {
             history_reveal_media,
             history_open_media,
             history_refresh_entry,
+            history_refresh_all_entries,
             project_name,
             load_app_config,
             save_app_config
@@ -161,6 +165,105 @@ fn import_products(app: AppHandle, jobao_cod: String) -> Result<ActionResponse, 
     })
 }
 
+const MAIN_WINDOW_LABEL: &str = "main";
+const SECONDARY_WINDOW_LABEL: &str = "secondary";
+const SECONDARY_WINDOW_WIDTH: f64 = 950.0;
+const SECONDARY_WINDOW_HEIGHT: f64 = 600.0;
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SecondaryWindowState {
+    view: String,
+    jobao_cod: Option<String>,
+}
+
+#[tauri::command]
+fn open_secondary_window(
+    app: AppHandle,
+    view: String,
+    jobao_cod: Option<String>,
+) -> Result<ActionResponse, String> {
+    let normalized_view = normalize_secondary_view(&view)?;
+    let state = SecondaryWindowState {
+        view: normalized_view.to_string(),
+        jobao_cod: normalize_optional_text(jobao_cod),
+    };
+    let state_json = serde_json::to_string(&state).map_err(|err| err.to_string())?;
+    let window = app
+        .get_webview_window(SECONDARY_WINDOW_LABEL)
+        .ok_or_else(|| "Janela secundaria nao foi inicializada.".to_string())?;
+    let script = format!(
+        "window.__ARIZONA_SECONDARY_STATE__ = {state_json}; window.dispatchEvent(new CustomEvent('arizona-secondary:set-view', {{ detail: {state_json} }}));"
+    );
+
+    let _ = window.eval(script);
+    window
+        .set_title(secondary_window_title(normalized_view))
+        .map_err(|err| err.to_string())?;
+    window
+        .set_size(LogicalSize::new(
+            SECONDARY_WINDOW_WIDTH,
+            SECONDARY_WINDOW_HEIGHT,
+        ))
+        .map_err(|err| err.to_string())?;
+    let _ = window.center();
+    window.unminimize().map_err(|err| err.to_string())?;
+    window.show().map_err(|err| err.to_string())?;
+    window.set_focus().map_err(|err| err.to_string())?;
+
+    if let Some(main_window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        let _ = main_window.set_enabled(false);
+    }
+
+    Ok(ActionResponse::ok())
+}
+
+#[tauri::command]
+fn close_secondary_window(app: AppHandle) -> Result<ActionResponse, String> {
+    if let Some(window) = app.get_webview_window(SECONDARY_WINDOW_LABEL) {
+        let _ = window.hide();
+    }
+
+    if let Some(main_window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        let _ = main_window.set_enabled(true);
+        let _ = main_window.set_focus();
+    }
+
+    Ok(ActionResponse::ok())
+}
+
+#[tauri::command]
+fn open_duplicate_identical_window(
+    app: AppHandle,
+    jobao_cod: String,
+) -> Result<ActionResponse, String> {
+    open_secondary_window(app, "duplicate".to_string(), Some(jobao_cod))
+}
+
+fn normalize_secondary_view(view: &str) -> Result<&'static str, String> {
+    match view.trim() {
+        "duplicate" | "duplicate-identical" => Ok("duplicate"),
+        "history" | "historico" => Ok("history"),
+        "places" | "pracas" | "crf" => Ok("places"),
+        _ => Err("Tela secundaria invalida.".to_string()),
+    }
+}
+
+fn secondary_window_title(view: &str) -> &'static str {
+    match view {
+        "duplicate" => "Produtos identicos",
+        "history" => "Historico",
+        "places" => "Pracas CRF",
+        _ => "Arizona",
+    }
+}
+
+fn normalize_optional_text(value: Option<String>) -> Option<String> {
+    value
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+}
+
 #[tauri::command]
 fn list_identical_mp4_items(
     app: AppHandle,
@@ -274,6 +377,18 @@ fn history_open_media(
 fn history_refresh_entry(app: AppHandle, id: i64) -> Result<ActionResponse, String> {
     history::refresh_entry(&app, id)?;
     Ok(ActionResponse::ok())
+}
+
+#[tauri::command]
+fn history_refresh_all_entries(app: AppHandle) -> Result<ActionResponse, String> {
+    let (updated, skipped) = history::refresh_all_entries(&app)?;
+    let message = if skipped == 0 {
+        format!("Paths atualizados em {updated} registros.")
+    } else {
+        format!("Paths atualizados em {updated} registros. {skipped} ignorados.")
+    };
+
+    Ok(ActionResponse::ok_message(message))
 }
 
 #[tauri::command]

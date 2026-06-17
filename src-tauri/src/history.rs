@@ -145,6 +145,26 @@ pub fn open_media(app: &AppHandle, id: i64, media_type: &str) -> Result<(), Stri
 pub fn refresh_entry(app: &AppHandle, id: i64) -> Result<(), String> {
     let conn = open_connection(app)?;
     let entry = get_entry(&conn, id)?;
+    refresh_entry_paths(&conn, &entry)
+}
+
+pub fn refresh_all_entries(app: &AppHandle) -> Result<(usize, usize), String> {
+    let conn = open_connection(app)?;
+    let entries = list_all_entries(&conn)?;
+    let mut updated = 0;
+    let mut skipped = 0;
+
+    for entry in entries {
+        match refresh_entry_paths(&conn, &entry) {
+            Ok(()) => updated += 1,
+            Err(_) => skipped += 1,
+        }
+    }
+
+    Ok((updated, skipped))
+}
+
+fn refresh_entry_paths(conn: &Connection, entry: &HistoryEntry) -> Result<(), String> {
     let jobao_path = required_path(&entry.jobao_path, "Jobão")?;
     let ae_project_path = required_path(&entry.ae_project_path, "projeto do After")?;
     let project_stem = ae_project_path
@@ -163,10 +183,39 @@ pub fn refresh_entry(app: &AppHandle, id: i64) -> Result<(), String> {
             mov_path = ?2
         WHERE id = ?3
         "#,
-        params![mp4_path, mov_path, id],
+        params![mp4_path, mov_path, entry.id],
     )
     .map(|_| ())
     .map_err(|err| err.to_string())
+}
+
+fn list_all_entries(conn: &Connection) -> Result<Vec<HistoryEntry>, String> {
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT
+                id,
+                jobao_cod,
+                jobinho_cod,
+                region,
+                jobao_path,
+                ae_project_path,
+                mp4_path,
+                mov_path,
+                opened_at,
+                opened_at_epoch
+            FROM project_history
+            ORDER BY opened_at_epoch DESC, id DESC
+            "#,
+        )
+        .map_err(|err| err.to_string())?;
+
+    let rows = stmt
+        .query_map([], row_to_entry)
+        .map_err(|err| err.to_string())?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| err.to_string())
 }
 
 fn open_connection(app: &AppHandle) -> Result<Connection, String> {

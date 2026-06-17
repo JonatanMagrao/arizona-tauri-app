@@ -3,12 +3,16 @@
   "identifier": "default",
   "description": "Capability for the main window",
   "windows": [
-    "main"
+    "main",
+    "secondary"
   ],
   "permissions": [
     "core:default",
     "dialog:allow-open",
     "opener:default",
+    "core:window:allow-close",
+    "core:window:allow-hide",
+    "core:window:allow-set-enabled",
     "core:window:allow-set-always-on-top",
     "core:window:allow-set-title"
   ]

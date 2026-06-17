@@ -3,11 +3,9 @@ import { open } from "@tauri-apps/plugin-dialog";
 import JobPanel from "./panels/JobPanel";
 import LinksPanel from "./panels/LinksPanel";
 import CopyPanel from "./panels/CopyPanel";
-import HistoryWindow from "./HistoryWindow";
-import DuplicateIdenticalModal from "./DuplicateIdenticalModal";
+import SecondaryWindow from "./SecondaryWindow";
 import { commandNames, invokeAction, invokeCommand } from "./lib/tauriCommands";
 import "./App.css";
-import previewImg from "./assets/hierarquia_pracas.jpg";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 // ÍCONES (svg como imagem)
@@ -18,7 +16,7 @@ import copyIcon from "./assets/icones/folder.svg"; // você pode trocar por outr
 import historyIcon from "./assets/icones/history.svg";
 import settingsIcon from "./assets/icones/settings.svg";
 
-const TABS = { JOBS: "jobs", LINKS: "links", IMAGE: "image", COPY: "copy" };
+const TABS = { JOBS: "jobs", LINKS: "links", COPY: "copy" };
 const DEFAULT_SETTINGS = {
   aeVersion: "2024",
   drive: "I:\\Drives compartilhados",
@@ -26,6 +24,12 @@ const DEFAULT_SETTINGS = {
 };
 
 function App() {
+  if (isSecondaryWindow()) return <SecondaryWindow />;
+
+  return <MainApp />;
+}
+
+function MainApp() {
   const [activeTab, setActiveTab] = useState(TABS.JOBS);
 
   // estados
@@ -37,8 +41,6 @@ function App() {
   const [appConfig, setAppConfig] = useState(DEFAULT_SETTINGS);
   const [settingsDraft, setSettingsDraft] = useState(DEFAULT_SETTINGS);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [duplicateModalOpen, setDuplicateModalOpen] = useState(false);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [isChoosingDrive, setIsChoosingDrive] = useState(false);
 
@@ -205,8 +207,22 @@ function App() {
     setSettingsOpen(true);
   };
 
-  const openDuplicateIdentical = () => {
-    setDuplicateModalOpen(true);
+  const openSecondaryView = async (view, args = {}) => {
+    await run(
+      commandNames.openSecondaryWindow,
+      { view, ...args },
+      "Nao foi possivel abrir a janela."
+    );
+  };
+
+  const openPlaces = async () => openSecondaryView("places");
+  const openHistory = async () => openSecondaryView("history");
+
+  const openDuplicateIdentical = async () => {
+    const jobao = jobaoCod.trim();
+    if (!jobao) return;
+
+    await openSecondaryView("duplicate", { jobaoCod: jobao });
   };
 
   const updateSettingsDraft = (field, value) => {
@@ -283,8 +299,8 @@ function App() {
 
         {/* IMAGEM */}
         <button
-          className={`icon-tab ${activeTab === TABS.IMAGE ? "icon-tab--active" : ""}`}
-          onClick={() => setActiveTab(TABS.IMAGE)}
+          className="icon-tab"
+          onClick={openPlaces}
           tabIndex="-1"
           title="Praças CRF"
           aria-label="Praças CRF"
@@ -293,7 +309,7 @@ function App() {
         </button>
         <button
           className="icon-tab"
-          onClick={() => setHistoryOpen(true)}
+          onClick={openHistory}
           tabIndex="-1"
           title="Histórico"
           aria-label="Histórico"
@@ -348,16 +364,6 @@ function App() {
             openClaro={openClaro}
             openLinks={openLinks}
           />
-        )}
-
-        {activeTab === TABS.IMAGE && (
-          <div className="card">
-            <img
-              src={previewImg}
-              alt="Preview"
-              style={{ maxWidth: "100%", height: "auto", display: "block", borderRadius: "10px" }}
-            />
-          </div>
         )}
 
         {/* COPY (nova aba)
@@ -466,30 +472,7 @@ function App() {
         </div>
       )}
 
-      {historyOpen && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={() => setHistoryOpen(false)}>
-          <section
-            className="history-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="history-title"
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            <HistoryWindow onClose={() => setHistoryOpen(false)} />
-          </section>
-        </div>
-      )}
-
       {/* ===== Toast no rodapé ===== */}
-      {duplicateModalOpen && (
-        <DuplicateIdenticalModal
-          initialJobaoCod={jobaoCod}
-          onClose={() => setDuplicateModalOpen(false)}
-          showError={showError}
-          showSuccess={showSuccess}
-        />
-      )}
-
       {toast.open && (
         <div
           className={`toast ${toast.variant === "error" ? "toast--error" : toast.variant === "success" ? "toast--success" : ""}`}
@@ -502,6 +485,21 @@ function App() {
       )}
     </div>
   );
+}
+
+function isSecondaryWindow() {
+  try {
+    if (getCurrentWindow().label === "secondary") return true;
+  } catch (error) {
+    // Fora do Tauri, mantemos a query como fallback para abrir a tela no browser.
+  }
+
+  try {
+    const view = new URLSearchParams(window.location.search).get("view");
+    return ["secondary", "duplicate", "duplicate-identical", "history", "places"].includes(view);
+  } catch (error) {
+    return false;
+  }
 }
 
 export default App;

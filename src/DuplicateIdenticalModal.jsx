@@ -1,7 +1,14 @@
 import { useMemo, useState } from "react";
 import { commandNames, invokeAction, invokeCommand } from "./lib/tauriCommands";
 
-function DuplicateIdenticalModal({ initialJobaoCod, onClose, showError, showSuccess }) {
+function DuplicateIdenticalModal({
+  initialJobaoCod,
+  onClose,
+  showError,
+  showSuccess,
+  standalone = false,
+  closeOnSuccess = true,
+}) {
   const [jobaoDraft, setJobaoDraft] = useState(initialJobaoCod.trim());
   const [regionDraft, setRegionDraft] = useState("");
   const [items, setItems] = useState([]);
@@ -59,7 +66,7 @@ function DuplicateIdenticalModal({ initialJobaoCod, onClose, showError, showSucc
       if (!nextItems.length) {
         setStatus("Nenhum MP4 encontrado.", "error");
       } else if (matchedItem) {
-        setStatus(`Matriz encontrada: ${matchedItem.fileName}`, "success");
+        clearStatus();
         const openResult = await invokeAction(
           commandNames.openOut,
           { jobaoCod, option: "mp4" },
@@ -110,7 +117,7 @@ function DuplicateIdenticalModal({ initialJobaoCod, onClose, showError, showSucc
     if (isDuplicating) return;
     setSelectedFileName(item.fileName);
     setShowFileList(false);
-    setStatus(`Matriz selecionada: ${item.fileName}`, "success");
+    clearStatus();
     setSubmitted(false);
   };
 
@@ -162,31 +169,41 @@ function DuplicateIdenticalModal({ initialJobaoCod, onClose, showError, showSucc
       return;
     }
 
-    showSuccess(result.response?.message || "Copias criadas.");
-    onClose();
+    const successMessage = result.response?.message || "Copias criadas.";
+    showSuccess(successMessage);
+    setStatus(successMessage, "success");
+    setCopyNames([""]);
+    setSubmitted(false);
+
+    if (closeOnSuccess && onClose) onClose();
   };
 
-  return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+  const hasMessage = Boolean(message.text);
+
+  const content = (
       <section
-        className="duplicate-modal"
+        className={`duplicate-modal${standalone ? " duplicate-modal--standalone" : ""}`}
         role="dialog"
-        aria-modal="true"
+        aria-modal={!standalone}
         aria-labelledby="duplicate-title"
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <header className="duplicate-modal__header">
-          <h2 id="duplicate-title">Duplicar identicos</h2>
-          <button
-            type="button"
-            className="modal-icon-btn"
-            onClick={onClose}
-            aria-label="Fechar"
-            title="Fechar"
-          >
-            x
-          </button>
-        </header>
+        {!standalone && (
+          <header className="duplicate-modal__header">
+            <h2 id="duplicate-title">Duplicar identicos</h2>
+            {onClose && (
+              <button
+                type="button"
+                className="modal-icon-btn"
+                onClick={onClose}
+                aria-label="Fechar"
+                title="Fechar"
+              >
+                x
+              </button>
+            )}
+          </header>
+        )}
 
         <form className="duplicate-search" onSubmit={loadItems}>
           <label className="duplicate-jobao-field">
@@ -231,11 +248,13 @@ function DuplicateIdenticalModal({ initialJobaoCod, onClose, showError, showSucc
           </button>
         </form>
 
-        {message.text && (
-          <div className={`duplicate-message duplicate-message--${message.variant}`} role="alert">
-            {message.text}
-          </div>
-        )}
+        <div
+          className={`duplicate-message duplicate-message--${message.variant}${hasMessage ? "" : " duplicate-message--empty"}`}
+          role={hasMessage ? "alert" : undefined}
+          aria-hidden={!hasMessage}
+        >
+          {message.text}
+        </div>
 
         <div className="duplicate-content">
           {selectedItem && !showFileList && (
@@ -342,6 +361,13 @@ function DuplicateIdenticalModal({ initialJobaoCod, onClose, showError, showSucc
           </button>
         </footer>
       </section>
+  );
+
+  if (standalone) return content;
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      {content}
     </div>
   );
 }

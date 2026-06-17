@@ -1,21 +1,27 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { commandNames, invokeAction, invokeCommand } from "./lib/tauriCommands";
 import folderIcon from "./assets/icones/folder.svg";
 import aeIcon from "./assets/icones/aeft_icon.svg";
 import refreshIcon from "./assets/icones/history.svg";
 import videoIconMP4 from "./assets/icones/video_mp4.svg";
 import videoIconMOV from "./assets/icones/video_mov.svg";
+import chevronIcon from "./assets/icones/chevron.svg";
 
 function HistoryWindow({ onClose }) {
   const [entries, setEntries] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshingAll, setIsRefreshingAll] = useState(false);
+  const [isConfirmingClear, setIsConfirmingClear] = useState(false);
   const [message, setMessage] = useState("");
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [searchDraft, setSearchDraft] = useState("");
-  const [searchTerms, setSearchTerms] = useState([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [dateSort, setDateSort] = useState("desc");
 
-  const visibleEntries = filterEntries(entries, searchTerms);
-  const countLabel = searchTerms.length
+  const visibleEntries = useMemo(
+    () => sortEntries(filterEntries(entries, searchQuery), dateSort),
+    [entries, searchQuery, dateSort]
+  );
+  const hasSearch = Boolean(searchQuery.trim());
+  const countLabel = hasSearch
     ? `${visibleEntries.length} de ${entries.length} registros`
     : `${entries.length} registros`;
 
@@ -44,6 +50,8 @@ function HistoryWindow({ onClose }) {
       return;
     }
 
+    if (result.response?.message) setMessage(result.response.message);
+
     try {
       if (refresh) await loadHistory();
     } catch (err) {
@@ -52,9 +60,26 @@ function HistoryWindow({ onClose }) {
   };
 
   const clearHistory = async () => {
-    const confirmed = window.confirm("Apagar todo o histórico?");
-    if (!confirmed) return;
+    setIsConfirmingClear(false);
     await runAction(commandNames.historyClear, {}, true);
+  };
+
+  const refreshAllEntries = async () => {
+    setIsRefreshingAll(true);
+    setMessage("");
+    const result = await invokeAction(
+      commandNames.historyRefreshAllEntries,
+      {},
+      "Não foi possível atualizar os paths."
+    );
+    setIsRefreshingAll(false);
+
+    if (!result.ok) {
+      setMessage(result.message);
+      return;
+    }
+
+    await loadHistory();
   };
 
   const openJobao = (entry) => {
@@ -83,42 +108,61 @@ function HistoryWindow({ onClose }) {
     runAction(commandNames.historyRefreshEntry, { id: entry.id }, true);
   };
 
-  const applySearch = (event) => {
-    event.preventDefault();
-    const terms = parseSearchTerms(searchDraft);
-    setSearchTerms(terms);
-    setSearchDraft(terms.join(", "));
-    setSearchOpen(false);
+  const toggleDateSort = () => {
+    setDateSort((current) => (current === "desc" ? "asc" : "desc"));
   };
 
-  const clearSearch = () => {
-    setSearchDraft("");
-    setSearchTerms([]);
-    setSearchOpen(false);
+  const requestClearHistory = () => {
+    setIsConfirmingClear(true);
+  };
+
+  const cancelClearHistory = () => {
+    setIsConfirmingClear(false);
   };
 
   return (
     <div className="history-window">
       <header className="history-header">
-        <div>
-          <h1>
-            Histórico
-            <span>{countLabel}</span>
-          </h1>
+        <div className="history-count" aria-live="polite">{countLabel}</div>
+
+        <div className="history-search-bar">
+          <input
+            className="input history-search-input"
+            type="search"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="Pesquisar por jobão, jobinho ou região"
+            aria-label="Pesquisar histórico"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          {hasSearch && (
+            <button
+              type="button"
+              className="history-search-clear"
+              onClick={() => setSearchQuery("")}
+              aria-label="Limpar pesquisa"
+              title="Limpar pesquisa"
+            >
+              x
+            </button>
+          )}
         </div>
+
         <div className="history-header__actions">
           <button
             type="button"
-            className={`btn btn-outline history-search-btn ${searchTerms.length ? "history-search-btn--active" : ""}`}
-            onClick={() => setSearchOpen(true)}
+            className="btn btn-outline history-refresh-all-btn"
+            onClick={refreshAllEntries}
+            disabled={!entries.length || isRefreshingAll}
           >
-            Pesquisar
+            {isRefreshingAll ? "Atualizando..." : "Atualizar MP4/MOV"}
           </button>
           <button
             type="button"
             className="btn btn-outline history-clear-btn"
-            onClick={clearHistory}
-            disabled={!entries.length}
+            onClick={requestClearHistory}
+            disabled={!entries.length || isRefreshingAll}
           >
             Apagar histórico
           </button>
@@ -136,13 +180,13 @@ function HistoryWindow({ onClose }) {
         </div>
       </header>
 
-      {message && (
-        <div className="history-message" role="alert">
-          {message}
-        </div>
-      )}
-
       <main className="history-content">
+        {message && (
+          <div className="history-message" role="alert">
+            {message}
+          </div>
+        )}
+
         {isLoading && <div className="history-empty">Carregando...</div>}
 
         {!isLoading && entries.length === 0 && (
@@ -156,7 +200,22 @@ function HistoryWindow({ onClose }) {
         {!isLoading && visibleEntries.length > 0 && (
           <div className="history-table" role="table" aria-label="Histórico de projetos">
             <div className="history-row history-row--head" role="row">
-              <div role="columnheader">Data</div>
+              <div role="columnheader">
+                <button
+                  type="button"
+                  className="history-sort-btn"
+                  onClick={toggleDateSort}
+                  title="Ordenar por data"
+                >
+                  Data
+                  <img
+                    className={`history-sort-icon ${dateSort === "desc" ? "history-sort-icon--desc" : ""}`}
+                    src={chevronIcon}
+                    alt=""
+                    aria-hidden="true"
+                  />
+                </button>
+              </div>
               <div role="columnheader">Projeto</div>
               <div role="columnheader">Ações</div>
             </div>
@@ -214,50 +273,40 @@ function HistoryWindow({ onClose }) {
         )}
       </main>
 
-      {searchOpen && (
-        <div className="history-search-backdrop" role="presentation" onMouseDown={() => setSearchOpen(false)}>
-          <form
-            className="history-search-modal"
+      {isConfirmingClear && (
+        <div className="history-confirm-backdrop" role="presentation" onMouseDown={cancelClearHistory}>
+          <section
+            className="history-confirm-modal"
             role="dialog"
             aria-modal="true"
-            aria-labelledby="history-search-title"
-            onSubmit={applySearch}
+            aria-labelledby="history-confirm-title"
             onMouseDown={(event) => event.stopPropagation()}
           >
-            <header className="history-search-modal__header">
-              <h2 id="history-search-title">Pesquisar</h2>
-              <button
-                type="button"
-                className="modal-icon-btn"
-                onClick={() => setSearchOpen(false)}
-                aria-label="Fechar pesquisa"
-                title="Fechar"
-              >
-                ×
-              </button>
+            <header className="history-confirm-header">
+              <h2 id="history-confirm-title">Apagar histórico?</h2>
             </header>
 
-            <label className="history-search-field">
-              <span>Jobão, Jobinho</span>
-              <input
-                className="input"
-                type="text"
-                value={searchDraft}
-                onChange={(event) => setSearchDraft(event.target.value)}
-                placeholder="1207 ou 21091 ou 1207, 21091"
-                autoFocus
-              />
-            </label>
+            <p>Essa ação remove todos os registros salvos do histórico e não pode ser desfeita.</p>
 
-            <footer className="history-search-actions">
-              <button type="button" className="btn btn-outline" onClick={clearSearch}>
-                Limpar busca
+            <footer className="history-confirm-actions">
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={cancelClearHistory}
+                disabled={isRefreshingAll}
+              >
+                Cancelar
               </button>
-              <button type="submit" className="btn btn-primary">
-                Pesquisar
+              <button
+                type="button"
+                className="btn history-clear-confirm-btn"
+                onClick={clearHistory}
+                disabled={!entries.length || isRefreshingAll}
+              >
+                Confirmar apagar
               </button>
             </footer>
-          </form>
+          </section>
         </div>
       )}
     </div>
@@ -305,31 +354,46 @@ function projectLabel(entry) {
   return entry.region ? `${base} - ${entry.region}` : base;
 }
 
-function parseSearchTerms(value) {
-  return value
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .slice(0, 2);
+function sortEntries(entries, direction) {
+  return [...entries].sort((a, b) => {
+    const first = Number(a.openedAtEpoch || 0);
+    const second = Number(b.openedAtEpoch || 0);
+    const diff = first - second || Number(a.id || 0) - Number(b.id || 0);
+    return direction === "desc" ? -diff : diff;
+  });
 }
 
-function filterEntries(entries, terms) {
+function filterEntries(entries, query) {
+  const terms = parseSearchTerms(query);
   if (!terms.length) return entries;
-  if (terms.length === 1) {
-    const [term] = terms;
-    return entries.filter(
-      (entry) => normalizeCode(entry.jobaoCod) === term || normalizeCode(entry.jobinhoCod) === term
-    );
-  }
 
-  const [jobao, jobinho] = terms;
-  return entries.filter(
-    (entry) => normalizeCode(entry.jobaoCod) === jobao && normalizeCode(entry.jobinhoCod) === jobinho
-  );
+  return entries.filter((entry) => {
+    const searchableText = normalizeSearchText(
+      [
+        entry.jobaoCod,
+        entry.jobinhoCod,
+        entry.region,
+        projectLabel(entry),
+        formatDate(entry.openedAt),
+      ].filter(Boolean).join(" ")
+    );
+
+    return terms.every((term) => searchableText.includes(term));
+  });
 }
 
-function normalizeCode(value) {
-  return String(value ?? "").trim();
+function parseSearchTerms(value) {
+  return normalizeSearchText(value)
+    .split(/[,\s]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function normalizeSearchText(value) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
 }
 
 export default HistoryWindow;

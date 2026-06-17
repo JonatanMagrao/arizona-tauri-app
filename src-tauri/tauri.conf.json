@@ -17,6 +17,18 @@
         "height": 270,
         "center": true,
         "resizable": false
+      },
+      {
+        "label": "secondary",
+        "title": "Arizona",
+        "width": 950,
+        "height": 600,
+        "minWidth": 560,
+        "minHeight": 420,
+        "parent": "main",
+        "center": true,
+        "resizable": true,
+        "visible": false
       }
     ],
     "security": {
