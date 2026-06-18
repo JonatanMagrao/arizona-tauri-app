@@ -3,7 +3,7 @@ mod history;
 mod media;
 mod settings;
 
-use arizona::{ActionResponse, Arizona, MediaFile};
+use arizona::{ActionResponse, Arizona, MediaFile, ProductImportReport};
 use settings::AppConfig;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, LogicalSize, Manager};
@@ -39,6 +39,8 @@ pub fn run() {
             history_clear,
             history_copy_list,
             history_copy_clear,
+            history_product_import_list,
+            history_product_import_clear,
             history_copy_open_folder,
             history_copy_reveal_media,
             history_copy_open_media,
@@ -165,12 +167,22 @@ fn open_out(app: AppHandle, jobao_cod: String, option: String) -> Result<ActionR
 #[tauri::command]
 fn import_products(app: AppHandle, jobao_cod: String) -> Result<ActionResponse, String> {
     let arizona = arizona_from_app(&app)?;
-    arizona.get_visible_rows_from_xl(&jobao_cod)?;
 
-    Ok(match arizona.import_products(&jobao_cod) {
-        Ok(()) => ActionResponse::ok(),
-        Err(err) => ActionResponse::err(err),
-    })
+    match arizona.import_products(&jobao_cod) {
+        Ok(report) => {
+            let history_result = history::record_product_import(&app, &report);
+            let response = show_product_import_report(app, report)?;
+
+            if let Err(err) = history_result {
+                return Ok(ActionResponse::err(format!(
+                    "Produtos importados, mas o historico nao foi salvo: {err}"
+                )));
+            }
+
+            Ok(response)
+        }
+        Err(err) => Ok(ActionResponse::err(err)),
+    }
 }
 
 const MAIN_WINDOW_LABEL: &str = "main";
@@ -186,6 +198,7 @@ struct SecondaryWindowState {
     media_path: Option<String>,
     media_kind: Option<String>,
     media_title: Option<String>,
+    product_report: Option<ProductImportReport>,
 }
 
 #[tauri::command]
@@ -201,6 +214,7 @@ fn open_secondary_window(
         media_path: None,
         media_kind: None,
         media_title: None,
+        product_report: None,
     };
     show_secondary_window(app, state)
 }
@@ -268,6 +282,8 @@ fn normalize_secondary_view(view: &str) -> Result<&'static str, String> {
         "history" | "historico" => Ok("history"),
         "places" | "pracas" | "crf" => Ok("places"),
         "media" | "midia" => Ok("media"),
+        "products" | "produtos" | "products-log" | "product-log" => Ok("products"),
+        "settings" | "config" | "configuracoes" => Ok("settings"),
         _ => Err("Tela secundária inválida.".to_string()),
     }
 }
@@ -278,6 +294,8 @@ fn secondary_window_title(view: &str) -> &'static str {
         "history" => "Histórico",
         "places" => "Praças CRF",
         "media" => "Mídia",
+        "products" => "Produtos importados",
+        "settings" => "Configuracoes",
         _ => "Arizona",
     }
 }
@@ -291,6 +309,12 @@ fn secondary_window_state_title(state: &SecondaryWindowState) -> String {
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| secondary_window_title("media"))
             .to_string();
+    }
+
+    if state.view == "products" {
+        if let Some(report) = &state.product_report {
+            return format!("Jobao {}", report.jobao_cod());
+        }
     }
 
     secondary_window_title(&state.view).to_string()
@@ -425,6 +449,19 @@ fn history_copy_clear(app: AppHandle) -> Result<ActionResponse, String> {
 }
 
 #[tauri::command]
+fn history_product_import_list(
+    app: AppHandle,
+) -> Result<Vec<history::ProductImportHistoryEntry>, String> {
+    history::list_product_imports(&app)
+}
+
+#[tauri::command]
+fn history_product_import_clear(app: AppHandle) -> Result<ActionResponse, String> {
+    history::clear_product_imports(&app)?;
+    Ok(ActionResponse::ok())
+}
+
+#[tauri::command]
 fn history_copy_open_folder(app: AppHandle, id: i64) -> Result<ActionResponse, String> {
     history::open_copy_folder(&app, id)?;
     Ok(ActionResponse::ok())
@@ -520,12 +557,28 @@ fn save_app_config(app: AppHandle, config: AppConfig) -> Result<AppConfig, Strin
 }
 
 fn arizona_from_app(app: &AppHandle) -> Result<Arizona, String> {
-    Ok(Arizona::new(settings::load(app)?))
+    Ok(Arizona::new(settings::load_validated(app)?))
 }
 
 fn show_media_window(app: AppHandle, media: MediaFile) -> Result<ActionResponse, String> {
     let MediaFile { path, kind, title } = media;
     show_media_path_with_title(app, path, &kind, title)
+}
+
+fn show_product_import_report(
+    app: AppHandle,
+    report: ProductImportReport,
+) -> Result<ActionResponse, String> {
+    let state = SecondaryWindowState {
+        view: "products".to_string(),
+        jobao_cod: None,
+        media_path: None,
+        media_kind: None,
+        media_title: None,
+        product_report: Some(report),
+    };
+
+    show_secondary_window(app, state)
 }
 
 fn show_media_path_with_title(
@@ -540,6 +593,7 @@ fn show_media_path_with_title(
         media_path: Some(path.to_string_lossy().into_owned()),
         media_kind: Some(media_kind.to_string()),
         media_title: Some(title),
+        product_report: None,
     };
 
     show_secondary_window(app, state)

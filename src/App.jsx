@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
 import JobPanel from "./panels/JobPanel";
 import LinksPanel from "./panels/LinksPanel";
 import CopyPanel from "./panels/CopyPanel";
@@ -8,20 +7,35 @@ import { commandNames, invokeAction, invokeCommand } from "./lib/tauriCommands";
 import "./App.css";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
-// ÍCONES (svg como imagem)
 import pastaIcon from "./assets/icones/project.svg";
-import linkIcon from "./assets/icones/link.svg";
 import imageIcon from "./assets/icones/hierarchy.svg";
-import copyIcon from "./assets/icones/folder.svg"; // você pode trocar por outro ícone depois
+import copyIcon from "./assets/icones/folder.svg";
 import historyIcon from "./assets/icones/history.svg";
 import settingsIcon from "./assets/icones/settings.svg";
 
 const TABS = { JOBS: "jobs", LINKS: "links", COPY: "copy" };
 const DEFAULT_SETTINGS = {
   aeVersion: "2024",
-  drive: "I:\\Drives compartilhados",
+  drive: "I:\\Drives compartilhados\\Phx CRF Copa",
   produtos: "PRODUTOS",
+  produtosYear: "",
+  produtosPath: "I:\\Drives compartilhados\\Phx CRF Copa\\CARREFOUR\\ASSETS\\_FOTOS FLOW",
 };
+
+function normalizeSettings(config) {
+  const next = { ...DEFAULT_SETTINGS, ...(config || {}) };
+  return {
+    ...next,
+    produtosYear: normalizeProductsYear(next.produtosYear),
+    produtosPath: String(next.produtosPath ?? "").trim(),
+  };
+}
+
+function normalizeProductsYear(value) {
+  const text = String(value ?? "").trim();
+  if (text.toLowerCase() === "auto") return "";
+  return text.replace(/\D/g, "").slice(0, 4);
+}
 
 function App() {
   if (isSecondaryWindow()) return <SecondaryWindow />;
@@ -31,57 +45,56 @@ function App() {
 
 function MainApp() {
   const [activeTab, setActiveTab] = useState(TABS.JOBS);
-
-  // estados
   const [jobaoCod, setJobaoCod] = useState("");
   const [jobinhoCod, setJobinhoCod] = useState("");
   const [outOption, setOutOption] = useState("mp4");
   const [isOpeningOut, setIsOpeningOut] = useState(false);
   const [copyCode, setCopyCode] = useState("");
   const [appConfig, setAppConfig] = useState(DEFAULT_SETTINGS);
-  const [settingsDraft, setSettingsDraft] = useState(DEFAULT_SETTINGS);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [isSavingSettings, setIsSavingSettings] = useState(false);
-  const [isChoosingDrive, setIsChoosingDrive] = useState(false);
-
-
-  // ==== Loading simples para importação ====
   const [isImporting, setIsImporting] = useState(false);
-
-  // ==== Toast (erro no rodapé) ====
   const [toast, setToast] = useState({ open: false, message: "", variant: "error" });
   const hideTimerRef = useRef(null);
   const projectTitleRef = useRef({ key: "", title: "" });
 
   const hideToast = () => {
-    setToast(t => ({ ...t, open: false }));
+    setToast((current) => ({ ...current, open: false }));
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
   };
+
   const showToast = (message, variant = "error") => {
     setToast({ open: true, message, variant });
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-    hideTimerRef.current = setTimeout(hideToast, 5000); // 5s
+    hideTimerRef.current = setTimeout(hideToast, 5000);
   };
+
   const showError = (msg) => showToast(msg, "error");
-  const showSuccess = (msg) => showToast(msg, "success");
-  useEffect(() => () => hideToast(), []); // limpa timer ao desmontar
+
+  useEffect(() => () => hideToast(), []);
 
   useEffect(() => {
     let mounted = true;
     invokeCommand(commandNames.loadAppConfig)
       .then((config) => {
-        if (!mounted) return;
-        setAppConfig(config);
-        setSettingsDraft(config);
+        if (mounted) setAppConfig(normalizeSettings(config));
       })
-      .catch((e) => showError(String(e || "Não foi possível carregar as configurações.")));
+      .catch((e) => showError(String(e || "Nao foi possivel carregar as configuracoes.")));
 
     return () => {
       mounted = false;
     };
   }, []);
 
-  // Helper: chama Rust e mostra toast se vier erro ou exception
+  useEffect(() => {
+    const handleFocus = () => {
+      invokeCommand(commandNames.loadAppConfig)
+        .then((config) => setAppConfig(normalizeSettings(config)))
+        .catch(() => {});
+    };
+
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, []);
+
   const run = async (fnName, args, fallbackMsg) => {
     const result = await invokeAction(fnName, args, fallbackMsg);
     if (!result.ok) {
@@ -97,7 +110,7 @@ function MainApp() {
     try {
       await getCurrentWindow().setTitle(projectTitle);
     } catch (e) {
-      // O After abriu; falha no título não deve bloquear o fluxo principal.
+      // Falha no titulo nao deve bloquear o fluxo principal.
     }
   };
 
@@ -136,7 +149,7 @@ function MainApp() {
           return;
         }
       } catch (e) {
-        // Lookup silencioso: enquanto o usuário digita, falhar é esperado.
+        // Lookup silencioso: enquanto o usuario digita, falhar e esperado.
       }
 
       if (!cancelled) retryTimer = setTimeout(resolveProjectTitle, 2000);
@@ -151,13 +164,11 @@ function MainApp() {
     };
   }, [jobaoCod, jobinhoCod, appConfig.drive]);
 
-  // ações
-  const openLogFile = async () => run(commandNames.openLogFile, {}, "Não foi possível abrir o arquivo de log.");
-  const projectName = async () => run(commandNames.projectName, { jobaoCod, jobinhoCod }, "Não foi possível recuperar o nome do projeto.");
-  const openJobao = async () => run(commandNames.openJobao, { jobaoCod }, `Não foi possível abrir o Jobão "${jobaoCod}".`);
-  const openJobinho = async () => run(commandNames.openJobinho, { jobaoCod, jobinhoCod }, `Não foi possível abrir o Jobinho "${jobinhoCod}".`);
+  const projectName = async () => run(commandNames.projectName, { jobaoCod, jobinhoCod }, "Nao foi possivel recuperar o nome do projeto.");
+  const openJobao = async () => run(commandNames.openJobao, { jobaoCod }, `Nao foi possivel abrir o Jobao "${jobaoCod}".`);
+  const openJobinho = async () => run(commandNames.openJobinho, { jobaoCod, jobinhoCod }, `Nao foi possivel abrir o Jobinho "${jobinhoCod}".`);
   const abrirAE = async () => {
-    const res = await run(commandNames.abrirAe, { jobaoCod, jobinhoCod }, `Não foi possível abrir o projeto ${jobinhoCod} no After Effects.`);
+    const res = await run(commandNames.abrirAe, { jobaoCod, jobinhoCod }, `Nao foi possivel abrir o projeto ${jobinhoCod} no After Effects.`);
     if (res?.ok) {
       projectTitleRef.current = {
         key: `${appConfig.drive || ""}::${jobaoCod.trim()}::${jobinhoCod.trim()}`,
@@ -166,16 +177,16 @@ function MainApp() {
       await setProjectWindowTitle(res.message);
     }
   };
-  const openVideo = async (jobaoCod, jobinhoCod, mediaType) => run(commandNames.openVideo, { jobaoCod, jobinhoCod, mediaType }, `Não foi possível abrir o vídeo do projeto "${jobinhoCod}"`);
-  const openAudio = async (jobaoCod, jobinhoCod) => run(commandNames.openAudio, { jobaoCod, jobinhoCod }, `Não foi possível abrir o áudio do projeto "${jobinhoCod}"`);
-  const revealVideo = async (jobaoCod, jobinhoCod, mediaType) => run(commandNames.revealVideo, { jobaoCod, jobinhoCod, mediaType }, `Não foi possível localizar o vídeo do projeto "${jobinhoCod}"`);
-  const openRoteiro = async () => run(commandNames.openRoteiro, { jobaoCod, jobinhoCod }, `Não foi possível abrir o roteiro do projeto "${jobinhoCod}"`);
+  const openVideo = async (jobao, jobinho, mediaType) => run(commandNames.openVideo, { jobaoCod: jobao, jobinhoCod: jobinho, mediaType }, `Nao foi possivel abrir o video do projeto "${jobinho}"`);
+  const openAudio = async (jobao, jobinho) => run(commandNames.openAudio, { jobaoCod: jobao, jobinhoCod: jobinho }, `Nao foi possivel abrir o audio do projeto "${jobinho}"`);
+  const revealVideo = async (jobao, jobinho, mediaType) => run(commandNames.revealVideo, { jobaoCod: jobao, jobinhoCod: jobinho, mediaType }, `Nao foi possivel localizar o video do projeto "${jobinho}"`);
+  const openRoteiro = async () => run(commandNames.openRoteiro, { jobaoCod, jobinhoCod }, `Nao foi possivel abrir o roteiro do projeto "${jobinhoCod}"`);
   const openOut = async (opt) => {
-    if (isOpeningOut) return;                 // evita chamadas sobrepostas
+    if (isOpeningOut) return;
     setIsOpeningOut(true);
-    const chosen = opt ?? outOption;          // usa o param se vier, senão o estado atual
+    const chosen = opt ?? outOption;
     try {
-      await run(commandNames.openOut, { jobaoCod, option: chosen }, "Não foi possível abrir a pasta OUT/RENDER.");
+      await run(commandNames.openOut, { jobaoCod, option: chosen }, "Nao foi possivel abrir a pasta OUT/RENDER.");
     } finally {
       setIsOpeningOut(false);
     }
@@ -187,13 +198,12 @@ function MainApp() {
   const openClaro = async () => run(commandNames.openClaro, {}, "Falha ao abrir o Claro.");
   const openLinks = async () => run(commandNames.openLinks, {}, "Falha ao abrir os links.");
 
-  // ação de copiar arquivos — COM LOADING
   const importProducts = async () => {
     setIsImporting(true);
     try {
-      await run(commandNames.importProducts, { jobaoCod: copyCode }, "Não foi possível copiar os arquivos.");
+      await run(commandNames.importProducts, { jobaoCod: copyCode }, "Nao foi possivel copiar os arquivos.");
     } catch (e) {
-      showError("Não foi possível copiar os arquivos.");
+      showError("Nao foi possivel copiar os arquivos.");
     } finally {
       setIsImporting(false);
     }
@@ -201,11 +211,6 @@ function MainApp() {
 
   const handleOnTop = async (onTop) => {
     await getCurrentWindow().setAlwaysOnTop(onTop);
-  }
-
-  const openSettings = () => {
-    setSettingsDraft(appConfig);
-    setSettingsOpen(true);
   };
 
   const openSecondaryView = async (view, args = {}) => {
@@ -218,6 +223,7 @@ function MainApp() {
 
   const openPlaces = async () => openSecondaryView("places");
   const openHistory = async () => openSecondaryView("history");
+  const openSettings = async () => openSecondaryView("settings");
 
   const openDuplicateIdentical = async () => {
     const jobao = jobaoCod.trim();
@@ -226,46 +232,9 @@ function MainApp() {
     await openSecondaryView("duplicate", { jobaoCod: jobao });
   };
 
-  const updateSettingsDraft = (field, value) => {
-    setSettingsDraft((config) => ({ ...config, [field]: value }));
-  };
-
-  const chooseDriveFolder = async () => {
-    setIsChoosingDrive(true);
-    try {
-      const selected = await open({
-        directory: true,
-        multiple: false,
-        title: "Selecionar drive ou pasta base",
-      });
-      if (typeof selected === "string") updateSettingsDraft("drive", selected);
-    } catch (e) {
-      showError(String(e || "Não foi possível selecionar o drive."));
-    } finally {
-      setIsChoosingDrive(false);
-    }
-  };
-
-  const saveSettings = async (e) => {
-    e.preventDefault();
-    setIsSavingSettings(true);
-    try {
-      const saved = await invokeCommand(commandNames.saveAppConfig, { config: settingsDraft });
-      setAppConfig(saved);
-      setSettingsDraft(saved);
-      setSettingsOpen(false);
-      showSuccess("Configurações salvas.");
-    } catch (err) {
-      showError(String(err || "Não foi possível salvar as configurações."));
-    } finally {
-      setIsSavingSettings(false);
-    }
-  };
-
   return (
     <div className="layout layout--with-leftbar">
-      <aside className="iconbar" aria-label="Painéis">
-        {/* JOBÃO & JOBINHO */}
+      <aside className="iconbar" aria-label="Paineis">
         <button
           className={`icon-tab ${activeTab === TABS.JOBS ? "icon-tab--active" : ""}`}
           onClick={() => setActiveTab(TABS.JOBS)}
@@ -276,7 +245,6 @@ function MainApp() {
           <img src={pastaIcon} alt="Projetos" />
         </button>
 
-        {/* COPY (nova aba)
         <button
           className={`icon-tab ${activeTab === TABS.COPY ? "icon-tab--active" : ""}`}
           onClick={() => setActiveTab(TABS.COPY)}
@@ -286,45 +254,33 @@ function MainApp() {
         >
           <img src={copyIcon} alt="Copiar Arquivos" />
         </button>
-        */}
 
-        {/* LINKS */}
-        {/* <button
-          className={`icon-tab ${activeTab === TABS.LINKS ? "icon-tab--active" : ""}`}
-          onClick={() => setActiveTab(TABS.LINKS)}
-          title="Abrir Links"
-          aria-label="Abrir Links"
-        >
-          <img src={linkIcon} alt="Abrir Links" />
-        </button> */}
-
-        {/* IMAGEM */}
         <button
           className="icon-tab"
           onClick={openPlaces}
           tabIndex="-1"
-          title="Praças CRF"
-          aria-label="Praças CRF"
+          title="Pracas CRF"
+          aria-label="Pracas CRF"
         >
-          <img src={imageIcon} alt="Praças CRF" />
+          <img src={imageIcon} alt="Pracas CRF" />
         </button>
         <button
           className="icon-tab"
           onClick={openHistory}
           tabIndex="-1"
-          title="Histórico"
-          aria-label="Histórico"
+          title="Historico"
+          aria-label="Historico"
         >
-          <img src={historyIcon} alt="Histórico" />
+          <img src={historyIcon} alt="Historico" />
         </button>
         <button
           className="icon-tab"
           onClick={openSettings}
           tabIndex="-1"
-          title="Configurações"
-          aria-label="Configurações"
+          title="Configuracoes"
+          aria-label="Configuracoes"
         >
-          <img src={settingsIcon} alt="Configurações" />
+          <img src={settingsIcon} alt="Configuracoes" />
         </button>
         <div>
           <input
@@ -368,113 +324,22 @@ function MainApp() {
           />
         )}
 
-        {/* COPY (nova aba)
         {activeTab === TABS.COPY && (
           <CopyPanel
             copyCode={copyCode}
             setCopyCode={setCopyCode}
             importProducts={importProducts}
             isImporting={isImporting}
-            openLogFile={openLogFile}
           />
         )}
-        */}
       </main>
 
-      {/* ===== Overlay de loading ===== */}
       {isImporting && (
         <div className="overlay" role="status" aria-live="polite" aria-busy="true">
           <div className="loader">Copiando arquivos...</div>
         </div>
       )}
 
-      {settingsOpen && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={() => setSettingsOpen(false)}>
-          <section
-            className="settings-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="settings-title"
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            <header className="settings-modal__header">
-              <h2 id="settings-title">Configurações</h2>
-              <button
-                type="button"
-                className="modal-icon-btn"
-                onClick={() => setSettingsOpen(false)}
-                aria-label="Fechar"
-                title="Fechar"
-              >
-                ×
-              </button>
-            </header>
-
-            <form className="settings-form" onSubmit={saveSettings}>
-              <label className="settings-field settings-field--drive">
-                <span>Drive</span>
-                <div className="settings-drive-row">
-                  <input
-                    className="input settings-drive-input"
-                    type="text"
-                    value={settingsDraft.drive}
-                    readOnly
-                    title={settingsDraft.drive}
-                  />
-                  <button
-                    type="button"
-                    className="btn btn-outline"
-                    onClick={chooseDriveFolder}
-                    disabled={isChoosingDrive || isSavingSettings}
-                  >
-                    {isChoosingDrive ? "..." : "Selecionar"}
-                  </button>
-                </div>
-              </label>
-
-              <label className="settings-field">
-                <span>After Effects</span>
-                <input
-                  className="input settings-short-input"
-                  type="text"
-                  value={settingsDraft.aeVersion}
-                  onChange={(e) => updateSettingsDraft("aeVersion", e.target.value)}
-                  placeholder="2024"
-                  autoComplete="off"
-                />
-              </label>
-
-              <label className="settings-field">
-                <span>Produtos</span>
-                <input
-                  className="input settings-short-input"
-                  type="text"
-                  value={settingsDraft.produtos}
-                  onChange={(e) => updateSettingsDraft("produtos", e.target.value)}
-                  placeholder="PRODUTOS"
-                  autoComplete="off"
-                />
-              </label>
-
-              <footer className="settings-actions">
-                <button
-                  type="button"
-                  className="btn btn-outline"
-                  onClick={() => setSettingsOpen(false)}
-                  disabled={isSavingSettings}
-                >
-                  Cancelar
-                </button>
-                <button type="submit" className="btn btn-primary" disabled={isSavingSettings}>
-                  {isSavingSettings ? "Salvando..." : "Salvar"}
-                </button>
-              </footer>
-            </form>
-          </section>
-        </div>
-      )}
-
-      {/* ===== Toast no rodapé ===== */}
       {toast.open && (
         <div
           className={`toast ${toast.variant === "error" ? "toast--error" : toast.variant === "success" ? "toast--success" : ""}`}
@@ -482,7 +347,7 @@ function MainApp() {
           aria-live="polite"
         >
           <span className="toast__text">{toast.message}</span>
-          <button className="toast__close" onClick={hideToast} aria-label="Fechar">×</button>
+          <button className="toast__close" onClick={hideToast} aria-label="Fechar">x</button>
         </div>
       )}
     </div>
@@ -498,7 +363,21 @@ function isSecondaryWindow() {
 
   try {
     const view = new URLSearchParams(window.location.search).get("view");
-    return ["secondary", "duplicate", "duplicate-identical", "history", "places", "media", "midia"].includes(view);
+    return [
+      "secondary",
+      "duplicate",
+      "duplicate-identical",
+      "history",
+      "places",
+      "media",
+      "midia",
+      "products",
+      "produtos",
+      "products-log",
+      "settings",
+      "config",
+      "configuracoes",
+    ].includes(view);
   } catch (error) {
     return false;
   }

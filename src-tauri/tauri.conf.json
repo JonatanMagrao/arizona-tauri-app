@@ -28,6 +28,9 @@
         "parent": "main",
         "center": true,
         "resizable": true,
+        "minimizable": false,
+        "maximizable": true,
+        "closable": true,
         "visible": false
       }
     ],

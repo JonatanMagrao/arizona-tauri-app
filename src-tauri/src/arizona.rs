@@ -4,11 +4,11 @@ use roxmltree::{Document, Node};
 use serde::Serialize;
 use std::{
     collections::HashSet,
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
     process::Command,
-    time::UNIX_EPOCH,
+    time::{Duration, Instant, UNIX_EPOCH},
 };
 use zip::ZipArchive;
 
@@ -18,7 +18,8 @@ use crate::{
 };
 
 const SHEET_NAME: &str = "Consolidado";
-
+const PRODUCT_COPY_MAX_PARALLELISM: usize = 4;
+const PRODUCT_COPY_MAX_RETRIES: usize = 3;
 #[derive(Serialize)]
 pub struct ActionResponse {
     ok: bool,
@@ -56,13 +57,72 @@ struct MonthFolder {
 
 struct ImportResult {
     imported_files: Vec<String>,
+    existing_files: Vec<String>,
     not_found_files: Vec<String>,
 }
 
-struct GroupResult {
-    nome_pasta: String,
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductImportGroup {
+    folder_name: String,
     imported_files: Vec<String>,
+    existing_files: Vec<String>,
     not_found_files: Vec<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductImportReport {
+    jobao_cod: String,
+    product_path: String,
+    source_path: String,
+    imported_files: Vec<String>,
+    existing_files: Vec<String>,
+    not_found_files: Vec<String>,
+    groups: Vec<ProductImportGroup>,
+    total_processed: usize,
+    total_imported: usize,
+    total_existing: usize,
+    total_not_found: usize,
+    duration_millis: u64,
+}
+
+impl ProductImportReport {
+    pub fn jobao_cod(&self) -> &str {
+        &self.jobao_cod
+    }
+
+    pub fn product_path(&self) -> &str {
+        &self.product_path
+    }
+
+    pub fn source_path(&self) -> &str {
+        &self.source_path
+    }
+
+    pub fn total_processed(&self) -> usize {
+        self.total_processed
+    }
+
+    pub fn total_imported(&self) -> usize {
+        self.total_imported
+    }
+
+    pub fn total_existing(&self) -> usize {
+        self.total_existing
+    }
+
+    pub fn total_not_found(&self) -> usize {
+        self.total_not_found
+    }
+
+    pub fn total_groups(&self) -> usize {
+        self.groups.len()
+    }
+
+    pub fn duration_millis(&self) -> u64 {
+        self.duration_millis
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -123,17 +183,13 @@ pub struct Arizona {
 
 impl Arizona {
     pub fn new(config: AppConfig) -> Self {
-        let drive_root = PathBuf::from(&config.drive);
-        let carrefour_path = drive_root.join("Phx CRF");
+        let carrefour_path = entrypoint_path_from_drive(&config.drive);
         let after_fx = PathBuf::from(format!(
             "C:/Program Files/Adobe/Adobe After Effects {}/Support Files/AfterFX.exe",
             config.ae_version
         ));
-        let product_folder_path = carrefour_path
-            .join("CARREFOUR")
-            .join("ASSETS")
-            .join("_FOTOS FLOW");
-        let meses = build_month_labels(&carrefour_path, 2);
+        let product_folder_path = product_folder_path(&config.produtos_path);
+        let meses = build_month_labels(&carrefour_path, 2, &config.produtos_year);
 
         Self {
             produtos: config.produtos,
@@ -423,62 +479,75 @@ impl Arizona {
     ) -> Result<ImportResult, String> {
         let origem = &self.product_folder_path;
         let destino = dstn_folder;
+        if origem.as_os_str().is_empty() {
+            return Err("Selecione a pasta Fotos Flow nas configuracoes.".to_string());
+        }
+        if !origem.is_dir() {
+            return Err(format!(
+                "Pasta Fotos Flow nao encontrada: {}",
+                origem.display()
+            ));
+        }
 
-        let mut arquivos = Vec::new();
-        for entry in fs::read_dir(origem)
-            .map_err(|err| format!("Erro ao ler {}: {err}", origem.display()))?
-        {
-            let entry = entry.map_err(|err| err.to_string())?;
-            let path = entry.path();
-            if path.is_file() {
-                arquivos.push(path);
+        let arquivos = list_product_source_files(origem)?;
+
+        let mut imported_files = Vec::new();
+        let mut existing_files = Vec::new();
+        let mut not_found_files = Vec::new();
+        let mut copy_tasks = Vec::new();
+        let mut queued_copy_names = HashSet::new();
+
+        for codigo in lista_codigos {
+            if !queue_product_copy_tasks(
+                &arquivos,
+                codigo,
+                &mut copy_tasks,
+                &mut queued_copy_names,
+            )? {
+                not_found_files.push(codigo.clone());
             }
         }
 
-        let mut imported_files = Vec::new();
-        let mut not_found_files = Vec::new();
+        let copy_result = copy_product_files(destino, &copy_tasks)?;
+        imported_files.extend(copy_result.imported_files);
+        existing_files.extend(copy_result.existing_files);
 
-        for codigo in lista_codigos {
-            let codigo_lower = codigo.to_lowercase();
-            let encontrados: Vec<&PathBuf> = arquivos
-                .iter()
-                .filter(|arquivo| {
-                    arquivo
-                        .file_stem()
-                        .and_then(|stem| stem.to_str())
-                        .map(|stem| stem.to_lowercase() == codigo_lower)
-                        .unwrap_or(false)
-                })
-                .collect();
+        if !not_found_files.is_empty() {
+            let retry_files = list_product_source_files(origem)?;
+            let retry_codes = std::mem::take(&mut not_found_files);
+            let mut retry_tasks = Vec::new();
 
-            if encontrados.is_empty() {
-                not_found_files.push(codigo.clone());
-                continue;
+            for codigo in retry_codes {
+                if !queue_product_copy_tasks(
+                    &retry_files,
+                    &codigo,
+                    &mut retry_tasks,
+                    &mut queued_copy_names,
+                )? {
+                    not_found_files.push(codigo);
+                }
             }
 
-            for arquivo in encontrados {
-                let file_name = arquivo
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .ok_or_else(|| format!("Nome de arquivo inválido: {}", arquivo.display()))?;
-                fs::copy(arquivo, destino.join(file_name))
-                    .map_err(|err| format!("⚠️ Erro ao copiar {file_name}: {err}"))?;
-                imported_files.push(file_name.to_string());
-            }
+            let retry_result = copy_product_files(destino, &retry_tasks)?;
+            imported_files.extend(retry_result.imported_files);
+            existing_files.extend(retry_result.existing_files);
         }
 
         Ok(ImportResult {
             imported_files,
+            existing_files,
             not_found_files,
         })
     }
 
-    pub fn import_products(&self, jobao_cod: &str) -> Result<(), String> {
+    pub fn import_products(&self, jobao_cod: &str) -> Result<ProductImportReport, String> {
+        let started_at = Instant::now();
         let (product_path, linhas_visiveis) = self.get_visible_rows_from_xl(jobao_cod)?;
 
         let mut imported_normais = Vec::new();
+        let mut existing_normais = Vec::new();
         let mut not_found_normais = Vec::new();
-        let mut grupos_resultados = Vec::new();
+        let mut groups = Vec::new();
         let mut linhas_soltas = Vec::new();
         let mut linhas_com_grupo = Vec::new();
 
@@ -498,6 +567,7 @@ impl Arizona {
         if !codigos_soltos.is_empty() {
             let res = self.importar_produtos(&product_path, &codigos_soltos)?;
             imported_normais.extend(res.imported_files);
+            existing_normais.extend(res.existing_files);
             not_found_normais.extend(res.not_found_files);
         }
 
@@ -508,17 +578,24 @@ impl Arizona {
             fs::create_dir_all(&subpasta).map_err(|err| err.to_string())?;
 
             let res = self.importar_produtos(&subpasta, &partes)?;
-            grupos_resultados.push(GroupResult {
-                nome_pasta,
+            groups.push(ProductImportGroup {
+                folder_name: nome_pasta,
                 imported_files: res.imported_files,
+                existing_files: res.existing_files,
                 not_found_files: res.not_found_files,
             });
         }
 
-        write_products_log(&imported_normais, &not_found_normais, &grupos_resultados)?;
-        open_start_file(&products_log_path())?;
-
-        Ok(())
+        Ok(product_import_report(
+            jobao_cod,
+            &product_path,
+            &self.product_folder_path,
+            imported_normais,
+            existing_normais,
+            not_found_normais,
+            groups,
+            duration_millis(started_at),
+        ))
     }
 
     pub fn open_roteiro(
@@ -725,10 +802,15 @@ impl Arizona {
     }
 }
 
-fn build_month_labels(carrefour_path: &Path, months_back: i32) -> Vec<MonthFolder> {
+fn build_month_labels(
+    carrefour_path: &Path,
+    months_back: i32,
+    configured_year: &str,
+) -> Vec<MonthFolder> {
     let today = Local::now();
-    let current = month_folder(today.year(), today.month() as i32, 0);
-    let next = month_folder(today.year(), today.month() as i32, 1);
+    let project_year = project_year_folder_name(configured_year);
+    let current = month_folder(project_year, today.month() as i32, 0);
+    let next = month_folder(project_year, today.month() as i32, 1);
     let next_path = carrefour_path
         .join("CARREFOUR")
         .join("FILMES")
@@ -743,10 +825,207 @@ fn build_month_labels(carrefour_path: &Path, months_back: i32) -> Vec<MonthFolde
     }
 
     for offset in 1..=months_back {
-        labels.push(month_folder(today.year(), today.month() as i32, -offset));
+        labels.push(month_folder(project_year, today.month() as i32, -offset));
     }
 
     labels
+}
+
+fn entrypoint_path_from_drive(drive: &str) -> PathBuf {
+    PathBuf::from(drive.trim())
+}
+
+fn product_folder_path(configured_path: &str) -> PathBuf {
+    PathBuf::from(configured_path.trim())
+}
+
+fn list_product_source_files(origem: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut arquivos = Vec::new();
+    for entry in
+        fs::read_dir(origem).map_err(|err| format!("Erro ao ler {}: {err}", origem.display()))?
+    {
+        let entry = entry.map_err(|err| err.to_string())?;
+        let path = entry.path();
+        if path.is_file() {
+            arquivos.push(path);
+        }
+    }
+
+    Ok(arquivos)
+}
+
+fn queue_product_copy_tasks(
+    arquivos: &[PathBuf],
+    codigo: &str,
+    copy_tasks: &mut Vec<(PathBuf, String)>,
+    queued_copy_names: &mut HashSet<String>,
+) -> Result<bool, String> {
+    let codigo_lower = codigo.to_lowercase();
+    let encontrados: Vec<PathBuf> = arquivos
+        .iter()
+        .filter(|arquivo| {
+            arquivo
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .map(|stem| stem.to_lowercase() == codigo_lower)
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect();
+
+    if encontrados.is_empty() {
+        return Ok(false);
+    }
+
+    for arquivo in encontrados {
+        let file_name = arquivo
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| format!("Nome de arquivo invalido: {}", arquivo.display()))?
+            .to_string();
+        if queued_copy_names.insert(file_name.to_lowercase()) {
+            copy_tasks.push((arquivo, file_name));
+        }
+    }
+
+    Ok(true)
+}
+
+struct CopyFilesResult {
+    imported_files: Vec<String>,
+    existing_files: Vec<String>,
+}
+
+enum CopyFileOutcome {
+    Imported(String),
+    Existing(String),
+}
+
+fn copy_product_files(
+    destino: &Path,
+    tasks: &[(PathBuf, String)],
+) -> Result<CopyFilesResult, String> {
+    let mut imported_files = Vec::new();
+    let mut existing_files = Vec::new();
+    let mut next_index = 0;
+
+    while next_index < tasks.len() {
+        let remaining = tasks.len() - next_index;
+        let parallelism = product_copy_parallelism(remaining);
+        let chunk_end = (next_index + parallelism).min(tasks.len());
+        let chunk = &tasks[next_index..chunk_end];
+        let results = std::thread::scope(|scope| {
+            let handles: Vec<_> = chunk
+                .iter()
+                .map(|(source, file_name)| {
+                    let target = destino.join(file_name);
+                    scope.spawn(move || copy_product_file_with_retry(source, &target, file_name))
+                })
+                .collect();
+
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .unwrap_or_else(|_| Err("Falha ao copiar produto.".to_string()))
+                })
+                .collect::<Vec<_>>()
+        });
+
+        for result in results {
+            match result? {
+                CopyFileOutcome::Imported(file_name) => imported_files.push(file_name),
+                CopyFileOutcome::Existing(file_name) => existing_files.push(file_name),
+            }
+        }
+
+        next_index = chunk_end;
+    }
+
+    Ok(CopyFilesResult {
+        imported_files,
+        existing_files,
+    })
+}
+
+fn product_copy_parallelism(task_count: usize) -> usize {
+    if task_count <= 1 {
+        return 1;
+    }
+
+    let available = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(2);
+    let workers = match available {
+        0..=2 => 1,
+        3..=4 => 2,
+        5..=8 => 3,
+        _ => PRODUCT_COPY_MAX_PARALLELISM,
+    };
+
+    task_count.min(workers).min(PRODUCT_COPY_MAX_PARALLELISM)
+}
+
+fn copy_product_file_with_retry(
+    source: &Path,
+    target: &Path,
+    file_name: &str,
+) -> Result<CopyFileOutcome, String> {
+    for attempt in 0..=PRODUCT_COPY_MAX_RETRIES {
+        match copy_product_file_once(source, target) {
+            Ok(CopyFileOutcome::Imported(_)) => {
+                return Ok(CopyFileOutcome::Imported(file_name.to_string()));
+            }
+            Ok(CopyFileOutcome::Existing(_)) => {
+                return Ok(CopyFileOutcome::Existing(file_name.to_string()));
+            }
+            Err(err) if attempt < PRODUCT_COPY_MAX_RETRIES => {
+                std::thread::sleep(Duration::from_millis(180 * (attempt as u64 + 1)));
+                if target.exists() {
+                    return Ok(CopyFileOutcome::Existing(file_name.to_string()));
+                }
+
+                let _ = err;
+            }
+            Err(err) => return Err(format!("Erro ao copiar {file_name}: {err}")),
+        }
+    }
+
+    Err(format!("Erro ao copiar {file_name}."))
+}
+
+fn copy_product_file_once(source: &Path, target: &Path) -> Result<CopyFileOutcome, String> {
+    if target.exists() {
+        return Ok(CopyFileOutcome::Existing(String::new()));
+    }
+
+    let mut source_file = File::open(source).map_err(|err| err.to_string())?;
+    let mut target_file = match OpenOptions::new().write(true).create_new(true).open(target) {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Ok(CopyFileOutcome::Existing(String::new()));
+        }
+        Err(err) => return Err(err.to_string()),
+    };
+
+    match std::io::copy(&mut source_file, &mut target_file) {
+        Ok(_) => Ok(CopyFileOutcome::Imported(String::new())),
+        Err(err) => {
+            drop(target_file);
+            let _ = fs::remove_file(target);
+            Err(err.to_string())
+        }
+    }
+}
+
+fn project_year_folder_name(configured_year: &str) -> i32 {
+    let trimmed = configured_year.trim();
+    if trimmed.is_empty() {
+        Local::now().year()
+    } else {
+        trimmed.parse().unwrap_or_else(|_| Local::now().year())
+    }
 }
 
 fn validate_copy_names(
@@ -1325,10 +1604,68 @@ fn project_title_from_aep_name(
     }
 }
 
+fn product_import_report(
+    jobao_cod: &str,
+    product_path: &Path,
+    source_path: &Path,
+    imported_files: Vec<String>,
+    existing_files: Vec<String>,
+    not_found_files: Vec<String>,
+    groups: Vec<ProductImportGroup>,
+    duration_millis: u64,
+) -> ProductImportReport {
+    let total_processed = imported_files.len()
+        + existing_files.len()
+        + not_found_files.len()
+        + groups
+            .iter()
+            .map(|group| {
+                group.imported_files.len()
+                    + group.existing_files.len()
+                    + group.not_found_files.len()
+            })
+            .sum::<usize>();
+    let total_imported = imported_files.len()
+        + groups
+            .iter()
+            .map(|group| group.imported_files.len())
+            .sum::<usize>();
+    let total_existing = existing_files.len()
+        + groups
+            .iter()
+            .map(|group| group.existing_files.len())
+            .sum::<usize>();
+    let total_not_found = not_found_files.len()
+        + groups
+            .iter()
+            .map(|group| group.not_found_files.len())
+            .sum::<usize>();
+
+    ProductImportReport {
+        jobao_cod: jobao_cod.trim().to_string(),
+        product_path: product_path.to_string_lossy().into_owned(),
+        source_path: source_path.to_string_lossy().into_owned(),
+        imported_files,
+        existing_files,
+        not_found_files,
+        groups,
+        total_processed,
+        total_imported,
+        total_existing,
+        total_not_found,
+        duration_millis,
+    }
+}
+
+fn duration_millis(started_at: Instant) -> u64 {
+    started_at.elapsed().as_millis().min(u64::MAX as u128) as u64
+}
+
+#[allow(dead_code)]
 fn write_products_log(
     imported_normais: &[String],
     not_found_normais: &[String],
-    grupos_resultados: &[GroupResult],
+    grupos_resultados: &[ProductImportGroup],
 ) -> Result<(), String> {
     let log_path = products_log_path();
     let mut logf = File::create(&log_path).map_err(|err| err.to_string())?;
@@ -1381,7 +1718,7 @@ fn write_products_log(
     if !grupos_resultados.is_empty() {
         writeln!(logf, "=== Grupos ===\n").map_err(|err| err.to_string())?;
         for grupo in grupos_resultados {
-            writeln!(logf, "{}", grupo.nome_pasta).map_err(|err| err.to_string())?;
+            writeln!(logf, "{}", grupo.folder_name).map_err(|err| err.to_string())?;
             let total = grupo.imported_files.len() + grupo.not_found_files.len();
             let mut index = 0;
 
@@ -1452,5 +1789,30 @@ mod tests {
             .contains("Já existe"));
 
         let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn resolves_project_year_folder_name() {
+        let current_year = Local::now().year();
+
+        assert_eq!(project_year_folder_name(""), current_year);
+        assert_eq!(project_year_folder_name("2027"), 2027);
+        assert_eq!(project_year_folder_name(" 2027 "), 2027);
+    }
+
+    #[test]
+    fn resolves_entrypoint_from_drive_config_without_appending() {
+        assert_eq!(
+            entrypoint_path_from_drive(r"I:\Drives compartilhados\Phx CRF Copa"),
+            PathBuf::from(r"I:\Drives compartilhados\Phx CRF Copa")
+        );
+    }
+
+    #[test]
+    fn resolves_product_source_folder_from_config() {
+        assert_eq!(
+            product_folder_path(r"D:\Produtos Fonte"),
+            PathBuf::from(r"D:\Produtos Fonte")
+        );
     }
 }

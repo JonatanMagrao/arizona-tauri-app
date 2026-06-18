@@ -13,6 +13,8 @@ export const commandNames = Object.freeze({
   historyOpenAfterProject: "history_open_after_project",
   historyOpenJobaoFolder: "history_open_jobao_folder",
   historyOpenMedia: "history_open_media",
+  historyProductImportClear: "history_product_import_clear",
+  historyProductImportList: "history_product_import_list",
   historyRefreshAllEntries: "history_refresh_all_entries",
   historyRefreshEntry: "history_refresh_entry",
   historyRevealAfterProject: "history_reveal_after_project",

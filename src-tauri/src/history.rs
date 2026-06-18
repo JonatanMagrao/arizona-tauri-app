@@ -8,7 +8,10 @@ use std::{
 use tauri::{AppHandle, Manager};
 
 use crate::{
-    arizona::{open_explorer, reveal_in_explorer, Arizona, DuplicateMp4Copy, OpenedProject},
+    arizona::{
+        open_explorer, reveal_in_explorer, Arizona, DuplicateMp4Copy, OpenedProject,
+        ProductImportReport,
+    },
     media::{find_video_path, MediaType},
     settings,
 };
@@ -43,6 +46,24 @@ pub struct CopyHistoryEntry {
     pub target_path: String,
     pub copied_at: String,
     pub copied_at_epoch: i64,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductImportHistoryEntry {
+    pub id: i64,
+    pub jobao_cod: String,
+    pub product_path: String,
+    pub source_path: String,
+    pub total_processed: i64,
+    pub total_imported: i64,
+    pub total_existing: i64,
+    pub total_not_found: i64,
+    pub total_groups: i64,
+    pub duration_millis: i64,
+    pub report_json: String,
+    pub imported_at: String,
+    pub imported_at_epoch: i64,
 }
 
 struct HistoryInput {
@@ -205,6 +226,89 @@ pub fn list_copies(app: &AppHandle) -> Result<Vec<CopyHistoryEntry>, String> {
 pub fn clear_copies(app: &AppHandle) -> Result<(), String> {
     let conn = open_connection(app)?;
     conn.execute("DELETE FROM copy_history", [])
+        .map(|_| ())
+        .map_err(|err| err.to_string())
+}
+
+pub fn record_product_import(app: &AppHandle, report: &ProductImportReport) -> Result<(), String> {
+    let conn = open_connection(app)?;
+    let now = Local::now();
+    let report_json = serde_json::to_string(report).map_err(|err| err.to_string())?;
+
+    conn.execute(
+        r#"
+        INSERT INTO product_import_history (
+            jobao_cod,
+            product_path,
+            source_path,
+            total_processed,
+            total_imported,
+            total_existing,
+            total_not_found,
+            total_groups,
+            duration_millis,
+            report_json,
+            imported_at,
+            imported_at_epoch
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+        "#,
+        params![
+            report.jobao_cod(),
+            report.product_path(),
+            report.source_path(),
+            report.total_processed() as i64,
+            report.total_imported() as i64,
+            report.total_existing() as i64,
+            report.total_not_found() as i64,
+            report.total_groups() as i64,
+            report.duration_millis() as i64,
+            report_json,
+            now.to_rfc3339(),
+            now.timestamp()
+        ],
+    )
+    .map(|_| ())
+    .map_err(|err| err.to_string())
+}
+
+pub fn list_product_imports(app: &AppHandle) -> Result<Vec<ProductImportHistoryEntry>, String> {
+    let conn = open_connection(app)?;
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT
+                id,
+                jobao_cod,
+                product_path,
+                source_path,
+                total_processed,
+                total_imported,
+                total_existing,
+                total_not_found,
+                total_groups,
+                duration_millis,
+                report_json,
+                imported_at,
+                imported_at_epoch
+            FROM product_import_history
+            ORDER BY imported_at_epoch DESC, id DESC
+            LIMIT ?1
+            "#,
+        )
+        .map_err(|err| err.to_string())?;
+
+    let rows = stmt
+        .query_map(params![HISTORY_LIMIT], row_to_product_import_entry)
+        .map_err(|err| err.to_string())?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| err.to_string())
+}
+
+pub fn clear_product_imports(app: &AppHandle) -> Result<(), String> {
+    let conn = open_connection(app)?;
+    conn.execute("DELETE FROM product_import_history", [])
         .map(|_| ())
         .map_err(|err| err.to_string())
 }
@@ -389,6 +493,25 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
 
         CREATE INDEX IF NOT EXISTS idx_copy_history_lookup
             ON copy_history (jobao_cod, copied_at_epoch DESC);
+
+        CREATE TABLE IF NOT EXISTS product_import_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            jobao_cod TEXT NOT NULL,
+            product_path TEXT NOT NULL,
+            source_path TEXT NOT NULL,
+            total_processed INTEGER NOT NULL,
+            total_imported INTEGER NOT NULL,
+            total_existing INTEGER NOT NULL,
+            total_not_found INTEGER NOT NULL,
+            total_groups INTEGER NOT NULL,
+            duration_millis INTEGER NOT NULL,
+            report_json TEXT NOT NULL,
+            imported_at TEXT NOT NULL,
+            imported_at_epoch INTEGER NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_product_import_history_lookup
+            ON product_import_history (jobao_cod, imported_at_epoch DESC);
         "#,
     )
     .map_err(|err| err.to_string())
@@ -518,6 +641,24 @@ fn row_to_copy_entry(row: &Row<'_>) -> rusqlite::Result<CopyHistoryEntry> {
         target_path: row.get(6)?,
         copied_at: row.get(7)?,
         copied_at_epoch: row.get(8)?,
+    })
+}
+
+fn row_to_product_import_entry(row: &Row<'_>) -> rusqlite::Result<ProductImportHistoryEntry> {
+    Ok(ProductImportHistoryEntry {
+        id: row.get(0)?,
+        jobao_cod: row.get(1)?,
+        product_path: row.get(2)?,
+        source_path: row.get(3)?,
+        total_processed: row.get(4)?,
+        total_imported: row.get(5)?,
+        total_existing: row.get(6)?,
+        total_not_found: row.get(7)?,
+        total_groups: row.get(8)?,
+        duration_millis: row.get(9)?,
+        report_json: row.get(10)?,
+        imported_at: row.get(11)?,
+        imported_at_epoch: row.get(12)?,
     })
 }
 

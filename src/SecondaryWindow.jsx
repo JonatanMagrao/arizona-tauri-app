@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { open } from "@tauri-apps/plugin-dialog";
 import DuplicateIdenticalModal from "./DuplicateIdenticalModal";
 import HistoryWindow from "./HistoryWindow";
 import previewImg from "./assets/hierarquia_pracas.jpg";
-import { commandNames, invokeAction } from "./lib/tauriCommands";
+import { commandNames, invokeAction, invokeCommand } from "./lib/tauriCommands";
 
 const DEFAULT_SECONDARY_STATE = {
   view: "places",
@@ -12,6 +13,15 @@ const DEFAULT_SECONDARY_STATE = {
   mediaPath: "",
   mediaKind: "video",
   mediaTitle: "",
+  productReport: null,
+};
+
+const DEFAULT_SETTINGS = {
+  aeVersion: "2024",
+  drive: "I:\\Drives compartilhados\\Phx CRF Copa",
+  produtos: "PRODUTOS",
+  produtosYear: "",
+  produtosPath: "I:\\Drives compartilhados\\Phx CRF Copa\\CARREFOUR\\ASSETS\\_FOTOS FLOW",
 };
 
 function SecondaryWindow() {
@@ -112,7 +122,340 @@ function renderSecondaryView(state, closeWindow, showToast) {
     );
   }
 
+  if (state.view === "products") {
+    return <ProductsImportView key={`products-${state.productReport?.jobaoCod || "empty"}`} report={state.productReport} />;
+  }
+
+  if (state.view === "settings") {
+    return (
+      <SettingsView
+        key="settings"
+        showError={(message) => showToast(message, "error")}
+        showSuccess={(message) => showToast(message, "success")}
+      />
+    );
+  }
+
   return <PlacesView />;
+}
+
+function SettingsView({ showError, showSuccess }) {
+  const [settingsDraft, setSettingsDraft] = useState(DEFAULT_SETTINGS);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [choosingField, setChoosingField] = useState("");
+
+  useEffect(() => {
+    let mounted = true;
+
+    invokeCommand(commandNames.loadAppConfig)
+      .then((config) => {
+        if (mounted) setSettingsDraft(normalizeSettings(config));
+      })
+      .catch((error) => showError(String(error || "Nao foi possivel carregar as configuracoes.")))
+      .finally(() => {
+        if (mounted) setIsLoading(false);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const updateSettingsDraft = (field, value) => {
+    setSettingsDraft((config) => ({ ...config, [field]: value }));
+  };
+
+  const chooseFolder = async (field, title) => {
+    setChoosingField(field);
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title,
+      });
+      const path = Array.isArray(selected) ? selected[0] : selected;
+      if (typeof path === "string") updateSettingsDraft(field, path);
+    } catch (error) {
+      showError(String(error || "Nao foi possivel selecionar a pasta."));
+    } finally {
+      setChoosingField("");
+    }
+  };
+
+  const saveSettings = async (event) => {
+    event.preventDefault();
+    if (!isSettingsReady(settingsDraft)) {
+      showError("Preencha Drive, Fotos Flow, After Effects e Produtos.");
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const saved = await invokeCommand(commandNames.saveAppConfig, {
+        config: normalizeSettings(settingsDraft),
+      });
+      setSettingsDraft(normalizeSettings(saved));
+      showSuccess("Configuracoes salvas.");
+    } catch (error) {
+      showError(String(error || "Nao foi possivel salvar as configuracoes."));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const busy = isLoading || isSaving || Boolean(choosingField);
+  const canSave = !busy && isSettingsReady(settingsDraft);
+  const currentYear = String(new Date().getFullYear());
+
+  return (
+    <main className="settings-window settings-window--form" aria-label="Configuracoes">
+      <form className="settings-form settings-form--window" onSubmit={saveSettings}>
+        <label className="settings-field settings-field--drive">
+          <span>Drive</span>
+          <div className="settings-drive-row settings-path-row">
+            <input
+              className="input settings-drive-input"
+              type="text"
+              value={settingsDraft.drive}
+              readOnly
+              title={settingsDraft.drive}
+              disabled={isLoading}
+            />
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={() => chooseFolder("drive", "Selecionar entrypoint do Drive")}
+              disabled={busy}
+            >
+              {choosingField === "drive" ? "..." : "Selecionar"}
+            </button>
+          </div>
+        </label>
+
+        <label className="settings-field settings-field--drive">
+          <span>Fotos Flow</span>
+          <div className="settings-drive-row settings-path-row">
+            <input
+              className="input settings-drive-input"
+              type="text"
+              value={settingsDraft.produtosPath}
+              readOnly
+              title={settingsDraft.produtosPath}
+              disabled={isLoading}
+            />
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={() => chooseFolder("produtosPath", "Selecionar Fotos Flow")}
+              disabled={busy}
+            >
+              {choosingField === "produtosPath" ? "..." : "Selecionar"}
+            </button>
+          </div>
+        </label>
+
+        <label className="settings-field">
+          <span>After Effects</span>
+          <input
+            className="input settings-short-input"
+            type="text"
+            value={settingsDraft.aeVersion}
+            onChange={(event) => updateSettingsDraft("aeVersion", event.target.value)}
+            placeholder="2024"
+            autoComplete="off"
+            disabled={isLoading || isSaving}
+          />
+        </label>
+
+        <label className="settings-field">
+          <span>Produtos</span>
+          <input
+            className="input settings-short-input"
+            type="text"
+            value={settingsDraft.produtos}
+            onChange={(event) => updateSettingsDraft("produtos", event.target.value)}
+            placeholder="PRODUTOS"
+            autoComplete="off"
+            disabled={isLoading || isSaving}
+          />
+        </label>
+
+        <label className="settings-field">
+          <span>Ano Projetos</span>
+          <input
+            className="input settings-short-input"
+            type="text"
+            value={settingsDraft.produtosYear}
+            onChange={(event) => updateSettingsDraft("produtosYear", normalizeProductsYear(event.target.value))}
+            placeholder={currentYear}
+            autoComplete="off"
+            inputMode="numeric"
+            maxLength={4}
+            pattern="\d{4}"
+            disabled={isLoading || isSaving}
+          />
+        </label>
+
+        <footer className="settings-actions settings-actions--window">
+          <button type="submit" className="btn btn-primary" disabled={!canSave}>
+            {isSaving ? "Salvando..." : "Salvar"}
+          </button>
+        </footer>
+      </form>
+    </main>
+  );
+}
+
+function ProductsImportView({ report }) {
+  if (!report) {
+    return (
+      <main className="products-log-view">
+        <section className="products-log-empty">Nenhum relatório de produtos encontrado.</section>
+      </main>
+    );
+  }
+
+  const allNotFound = [
+    ...report.notFoundFiles,
+    ...report.groups.flatMap((group) => group.notFoundFiles),
+  ];
+  const allExisting = [
+    ...report.existingFiles,
+    ...report.groups.flatMap((group) => group.existingFiles),
+  ];
+  const durationText = formatDuration(report.durationMillis);
+
+  return (
+    <main className="products-log-view" aria-label="Relatório de produtos">
+      <header className="products-log-header">
+        <div className="products-log-title">
+          <h1>Jobão {report.jobaoCod}</h1>
+        </div>
+        <dl className="products-log-summary">
+          <div>
+            <dt>Processados</dt>
+            <dd>{report.totalProcessed}</dd>
+          </div>
+          <div>
+            <dt>Importados</dt>
+            <dd>{report.totalImported}</dd>
+          </div>
+          <div>
+            <dt>Já existiam</dt>
+            <dd>{report.totalExisting}</dd>
+          </div>
+          <div>
+            <dt>Não encontrados</dt>
+            <dd>{report.totalNotFound}</dd>
+          </div>
+          <div>
+            <dt>Grupos</dt>
+            <dd>{report.groups.length}</dd>
+          </div>
+          <div>
+            <dt>Tempo</dt>
+            <dd>{durationText}</dd>
+          </div>
+        </dl>
+      </header>
+
+      <section className="products-log-paths" aria-label="Caminhos">
+        <div title={report.sourcePath}>
+          <span>Origem</span>
+          <strong>{report.sourcePath}</strong>
+        </div>
+        <div title={report.productPath}>
+          <span>Destino</span>
+          <strong>{report.productPath}</strong>
+        </div>
+      </section>
+
+      <section className="products-log-content">
+        <ProductsLogSection title="Resumo geral" compact>
+          <ProductsLogLine text={`Total de códigos processados: ${report.totalProcessed}`} />
+          <ProductsLogLine text={`Importados: ${report.totalImported}`} />
+          <ProductsLogLine text={`Já existiam: ${report.totalExisting}`} />
+          <ProductsLogLine text={`Não encontrados: ${report.totalNotFound}`} />
+          <ProductsLogLine text={`Grupos detectados: ${report.groups.length}`} />
+          <ProductsLogLine text={`Tempo total: ${durationText}`} />
+        </ProductsLogSection>
+
+        <ProductsLogSection title="Produtos não encontrados">
+          {allNotFound.length === 0 && <ProductsLogLine text="Nenhum produto não encontrado." muted />}
+          {allNotFound.map((file, index) => (
+            <ProductsLogLine key={`${file}-${index}`} mark="fail" text={file} />
+          ))}
+        </ProductsLogSection>
+
+        <ProductsLogSection title="Copiados nesta tentativa">
+          {report.importedFiles.length === 0 && (
+            <ProductsLogLine text="Nenhum produto solto importado nesta tentativa." muted />
+          )}
+          {report.importedFiles.map((file, index) => (
+            <ProductsLogLine key={`${file}-${index}`} mark="ok" text={file} />
+          ))}
+          {report.notFoundFiles.map((file, index) => (
+            <ProductsLogLine key={`${file}-${index}`} mark="fail" text={file} />
+          ))}
+        </ProductsLogSection>
+
+        {allExisting.length > 0 && (
+          <ProductsLogSection title="Produtos já existentes">
+            {allExisting.map((file, index) => (
+              <ProductsLogLine key={`${file}-${index}`} mark="skip" text={file} />
+            ))}
+          </ProductsLogSection>
+        )}
+
+        {report.groups.length > 0 && (
+          <ProductsLogSection title="Grupos">
+            {report.groups.map((group) => (
+              <div className="products-log-group" key={group.folderName}>
+                <strong>{group.folderName}</strong>
+                {group.importedFiles.length === 0 && group.existingFiles.length === 0 && group.notFoundFiles.length === 0 && (
+                  <ProductsLogLine text="Grupo vazio." muted />
+                )}
+                {[
+                  ...group.importedFiles.map((file) => ({ file, mark: "ok" })),
+                  ...group.existingFiles.map((file) => ({ file, mark: "skip" })),
+                  ...group.notFoundFiles.map((file) => ({ file, mark: "fail" })),
+                ].map((item, index, items) => (
+                  <ProductsLogLine
+                    key={`${group.folderName}-${item.file}-${index}`}
+                    prefix={index < items.length - 1 ? " ┣ " : " ┗ "}
+                    mark={item.mark}
+                    text={item.file}
+                  />
+                ))}
+              </div>
+            ))}
+          </ProductsLogSection>
+        )}
+      </section>
+    </main>
+  );
+}
+
+function ProductsLogSection({ title, children, compact = false }) {
+  return (
+    <section className={`products-log-section ${compact ? "products-log-section--compact" : ""}`}>
+      <h2>{title}</h2>
+      <div className="products-log-lines">{children}</div>
+    </section>
+  );
+}
+
+function ProductsLogLine({ mark, prefix = "", text, muted = false }) {
+  const markText = mark === "ok" ? "✓" : mark === "fail" ? "✕" : mark === "skip" ? "•" : "";
+
+  return (
+    <div className={`products-log-line ${muted ? "products-log-line--muted" : ""}`}>
+      <span className="products-log-prefix">{prefix}</span>
+      {markText && <span className={`products-log-mark products-log-mark--${mark}`}>{markText}</span>}
+      <span>{text}</span>
+    </div>
+  );
 }
 
 function PlacesView() {
@@ -385,6 +728,7 @@ function getInitialSecondaryState() {
       mediaPath: params.get("path") || "",
       mediaKind: params.get("kind") || "video",
       mediaTitle: params.get("title") || "",
+      productReport: null,
     });
   } catch (error) {
     return DEFAULT_SECONDARY_STATE;
@@ -399,6 +743,7 @@ function normalizeSecondaryState(payload) {
   const mediaTitle = String(payload?.mediaTitle || payload?.media_title || "").trim();
   const rawMediaKind = String(payload?.mediaKind || payload?.media_kind || "").trim().toLowerCase();
   const mediaKind = rawMediaKind === "audio" ? "audio" : "video";
+  const productReport = normalizeProductReport(payload?.productReport || payload?.product_report);
 
   return {
     view,
@@ -406,14 +751,95 @@ function normalizeSecondaryState(payload) {
     mediaPath,
     mediaKind,
     mediaTitle,
+    productReport,
   };
 }
 
 function normalizeView(value) {
   if (value === "duplicate-identical") return "duplicate";
   if (value === "midia") return "media";
-  if (["duplicate", "history", "places", "media"].includes(value)) return value;
+  if (value === "produtos" || value === "products-log" || value === "product-log") return "products";
+  if (value === "config" || value === "configuracoes") return "settings";
+  if (["duplicate", "history", "places", "media", "products", "settings"].includes(value)) return value;
   return DEFAULT_SECONDARY_STATE.view;
+}
+
+function normalizeSettings(config) {
+  const next = { ...DEFAULT_SETTINGS, ...(config || {}) };
+  return {
+    ...next,
+    produtosYear: normalizeProductsYear(next.produtosYear),
+    produtosPath: String(next.produtosPath ?? "").trim(),
+  };
+}
+
+function normalizeProductsYear(value) {
+  const text = String(value ?? "").trim();
+  if (text.toLowerCase() === "auto") return "";
+  return text.replace(/\D/g, "").slice(0, 4);
+}
+
+function isSettingsReady(config) {
+  const year = String(config?.produtosYear ?? "").trim();
+  return Boolean(
+    String(config?.drive ?? "").trim()
+      && String(config?.produtosPath ?? "").trim()
+      && String(config?.aeVersion ?? "").trim()
+      && String(config?.produtos ?? "").trim()
+      && !isIncompleteDriveEntrypoint(config?.drive)
+      && (year === "" || /^\d{4}$/.test(year))
+  );
+}
+
+function isIncompleteDriveEntrypoint(value) {
+  const parts = String(value ?? "")
+    .trim()
+    .split(/[\\/]+/)
+    .filter(Boolean);
+  const lastPart = parts[parts.length - 1] || "";
+  return !lastPart || lastPart.toLowerCase() === "drives compartilhados";
+}
+
+function normalizeProductReport(value) {
+  if (!value || typeof value !== "object") return null;
+
+  const groups = toArray(value.groups).map((group) => ({
+    folderName: String(group?.folderName || group?.folder_name || "").trim(),
+    importedFiles: toArray(group?.importedFiles || group?.imported_files).map(String),
+    existingFiles: toArray(group?.existingFiles || group?.existing_files).map(String),
+    notFoundFiles: toArray(group?.notFoundFiles || group?.not_found_files).map(String),
+  }));
+
+  return {
+    jobaoCod: String(value.jobaoCod || value.jobao_cod || "").trim(),
+    productPath: String(value.productPath || value.product_path || "").trim(),
+    sourcePath: String(value.sourcePath || value.source_path || "").trim(),
+    importedFiles: toArray(value.importedFiles || value.imported_files).map(String),
+    existingFiles: toArray(value.existingFiles || value.existing_files).map(String),
+    notFoundFiles: toArray(value.notFoundFiles || value.not_found_files).map(String),
+    groups,
+    totalProcessed: numberOrZero(value.totalProcessed ?? value.total_processed),
+    totalImported: numberOrZero(value.totalImported ?? value.total_imported),
+    totalExisting: numberOrZero(value.totalExisting ?? value.total_existing),
+    totalNotFound: numberOrZero(value.totalNotFound ?? value.total_not_found),
+    durationMillis: numberOrZero(value.durationMillis ?? value.duration_millis),
+  };
+}
+
+function toArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function numberOrZero(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function formatDuration(durationMillis) {
+  const totalSeconds = Math.max(0, Math.round(Number(durationMillis || 0) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
 function pathToMediaSrc(path) {
