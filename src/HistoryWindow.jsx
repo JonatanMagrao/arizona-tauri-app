@@ -7,8 +7,15 @@ import videoIconMP4 from "./assets/icones/video_mp4.svg";
 import videoIconMOV from "./assets/icones/video_mov.svg";
 import chevronIcon from "./assets/icones/chevron.svg";
 
+const HISTORY_TABS = Object.freeze({
+  PROJECTS: "projects",
+  COPIES: "copies",
+});
+
 function HistoryWindow({ onClose }) {
-  const [entries, setEntries] = useState([]);
+  const [projectEntries, setProjectEntries] = useState([]);
+  const [copyEntries, setCopyEntries] = useState([]);
+  const [activeTab, setActiveTab] = useState(HISTORY_TABS.PROJECTS);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshingAll, setIsRefreshingAll] = useState(false);
   const [isConfirmingClear, setIsConfirmingClear] = useState(false);
@@ -16,21 +23,38 @@ function HistoryWindow({ onClose }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [dateSort, setDateSort] = useState("desc");
 
-  const visibleEntries = useMemo(
-    () => sortEntries(filterEntries(entries, searchQuery), dateSort),
-    [entries, searchQuery, dateSort]
-  );
+  const isProjectsTab = activeTab === HISTORY_TABS.PROJECTS;
+  const activeEntries = isProjectsTab ? projectEntries : copyEntries;
+  const visibleEntries = useMemo(() => {
+    const filtered = isProjectsTab
+      ? filterProjectEntries(projectEntries, searchQuery)
+      : filterCopyEntries(copyEntries, searchQuery);
+    return sortEntries(filtered, dateSort, isProjectsTab ? "openedAtEpoch" : "copiedAtEpoch");
+  }, [projectEntries, copyEntries, searchQuery, dateSort, isProjectsTab]);
   const hasSearch = Boolean(searchQuery.trim());
   const countLabel = hasSearch
-    ? `${visibleEntries.length} de ${entries.length} registros`
-    : `${entries.length} registros`;
+    ? `${visibleEntries.length} de ${activeEntries.length} registros`
+    : `${activeEntries.length} registros`;
+  const emptyLabel = isProjectsTab
+    ? "Nenhum projeto aberto ainda."
+    : "Nenhuma cópia registrada ainda.";
+  const tableLabel = isProjectsTab
+    ? "Histórico de projetos"
+    : "Histórico de cópias";
+  const searchPlaceholder = isProjectsTab
+    ? "Pesquisar por jobão, jobinho ou região"
+    : "Pesquisar por jobão, matriz ou cópia";
 
   const loadHistory = async () => {
     setIsLoading(true);
     setMessage("");
     try {
-      const rows = await invokeCommand(commandNames.historyList);
-      setEntries(Array.isArray(rows) ? rows : []);
+      const [projects, copies] = await Promise.all([
+        invokeCommand(commandNames.historyList),
+        invokeCommand(commandNames.historyCopyList),
+      ]);
+      setProjectEntries(Array.isArray(projects) ? projects : []);
+      setCopyEntries(Array.isArray(copies) ? copies : []);
     } catch (err) {
       setMessage(String(err || "Não foi possível carregar o histórico."));
     } finally {
@@ -61,7 +85,11 @@ function HistoryWindow({ onClose }) {
 
   const clearHistory = async () => {
     setIsConfirmingClear(false);
-    await runAction(commandNames.historyClear, {}, true);
+    await runAction(
+      isProjectsTab ? commandNames.historyClear : commandNames.historyCopyClear,
+      {},
+      true
+    );
   };
 
   const refreshAllEntries = async () => {
@@ -95,7 +123,7 @@ function HistoryWindow({ onClose }) {
     runAction(commandNames.historyRevealAfterProject, { id: entry.id });
   };
 
-  const handleMediaClick = (event, entry, mediaType) => {
+  const handleProjectMediaClick = (event, entry, mediaType) => {
     if (event.shiftKey) {
       runAction(commandNames.historyOpenMedia, { id: entry.id, mediaType });
       return;
@@ -104,12 +132,30 @@ function HistoryWindow({ onClose }) {
     runAction(commandNames.historyRevealMedia, { id: entry.id, mediaType });
   };
 
+  const openCopyFolder = (entry) => {
+    runAction(commandNames.historyCopyOpenFolder, { id: entry.id });
+  };
+
+  const handleCopyMediaClick = (event, entry) => {
+    if (event.shiftKey) {
+      runAction(commandNames.historyCopyRevealMedia, { id: entry.id });
+      return;
+    }
+
+    runAction(commandNames.historyCopyOpenMedia, { id: entry.id });
+  };
+
   const refreshEntry = (entry) => {
     runAction(commandNames.historyRefreshEntry, { id: entry.id }, true);
   };
 
   const toggleDateSort = () => {
     setDateSort((current) => (current === "desc" ? "asc" : "desc"));
+  };
+
+  const changeTab = (tab) => {
+    setActiveTab(tab);
+    setMessage("");
   };
 
   const requestClearHistory = () => {
@@ -123,6 +169,23 @@ function HistoryWindow({ onClose }) {
   return (
     <div className="history-window">
       <header className="history-header">
+        <div className="history-tabs" role="tablist" aria-label="Tipo de histórico">
+          <TabButton
+            active={activeTab === HISTORY_TABS.PROJECTS}
+            count={projectEntries.length}
+            id={HISTORY_TABS.PROJECTS}
+            label="Projetos"
+            onClick={changeTab}
+          />
+          <TabButton
+            active={activeTab === HISTORY_TABS.COPIES}
+            count={copyEntries.length}
+            id={HISTORY_TABS.COPIES}
+            label="Cópias"
+            onClick={changeTab}
+          />
+        </div>
+
         <div className="history-count" aria-live="polite">{countLabel}</div>
 
         <div className="history-search-bar">
@@ -131,7 +194,7 @@ function HistoryWindow({ onClose }) {
             type="search"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder="Pesquisar por jobão, jobinho ou região"
+            placeholder={searchPlaceholder}
             aria-label="Pesquisar histórico"
             autoComplete="off"
             spellCheck={false}
@@ -150,19 +213,21 @@ function HistoryWindow({ onClose }) {
         </div>
 
         <div className="history-header__actions">
-          <button
-            type="button"
-            className="btn btn-outline history-refresh-all-btn"
-            onClick={refreshAllEntries}
-            disabled={!entries.length || isRefreshingAll}
-          >
-            {isRefreshingAll ? "Atualizando..." : "Atualizar MP4/MOV"}
-          </button>
+          {isProjectsTab && (
+            <button
+              type="button"
+              className="btn btn-outline history-refresh-all-btn"
+              onClick={refreshAllEntries}
+              disabled={!projectEntries.length || isRefreshingAll}
+            >
+              {isRefreshingAll ? "Atualizando..." : "Atualizar MP4/MOV"}
+            </button>
+          )}
           <button
             type="button"
             className="btn btn-outline history-clear-btn"
             onClick={requestClearHistory}
-            disabled={!entries.length || isRefreshingAll}
+            disabled={!activeEntries.length || isRefreshingAll}
           >
             Apagar histórico
           </button>
@@ -189,16 +254,20 @@ function HistoryWindow({ onClose }) {
 
         {isLoading && <div className="history-empty">Carregando...</div>}
 
-        {!isLoading && entries.length === 0 && (
-          <div className="history-empty">Nenhum projeto aberto ainda.</div>
+        {!isLoading && activeEntries.length === 0 && (
+          <div className="history-empty">{emptyLabel}</div>
         )}
 
-        {!isLoading && entries.length > 0 && visibleEntries.length === 0 && (
+        {!isLoading && activeEntries.length > 0 && visibleEntries.length === 0 && (
           <div className="history-empty">Nenhum registro encontrado.</div>
         )}
 
         {!isLoading && visibleEntries.length > 0 && (
-          <div className="history-table" role="table" aria-label="Histórico de projetos">
+          <div
+            className={`history-table ${isProjectsTab ? "" : "history-table--copies"}`}
+            role="table"
+            aria-label={tableLabel}
+          >
             <div className="history-row history-row--head" role="row">
               <div role="columnheader">
                 <button
@@ -216,59 +285,29 @@ function HistoryWindow({ onClose }) {
                   />
                 </button>
               </div>
-              <div role="columnheader">Projeto</div>
+              <div role="columnheader">{isProjectsTab ? "Projeto" : "Cópia"}</div>
               <div role="columnheader">Ações</div>
             </div>
 
-            {visibleEntries.map((entry) => (
-              <article className="history-row" role="row" key={entry.id}>
-                <div className="history-date" role="cell">
-                  {formatDate(entry.openedAt)}
-                </div>
-
-                <div className="history-project" role="cell">
-                  <strong>{projectLabel(entry)}</strong>
-                </div>
-
-                <div className="history-actions" role="cell">
-                  <IconButton
-                    icon={folderIcon}
-                    label="Abrir pasta do Jobão"
-                    onClick={() => openJobao(entry)}
-                    title={pathTitle("Jobão", entry.jobaoPath)}
-                    unavailable={!entry.jobaoPath}
+            {isProjectsTab
+              ? visibleEntries.map((entry) => (
+                  <ProjectHistoryRow
+                    entry={entry}
+                    key={entry.id}
+                    onAfterClick={handleAfterClick}
+                    onMediaClick={handleProjectMediaClick}
+                    onOpenJobao={openJobao}
+                    onRefresh={refreshEntry}
                   />
-                  <IconButton
-                    icon={aeIcon}
-                    label="Abrir pasta do projeto AE"
-                    onClick={(event) => handleAfterClick(event, entry)}
-                    title={pathTitle("AE", entry.aeProjectPath, "Shift+clique: abrir no After")}
-                    unavailable={!entry.aeProjectPath}
+                ))
+              : visibleEntries.map((entry) => (
+                  <CopyHistoryRow
+                    entry={entry}
+                    key={entry.id}
+                    onMediaClick={handleCopyMediaClick}
+                    onOpenFolder={openCopyFolder}
                   />
-                  <IconButton
-                    icon={videoIconMP4}
-                    label="Abrir MP4"
-                    onClick={(event) => handleMediaClick(event, entry, "mp4")}
-                    title={pathTitle("MP4", entry.mp4Path, "Shift+clique: abrir vídeo")}
-                    unavailable={!entry.mp4Path}
-                  />
-                  <IconButton
-                    icon={videoIconMOV}
-                    label="Abrir MOV"
-                    onClick={(event) => handleMediaClick(event, entry, "mov")}
-                    title={pathTitle("MOV", entry.movPath, "Shift+clique: abrir vídeo")}
-                    unavailable={!entry.movPath}
-                  />
-                  <IconButton
-                    icon={refreshIcon}
-                    label="Atualizar MP4 e MOV"
-                    onClick={() => refreshEntry(entry)}
-                    title="Atualizar paths MP4/MOV"
-                    unavailable={!entry.jobaoPath || !entry.aeProjectPath}
-                  />
-                </div>
-              </article>
-            ))}
+                ))}
           </div>
         )}
       </main>
@@ -286,7 +325,7 @@ function HistoryWindow({ onClose }) {
               <h2 id="history-confirm-title">Apagar histórico?</h2>
             </header>
 
-            <p>Essa ação remove todos os registros salvos do histórico e não pode ser desfeita.</p>
+            <p>Essa ação remove os registros salvos nesta aba e não pode ser desfeita.</p>
 
             <footer className="history-confirm-actions">
               <button
@@ -301,7 +340,7 @@ function HistoryWindow({ onClose }) {
                 type="button"
                 className="btn history-clear-confirm-btn"
                 onClick={clearHistory}
-                disabled={!entries.length || isRefreshingAll}
+                disabled={!activeEntries.length || isRefreshingAll}
               >
                 Confirmar apagar
               </button>
@@ -310,6 +349,105 @@ function HistoryWindow({ onClose }) {
         </div>
       )}
     </div>
+  );
+}
+
+function TabButton({ active, count, id, label, onClick }) {
+  return (
+    <button
+      type="button"
+      className={`history-tab ${active ? "history-tab--active" : ""}`}
+      role="tab"
+      aria-selected={active}
+      onClick={() => onClick(id)}
+    >
+      <span>{label}</span>
+      <strong>{count}</strong>
+    </button>
+  );
+}
+
+function ProjectHistoryRow({ entry, onAfterClick, onMediaClick, onOpenJobao, onRefresh }) {
+  return (
+    <article className="history-row" role="row">
+      <div className="history-date" role="cell">
+        {formatDate(entry.openedAt)}
+      </div>
+
+      <div className="history-project" role="cell">
+        <strong>{projectLabel(entry)}</strong>
+      </div>
+
+      <div className="history-actions" role="cell">
+        <IconButton
+          icon={folderIcon}
+          label="Abrir pasta do Jobão"
+          onClick={() => onOpenJobao(entry)}
+          title={pathTitle("Jobão", entry.jobaoPath)}
+          unavailable={!entry.jobaoPath}
+        />
+        <IconButton
+          icon={aeIcon}
+          label="Abrir pasta do projeto AE"
+          onClick={(event) => onAfterClick(event, entry)}
+          title={pathTitle("AE", entry.aeProjectPath, "Shift+clique: abrir no After")}
+          unavailable={!entry.aeProjectPath}
+        />
+        <IconButton
+          icon={videoIconMP4}
+          label="Abrir MP4"
+          onClick={(event) => onMediaClick(event, entry, "mp4")}
+          title={pathTitle("MP4", entry.mp4Path, "Shift+clique: abrir vídeo")}
+          unavailable={!entry.mp4Path}
+        />
+        <IconButton
+          icon={videoIconMOV}
+          label="Abrir MOV"
+          onClick={(event) => onMediaClick(event, entry, "mov")}
+          title={pathTitle("MOV", entry.movPath, "Shift+clique: abrir vídeo")}
+          unavailable={!entry.movPath}
+        />
+        <IconButton
+          icon={refreshIcon}
+          label="Atualizar MP4 e MOV"
+          onClick={() => onRefresh(entry)}
+          title="Atualizar paths MP4/MOV"
+          unavailable={!entry.jobaoPath || !entry.aeProjectPath}
+        />
+      </div>
+    </article>
+  );
+}
+
+function CopyHistoryRow({ entry, onMediaClick, onOpenFolder }) {
+  return (
+    <article className="history-row" role="row">
+      <div className="history-date" role="cell">
+        {formatDate(entry.copiedAt)}
+      </div>
+
+      <div className="history-project history-copy" role="cell">
+        <strong title={entry.targetFileName}>{entry.targetFileName}</strong>
+        <span title={entry.sourceFileName}>de {entry.sourceFileName}</span>
+      </div>
+
+      <div className="history-actions" role="cell">
+        <IconButton
+          icon={folderIcon}
+          label="Abrir pasta MP4"
+          onClick={() => onOpenFolder(entry)}
+          title={pathTitle("Pasta MP4", entry.folderPath)}
+          unavailable={!entry.folderPath}
+        />
+        <IconButton
+          icon={videoIconMP4}
+          label="Abrir cópia MP4"
+          onClick={(event) => onMediaClick(event, entry)}
+          title={pathTitle("MP4", entry.targetPath, "Shift+clique: mostrar no Explorer")}
+          unavailable={!entry.targetPath}
+        />
+      </div>
+    </article>
   );
 }
 
@@ -354,16 +492,16 @@ function projectLabel(entry) {
   return entry.region ? `${base} - ${entry.region}` : base;
 }
 
-function sortEntries(entries, direction) {
+function sortEntries(entries, direction, epochKey) {
   return [...entries].sort((a, b) => {
-    const first = Number(a.openedAtEpoch || 0);
-    const second = Number(b.openedAtEpoch || 0);
+    const first = Number(a[epochKey] || 0);
+    const second = Number(b[epochKey] || 0);
     const diff = first - second || Number(a.id || 0) - Number(b.id || 0);
     return direction === "desc" ? -diff : diff;
   });
 }
 
-function filterEntries(entries, query) {
+function filterProjectEntries(entries, query) {
   const terms = parseSearchTerms(query);
   if (!terms.length) return entries;
 
@@ -375,6 +513,25 @@ function filterEntries(entries, query) {
         entry.region,
         projectLabel(entry),
         formatDate(entry.openedAt),
+      ].filter(Boolean).join(" ")
+    );
+
+    return terms.every((term) => searchableText.includes(term));
+  });
+}
+
+function filterCopyEntries(entries, query) {
+  const terms = parseSearchTerms(query);
+  if (!terms.length) return entries;
+
+  return entries.filter((entry) => {
+    const searchableText = normalizeSearchText(
+      [
+        entry.jobaoCod,
+        entry.sourceFileName,
+        entry.targetFileName,
+        entry.folderPath,
+        formatDate(entry.copiedAt),
       ].filter(Boolean).join(" ")
     );
 

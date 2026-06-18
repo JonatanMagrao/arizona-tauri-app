@@ -1150,12 +1150,67 @@ textarea:focus{
 
 .history-header{
   display: grid;
-  grid-template-columns: max-content minmax(220px, 1fr) max-content;
+  grid-template-columns: max-content max-content minmax(220px, 1fr) max-content;
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,0)), var(--panel);
+}
+
+.history-tabs{
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--outline);
+  border-radius: 9px;
+  background: #15171a;
+}
+
+.history-tab{
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.history-tab:hover{
+  color: var(--text);
+  background: var(--btn-bg-hover);
+}
+
+.history-tab--active{
+  border-color: var(--primary);
+  background: linear-gradient(180deg, rgba(255,138,51,.16), transparent), #211a14;
+  color: var(--text);
+}
+
+.history-tab strong{
+  min-width: 18px;
+  height: 18px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #24272b;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.history-tab--active strong{
+  background: var(--primary);
+  color: #111316;
 }
 
 .history-count{
@@ -1405,6 +1460,17 @@ textarea:focus{
 .history-project strong{
   display: block;
   font-size: 14px;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-copy span{
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
   line-height: 1.2;
   overflow: hidden;
   text-overflow: ellipsis;

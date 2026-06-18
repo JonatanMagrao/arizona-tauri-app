@@ -74,6 +74,20 @@ pub struct DuplicateMp4Item {
 }
 
 #[derive(Clone)]
+pub struct DuplicateMp4Copy {
+    pub source_file_name: String,
+    pub target_file_name: String,
+    pub folder_path: PathBuf,
+    pub source_path: PathBuf,
+    pub target_path: PathBuf,
+}
+
+pub struct DuplicateMp4Result {
+    pub message: String,
+    pub copies: Vec<DuplicateMp4Copy>,
+}
+
+#[derive(Clone)]
 pub struct OpenedProject {
     pub jobao_cod: String,
     pub jobinho_cod: String,
@@ -345,15 +359,21 @@ impl Arizona {
         jobao_cod: &str,
         source_file_name: &str,
         copy_names: Vec<String>,
-    ) -> Result<ActionResponse, String> {
+    ) -> Result<DuplicateMp4Result, String> {
         let mp4_folder = self.mp4_folder(jobao_cod)?;
         let source_path = self.find_mp4_by_name(&mp4_folder, source_file_name)?;
+        let source_file_name = source_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| format!("Nome de arquivo inválido: {}", source_path.display()))?
+            .to_string();
         let source_extension = source_path
             .extension()
             .and_then(|value| value.to_str())
             .ok_or_else(|| format!("Arquivo sem extensão: {}", source_path.display()))?;
         let target_file_names = validate_copy_names(&mp4_folder, &copy_names, source_extension)?;
 
+        let mut copies = Vec::new();
         for target_file_name in &target_file_names {
             let target_path = mp4_folder.join(target_file_name);
             fs::copy(&source_path, &target_path).map_err(|err| {
@@ -363,6 +383,13 @@ impl Arizona {
                     target_path.display()
                 )
             })?;
+            copies.push(DuplicateMp4Copy {
+                source_file_name: source_file_name.clone(),
+                target_file_name: target_file_name.clone(),
+                folder_path: mp4_folder.clone(),
+                source_path: source_path.clone(),
+                target_path,
+            });
         }
 
         let count = target_file_names.len();
@@ -371,7 +398,10 @@ impl Arizona {
         } else {
             "cópias criadas"
         };
-        Ok(ActionResponse::ok_message(format!("{count} {label}.")))
+        Ok(DuplicateMp4Result {
+            message: format!("{count} {label}."),
+            copies,
+        })
     }
 
     pub fn get_visible_rows_from_xl(

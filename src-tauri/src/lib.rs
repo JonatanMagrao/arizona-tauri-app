@@ -37,6 +37,11 @@ pub fn run() {
             open_log_file,
             history_list,
             history_clear,
+            history_copy_list,
+            history_copy_clear,
+            history_copy_open_folder,
+            history_copy_reveal_media,
+            history_copy_open_media,
             history_open_jobao_folder,
             history_reveal_after_project,
             history_open_after_project,
@@ -316,7 +321,15 @@ fn duplicate_identical_mp4(
 
     Ok(
         match arizona.duplicate_identical_mp4(&jobao_cod, &source_file_name, copy_names) {
-            Ok(response) => response,
+            Ok(result) => {
+                let message = result.message.clone();
+                match history::record_duplicate_mp4_copies(&app, &jobao_cod, &result.copies) {
+                    Ok(()) => ActionResponse::ok_message(message),
+                    Err(err) => ActionResponse::ok_message(format!(
+                        "{message} Histórico não atualizado: {err}"
+                    )),
+                }
+            }
             Err(err) => ActionResponse::err(err),
         },
     )
@@ -398,6 +411,36 @@ fn history_list(app: AppHandle) -> Result<Vec<history::HistoryEntry>, String> {
 fn history_clear(app: AppHandle) -> Result<ActionResponse, String> {
     history::clear(&app)?;
     Ok(ActionResponse::ok())
+}
+
+#[tauri::command]
+fn history_copy_list(app: AppHandle) -> Result<Vec<history::CopyHistoryEntry>, String> {
+    history::list_copies(&app)
+}
+
+#[tauri::command]
+fn history_copy_clear(app: AppHandle) -> Result<ActionResponse, String> {
+    history::clear_copies(&app)?;
+    Ok(ActionResponse::ok())
+}
+
+#[tauri::command]
+fn history_copy_open_folder(app: AppHandle, id: i64) -> Result<ActionResponse, String> {
+    history::open_copy_folder(&app, id)?;
+    Ok(ActionResponse::ok())
+}
+
+#[tauri::command]
+fn history_copy_reveal_media(app: AppHandle, id: i64) -> Result<ActionResponse, String> {
+    history::reveal_copy_media(&app, id)?;
+    Ok(ActionResponse::ok())
+}
+
+#[tauri::command]
+fn history_copy_open_media(app: AppHandle, id: i64) -> Result<ActionResponse, String> {
+    let path = history::copy_media_file(&app, id)?;
+    let title = media_title_from_path(&path);
+    show_media_path_with_title(app, path, "video", title)
 }
 
 #[tauri::command]
