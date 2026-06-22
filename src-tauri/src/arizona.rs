@@ -13,7 +13,7 @@ use std::{
 use zip::ZipArchive;
 
 use crate::{
-    media::{find_video_path, MediaType},
+    media::{find_video_path, find_video_path_by_code, MediaType},
     settings::AppConfig,
 };
 
@@ -663,19 +663,32 @@ impl Arizona {
         cod_jobinho: &str,
         media_type: &str,
     ) -> Result<MediaFile, String> {
-        let project = self.project_open_info(jobao_cod, cod_jobinho)?;
         let media_type =
             MediaType::parse(media_type).ok_or_else(|| "Tipo de vídeo inválido.".to_string())?;
-        let video = match media_type {
-            MediaType::Mp4 => project.mp4_path,
-            MediaType::Mov => project.mov_path,
-        };
 
-        let Some(video) = video else {
-            return Err("Vídeo não encontrado.".to_string());
-        };
+        match self.project_open_info(jobao_cod, cod_jobinho) {
+            Ok(project) => {
+                let video = match media_type {
+                    MediaType::Mp4 => project.mp4_path,
+                    MediaType::Mov => project.mov_path,
+                }
+                .or_else(|| find_video_path_by_code(&project.jobao_path, cod_jobinho, media_type));
 
-        Ok(media_file_from_path(video, "video"))
+                let Some(video) = video else {
+                    return Err("Vídeo não encontrado.".to_string());
+                };
+
+                Ok(media_file_from_path(video, "video"))
+            }
+            Err(project_error) => {
+                let jobao_path = self.get_jobao_path(jobao_cod)?;
+                if let Some(video) = find_video_path_by_code(&jobao_path, cod_jobinho, media_type) {
+                    return Ok(media_file_from_path(video, "video"));
+                }
+
+                Err(project_error)
+            }
+        }
     }
 
     pub fn audio_file(&self, jobao_cod: &str, cod_jobinho: &str) -> Result<MediaFile, String> {

@@ -23,7 +23,7 @@
         "label": "secondary",
         "title": "Arizona",
         "width": 950,
-        "height": 600,
+        "height": 650,
         "minWidth": 560,
         "minHeight": 420,
         "parent": "main",

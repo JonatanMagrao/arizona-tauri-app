@@ -226,7 +226,7 @@ fn import_products(app: AppHandle, jobao_cod: String) -> Result<ActionResponse, 
 const MAIN_WINDOW_LABEL: &str = "main";
 const SECONDARY_WINDOW_LABEL: &str = "secondary";
 const SECONDARY_WINDOW_WIDTH: f64 = 950.0;
-const SECONDARY_WINDOW_HEIGHT: f64 = 600.0;
+const SECONDARY_WINDOW_HEIGHT: f64 = 650.0;
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]

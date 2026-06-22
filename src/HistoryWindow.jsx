@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import AppDropdown from "./AppDropdown";
 import { commandNames, invokeAction, invokeCommand } from "./lib/tauriCommands";
 import folderIcon from "./assets/icones/folder.svg";
 import aeIcon from "./assets/icones/aeft_icon.svg";
@@ -175,8 +176,23 @@ function HistoryWindow({ onClose }) {
     setDateSort((current) => (current === "desc" ? "asc" : "desc"));
   };
 
-  const changeHistoryType = (event) => {
-    setActiveType(event.target.value);
+  const historyTypeOptions = useMemo(() => [
+    {
+      value: HISTORY_TYPES.PROJECTS,
+      label: `Projetos (${projectEntries.length})`,
+    },
+    {
+      value: HISTORY_TYPES.COPIES,
+      label: `Copias MP4 (${copyEntries.length})`,
+    },
+    {
+      value: HISTORY_TYPES.PRODUCT_IMPORTS,
+      label: `Produtos (${productImportEntries.length})`,
+    },
+  ], [copyEntries.length, productImportEntries.length, projectEntries.length]);
+
+  const changeHistoryType = (nextType) => {
+    setActiveType(nextType);
     setMessage("");
     setIsConfirmingClear(false);
   };
@@ -192,24 +208,15 @@ function HistoryWindow({ onClose }) {
   return (
     <div className="history-window">
       <header className="history-header">
-        <label className="history-type-menu">
-          <select
-            className="input history-type-select"
+        <div className="history-type-menu">
+          <AppDropdown
+            className="history-type-select"
             value={activeType}
             onChange={changeHistoryType}
-            aria-label="Tipo de historico"
-          >
-            <option value={HISTORY_TYPES.PROJECTS}>
-              Projetos ({projectEntries.length})
-            </option>
-            <option value={HISTORY_TYPES.COPIES}>
-              Copias MP4 ({copyEntries.length})
-            </option>
-            <option value={HISTORY_TYPES.PRODUCT_IMPORTS}>
-              Produtos ({productImportEntries.length})
-            </option>
-          </select>
-        </label>
+            options={historyTypeOptions}
+            ariaLabel="Tipo de historico"
+          />
+        </div>
 
         <div className="history-count" aria-live="polite">{countLabel}</div>
 

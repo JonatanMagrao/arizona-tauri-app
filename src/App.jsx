@@ -28,6 +28,41 @@ const DEFAULT_SETTINGS = {
   produtosPath: "I:\\Drives compartilhados\\Phx CRF Copa\\CARREFOUR\\ASSETS\\_FOTOS FLOW",
 };
 
+const MAIN_CTA_PHRASES = Object.freeze([
+  "Por que fazer isso na mão?",
+  "Imagine o resto do fluxo automatizado.",
+  "Pequenas mágicas para times criativos.",
+  "Criado por quem odeia retrabalho.",
+  "Pequenas ideias, grandes atalhos.",
+  "O nerd por trás dos botões.",
+  "Clique e conheça o nerd.",
+  "Isso aqui era trabalho manual.",
+  "Transformando rotina em botão.",
+  "Criativo também automatiza.",
+  "Fluxos melhores começam pequenos.",
+  "Automatizar também é criar.",
+  "Ideias úteis, bugs ocasionais.",
+  "Mais clareza. Menos repetição.",
+  "Fluxo leve, time mais rápido.",
+  "Pequenas mágicas operacionais.",
+  "O nerd viu um padrão aqui.",
+  "Criatividade também mora no processo.",
+  "Clique e culpe o nerd.",
+  "A rotina ganhou um upgrade.",
+  "Mais leve que planilha aberta.",
+  "Automação com tempero criativo.",
+  "Isso antes dava trabalho.",
+  "Menos “cadê o arquivo?”",
+  "O fluxo ficou menos dramático.",
+  "Feito para dias corridos.",
+  "O processo ganhou superpoderes.",
+  "A planilha sentiu um arrepio.",
+  "O manual ficou com ciúmes.",
+  "O nerd resolveu um incômodo.",
+  "Trabalho manual em extinção.",
+  "Automação com alma criativa.",
+]);
+
 function normalizeSettings(config) {
   const next = { ...DEFAULT_SETTINGS, ...(config || {}) };
   return {
@@ -41,6 +76,10 @@ function normalizeProductsYear(value) {
   const text = String(value ?? "").trim();
   if (text.toLowerCase() === "auto") return "";
   return text.replace(/\D/g, "").slice(0, 4);
+}
+
+function randomMainCtaPhrase() {
+  return MAIN_CTA_PHRASES[Math.floor(Math.random() * MAIN_CTA_PHRASES.length)];
 }
 
 function App() {
@@ -71,6 +110,7 @@ function MainApp() {
   const [isImporting, setIsImporting] = useState(false);
   const [isToolsOpen, setIsToolsOpen] = useState(false);
   const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(false);
+  const [mainCtaPhrase] = useState(randomMainCtaPhrase);
   const [toast, setToast] = useState({ open: false, message: "", variant: "error" });
   const hideTimerRef = useRef(null);
   const projectTitleRef = useRef({ key: "", title: "" });
@@ -185,6 +225,10 @@ function MainApp() {
     }
 
     return result.response;
+  };
+
+  const openMainCta = async () => {
+    await run(commandNames.openAuthorSite, {}, "Nao foi possivel abrir o site.");
   };
 
   const setProjectWindowTitle = async (projectTitle) => {
@@ -511,6 +555,17 @@ function MainApp() {
               openLinks={openLinks}
             />
           )}
+
+          <button
+            type="button"
+            className="main-cta"
+            onClick={openMainCta}
+            tabIndex="-1"
+            title="Conheça o Nerd do After"
+            aria-label={`${mainCtaPhrase} Conheça o Nerd do After`}
+          >
+            <span>{mainCtaPhrase}</span>
+          </button>
         </main>
       </div>
 
