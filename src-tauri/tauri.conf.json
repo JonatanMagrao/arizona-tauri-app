@@ -13,10 +13,11 @@
     "windows": [
       {
         "title": "Arizona App",
-        "width": 570,
-        "height": 270,
+        "width": 440,
+        "height": 210,
         "center": true,
-        "resizable": false
+        "resizable": false,
+        "decorations": false
       },
       {
         "label": "secondary",
