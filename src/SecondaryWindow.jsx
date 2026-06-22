@@ -6,6 +6,10 @@ import DuplicateIdenticalModal from "./DuplicateIdenticalModal";
 import HistoryWindow from "./HistoryWindow";
 import previewImg from "./assets/hierarquia_pracas.jpg";
 import { commandNames, invokeAction, invokeCommand } from "./lib/tauriCommands";
+import appLogo from "../src-tauri/icons/arizona_icon.ico";
+import closeIcon from "./assets/icones/close.svg";
+import closeFullscreenIcon from "./assets/icones/close_fullscreen.svg";
+import openInFullIcon from "./assets/icones/open_in_full.svg";
 
 const DEFAULT_SECONDARY_STATE = {
   view: "places",
@@ -28,6 +32,7 @@ function SecondaryWindow() {
   const [toast, setToast] = useState({ open: false, message: "", variant: "error" });
   const [secondaryState, setSecondaryState] = useState(getInitialSecondaryState);
   const hideTimerRef = useRef(null);
+  const title = useMemo(() => secondaryWindowTitle(secondaryState), [secondaryState]);
 
   const hideToast = () => {
     setToast((current) => ({ ...current, open: false }));
@@ -76,8 +81,12 @@ function SecondaryWindow() {
   }, []);
 
   return (
-    <div className="secondary-window">
-      {renderSecondaryView(secondaryState, closeWindow, showToast)}
+    <div className="secondary-window secondary-window--custom">
+      <SecondaryTitlebar title={title} onClose={closeWindow} />
+
+      <div className="secondary-window__content">
+        {renderSecondaryView(secondaryState, closeWindow, showToast)}
+      </div>
 
       {toast.open && (
         <div
@@ -90,6 +99,85 @@ function SecondaryWindow() {
         </div>
       )}
     </div>
+  );
+}
+
+function SecondaryTitlebar({ title, onClose }) {
+  const [isMaximized, setIsMaximized] = useState(false);
+
+  useEffect(() => {
+    let unlistenResize = null;
+    const currentWindow = getCurrentWindow();
+    const syncMaximized = () => {
+      currentWindow.isMaximized().then(setIsMaximized).catch(() => {});
+    };
+
+    syncMaximized();
+    currentWindow
+      .onResized(syncMaximized)
+      .then((unlisten) => {
+        unlistenResize = unlisten;
+      })
+      .catch(() => {});
+
+    return () => {
+      if (unlistenResize) unlistenResize();
+    };
+  }, []);
+
+  const startWindowDrag = (event) => {
+    if (event.button !== 0) return;
+    getCurrentWindow().startDragging().catch(() => {});
+  };
+
+  const toggleMaximize = async () => {
+    const currentWindow = getCurrentWindow();
+    try {
+      await currentWindow.toggleMaximize();
+      setIsMaximized(await currentWindow.isMaximized());
+    } catch (error) {
+      // O botao permanece silencioso para nao interromper fluxos como video/historico.
+    }
+  };
+
+  return (
+    <header className="secondary-titlebar" aria-label="Barra da janela">
+      <div
+        className="secondary-titlebar__brand"
+        data-tauri-drag-region
+        onMouseDown={startWindowDrag}
+      >
+        <img className="secondary-titlebar__logo" src={appLogo} alt="" aria-hidden="true" />
+        <span>Arizona App</span>
+      </div>
+      <div
+        className="secondary-titlebar__drag"
+        data-tauri-drag-region
+        onMouseDown={startWindowDrag}
+      >
+        <span>{title}</span>
+      </div>
+      <div className="secondary-titlebar__controls">
+        <button
+          className="titlebar-icon-btn titlebar-icon-btn--maximize"
+          onClick={toggleMaximize}
+          tabIndex="-1"
+          title={isMaximized ? "Restaurar" : "Maximizar"}
+          aria-label={isMaximized ? "Restaurar" : "Maximizar"}
+        >
+          <img src={isMaximized ? closeFullscreenIcon : openInFullIcon} alt="" aria-hidden="true" />
+        </button>
+        <button
+          className="titlebar-icon-btn titlebar-icon-btn--close"
+          onClick={onClose}
+          tabIndex="-1"
+          title="Fechar"
+          aria-label="Fechar"
+        >
+          <img src={closeIcon} alt="" aria-hidden="true" />
+        </button>
+      </div>
+    </header>
   );
 }
 
@@ -141,6 +229,7 @@ function renderSecondaryView(state, closeWindow, showToast) {
 
 function SettingsView({ showError, showSuccess }) {
   const [settingsDraft, setSettingsDraft] = useState(DEFAULT_SETTINGS);
+  const [appInfo, setAppInfo] = useState({ version: "", authorName: "", authorUrl: "" });
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [choosingField, setChoosingField] = useState("");
@@ -156,6 +245,20 @@ function SettingsView({ showError, showSuccess }) {
       .finally(() => {
         if (mounted) setIsLoading(false);
       });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    invokeCommand(commandNames.appInfo)
+      .then((info) => {
+        if (mounted) setAppInfo(normalizeAppInfo(info));
+      })
+      .catch(() => {});
 
     return () => {
       mounted = false;
@@ -204,105 +307,132 @@ function SettingsView({ showError, showSuccess }) {
     }
   };
 
+  const openAuthorSite = async () => {
+    const result = await invokeAction(
+      commandNames.openAuthorSite,
+      {},
+      "Nao foi possivel abrir o site."
+    );
+
+    if (!result.ok) showError(result.message);
+  };
+
   const busy = isLoading || isSaving || Boolean(choosingField);
   const canSave = !busy && isSettingsReady(settingsDraft);
   const currentYear = String(new Date().getFullYear());
 
   return (
     <main className="settings-window settings-window--form" aria-label="Configuracoes">
-      <form className="settings-form settings-form--window" onSubmit={saveSettings}>
-        <label className="settings-field settings-field--drive">
-          <span>Drive</span>
-          <div className="settings-drive-row settings-path-row">
+      <section className="settings-panel">
+        <header className="settings-panel__header">
+          <h1>Configuracoes</h1>
+          {appInfo.version && <span className="settings-version">v{appInfo.version}</span>}
+        </header>
+
+        <form className="settings-form settings-form--window" onSubmit={saveSettings}>
+          <label className="settings-field settings-field--drive">
+            <span>Drive</span>
+            <div className="settings-drive-row settings-path-row">
+              <input
+                className="input settings-drive-input"
+                type="text"
+                value={settingsDraft.drive}
+                readOnly
+                title={settingsDraft.drive}
+                disabled={isLoading}
+              />
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => chooseFolder("drive", "Selecionar entrypoint do Drive")}
+                disabled={busy}
+              >
+                {choosingField === "drive" ? "..." : "Selecionar"}
+              </button>
+            </div>
+          </label>
+
+          <label className="settings-field settings-field--drive">
+            <span>Fotos Flow</span>
+            <div className="settings-drive-row settings-path-row">
+              <input
+                className="input settings-drive-input"
+                type="text"
+                value={settingsDraft.produtosPath}
+                readOnly
+                title={settingsDraft.produtosPath}
+                disabled={isLoading}
+              />
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => chooseFolder("produtosPath", "Selecionar Fotos Flow")}
+                disabled={busy}
+              >
+                {choosingField === "produtosPath" ? "..." : "Selecionar"}
+              </button>
+            </div>
+          </label>
+
+          <label className="settings-field">
+            <span>After Effects</span>
             <input
-              className="input settings-drive-input"
+              className="input settings-short-input"
               type="text"
-              value={settingsDraft.drive}
-              readOnly
-              title={settingsDraft.drive}
-              disabled={isLoading}
+              value={settingsDraft.aeVersion}
+              onChange={(event) => updateSettingsDraft("aeVersion", event.target.value)}
+              placeholder="2024"
+              autoComplete="off"
+              disabled={isLoading || isSaving}
             />
-            <button
-              type="button"
-              className="btn btn-outline"
-              onClick={() => chooseFolder("drive", "Selecionar entrypoint do Drive")}
-              disabled={busy}
-            >
-              {choosingField === "drive" ? "..." : "Selecionar"}
-            </button>
-          </div>
-        </label>
+          </label>
 
-        <label className="settings-field settings-field--drive">
-          <span>Fotos Flow</span>
-          <div className="settings-drive-row settings-path-row">
+          <label className="settings-field">
+            <span>Produtos</span>
             <input
-              className="input settings-drive-input"
+              className="input settings-short-input"
               type="text"
-              value={settingsDraft.produtosPath}
-              readOnly
-              title={settingsDraft.produtosPath}
-              disabled={isLoading}
+              value={settingsDraft.produtos}
+              onChange={(event) => updateSettingsDraft("produtos", event.target.value)}
+              placeholder="PRODUTOS"
+              autoComplete="off"
+              disabled={isLoading || isSaving}
             />
-            <button
-              type="button"
-              className="btn btn-outline"
-              onClick={() => chooseFolder("produtosPath", "Selecionar Fotos Flow")}
-              disabled={busy}
-            >
-              {choosingField === "produtosPath" ? "..." : "Selecionar"}
+          </label>
+
+          <label className="settings-field">
+            <span>Ano Projetos</span>
+            <input
+              className="input settings-short-input"
+              type="text"
+              value={settingsDraft.produtosYear}
+              onChange={(event) => updateSettingsDraft("produtosYear", normalizeProductsYear(event.target.value))}
+              placeholder={currentYear}
+              autoComplete="off"
+              inputMode="numeric"
+              maxLength={4}
+              pattern="\d{4}"
+              disabled={isLoading || isSaving}
+            />
+          </label>
+
+          <footer className="settings-actions settings-actions--window">
+            <div className="settings-credit">
+              {appInfo.authorName && (
+                <>
+                  <span>Criado por:</span>
+                  <button type="button" className="settings-credit__link" onClick={openAuthorSite}>
+                    {appInfo.authorName}
+                  </button>
+                </>
+              )}
+            </div>
+            <button type="submit" className="btn btn-primary" disabled={!canSave}>
+              {isSaving ? "Salvando..." : "Salvar"}
             </button>
-          </div>
-        </label>
-
-        <label className="settings-field">
-          <span>After Effects</span>
-          <input
-            className="input settings-short-input"
-            type="text"
-            value={settingsDraft.aeVersion}
-            onChange={(event) => updateSettingsDraft("aeVersion", event.target.value)}
-            placeholder="2024"
-            autoComplete="off"
-            disabled={isLoading || isSaving}
-          />
-        </label>
-
-        <label className="settings-field">
-          <span>Produtos</span>
-          <input
-            className="input settings-short-input"
-            type="text"
-            value={settingsDraft.produtos}
-            onChange={(event) => updateSettingsDraft("produtos", event.target.value)}
-            placeholder="PRODUTOS"
-            autoComplete="off"
-            disabled={isLoading || isSaving}
-          />
-        </label>
-
-        <label className="settings-field">
-          <span>Ano Projetos</span>
-          <input
-            className="input settings-short-input"
-            type="text"
-            value={settingsDraft.produtosYear}
-            onChange={(event) => updateSettingsDraft("produtosYear", normalizeProductsYear(event.target.value))}
-            placeholder={currentYear}
-            autoComplete="off"
-            inputMode="numeric"
-            maxLength={4}
-            pattern="\d{4}"
-            disabled={isLoading || isSaving}
-          />
-        </label>
-
-        <footer className="settings-actions settings-actions--window">
-          <button type="submit" className="btn btn-primary" disabled={!canSave}>
-            {isSaving ? "Salvando..." : "Salvar"}
-          </button>
-        </footer>
-      </form>
+          </footer>
+        </form>
+      </section>
     </main>
   );
 }
@@ -762,6 +892,31 @@ function normalizeView(value) {
   if (value === "config" || value === "configuracoes") return "settings";
   if (["duplicate", "history", "places", "media", "products", "settings"].includes(value)) return value;
   return DEFAULT_SECONDARY_STATE.view;
+}
+
+function secondaryWindowTitle(state) {
+  if (state.view === "media") {
+    return state.mediaTitle || fileNameFromPath(state.mediaPath) || "Midia";
+  }
+
+  if (state.view === "products" && state.productReport?.jobaoCod) {
+    return `Jobao ${state.productReport.jobaoCod}`;
+  }
+
+  if (state.view === "duplicate") return "Produtos identicos";
+  if (state.view === "history") return "Historico";
+  if (state.view === "places") return "Pracas CRF";
+  if (state.view === "products") return "Produtos importados";
+  if (state.view === "settings") return "Configuracoes";
+  return "Arizona";
+}
+
+function normalizeAppInfo(info) {
+  return {
+    version: String(info?.version || "").trim(),
+    authorName: String(info?.authorName || "").trim(),
+    authorUrl: String(info?.authorUrl || "").trim(),
+  };
 }
 
 function normalizeSettings(config) {

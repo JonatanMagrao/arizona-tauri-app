@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 export const commandNames = Object.freeze({
   abrirAe: "abrir_ae",
+  appInfo: "app_info",
   duplicateIdenticalMp4: "duplicate_identical_mp4",
   historyClear: "history_clear",
   historyCopyClear: "history_copy_clear",
@@ -24,6 +25,7 @@ export const commandNames = Object.freeze({
   loadAppConfig: "load_app_config",
   openBitrix: "open_bitrix",
   openClaro: "open_claro",
+  openAuthorSite: "open_author_site",
   closeSecondaryWindow: "close_secondary_window",
   openDuplicateIdenticalWindow: "open_duplicate_identical_window",
   openAudio: "open_audio",

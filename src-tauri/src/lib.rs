@@ -52,6 +52,8 @@ pub fn run() {
             history_refresh_entry,
             history_refresh_all_entries,
             project_name,
+            app_info,
+            open_author_site,
             load_app_config,
             save_app_config
         ])
@@ -89,6 +91,42 @@ fn open_claro() -> Result<ActionResponse, String> {
         Ok(()) => ActionResponse::ok(),
         Err(err) => ActionResponse::err(err),
     })
+}
+
+const AUTHOR_NAME: &str = "Jonatan Magr\u{00e3}o";
+const AUTHOR_URL: &str = "https://www.jonatanmagrao.com.br";
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppInfo {
+    version: String,
+    author_name: String,
+    author_url: String,
+}
+
+#[tauri::command]
+fn app_info(app: AppHandle) -> Result<AppInfo, String> {
+    let version = app
+        .config()
+        .version
+        .clone()
+        .unwrap_or_else(|| app.package_info().version.to_string());
+
+    Ok(AppInfo {
+        version,
+        author_name: AUTHOR_NAME.to_string(),
+        author_url: AUTHOR_URL.to_string(),
+    })
+}
+
+#[tauri::command]
+fn open_author_site() -> Result<ActionResponse, String> {
+    Ok(
+        match tauri_plugin_opener::open_url(AUTHOR_URL, None::<&str>) {
+            Ok(()) => ActionResponse::ok(),
+            Err(err) => ActionResponse::err(err.to_string()),
+        },
+    )
 }
 
 #[tauri::command]
@@ -236,6 +274,7 @@ fn show_secondary_window(
     window
         .set_title(&window_title)
         .map_err(|err| err.to_string())?;
+    let _ = window.unmaximize();
     window
         .set_size(LogicalSize::new(
             SECONDARY_WINDOW_WIDTH,

@@ -32,6 +32,7 @@
         "minimizable": false,
         "maximizable": true,
         "closable": true,
+        "decorations": false,
         "visible": false
       }
     ],
