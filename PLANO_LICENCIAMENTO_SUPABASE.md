@@ -6,6 +6,8 @@ Criar uma camada de controle para o Arizona App usando Supabase, permitindo que 
 
 A ideia nao e criar uma protecao impossivel de quebrar, porque apps desktop sempre podem ser modificados por alguem com tempo e conhecimento. O objetivo e criar uma validacao pratica, discreta e forte o suficiente para uso real: controlar acesso, limitar seats, revogar usuarios/dispositivos e entender quais botoes sao mais usados.
 
+Decisao arquitetural: Supabase deve ser uma camada opcional, isolada e removivel. O app nao deve depender diretamente de Supabase nos fluxos principais. Se no futuro for preciso voltar para uma versao sem Supabase, a troca deve acontecer por provider/config/feature flag, sem reescrever o app.
+
 ## Escopo inicial
 
 - Admin cadastra uma organizacao/cliente.
@@ -15,6 +17,120 @@ A ideia nao e criar uma protecao impossivel de quebrar, porque apps desktop semp
 - App salva um token local temporario para permitir uso offline por um periodo curto.
 - App registra telemetria apenas das acoes dos botoes.
 - App evita que alterar data/hora do computador seja um bypass simples.
+
+## Premissas de removibilidade
+
+- React nao fala diretamente com Supabase.
+- Rust/Tauri concentra toda regra sensivel de licenca.
+- Supabase fica atras de interfaces internas, nao espalhado pelo app.
+- Deve existir um modo `Noop` que sempre libera o app e ignora telemetria.
+- Com Supabase desligado, o app deve funcionar como hoje.
+- Telemetria deve passar por uma funcao central, como `track_event`.
+- Remover Supabase deve significar trocar provider/desligar feature, nao apagar chamadas em dezenas de arquivos.
+
+## Arquitetura plugavel
+
+### Rust/Tauri
+
+Estrutura sugerida:
+
+```text
+src-tauri/src/licensing/
+  mod.rs
+  provider.rs
+  noop.rs
+  supabase.rs
+  local_token.rs
+  clock_guard.rs
+  types.rs
+
+src-tauri/src/telemetry/
+  mod.rs
+  provider.rs
+  noop.rs
+  supabase.rs
+  types.rs
+```
+
+Interfaces conceituais:
+
+```rust
+trait LicenseProvider {
+    fn status(&self) -> Result<LicenseStatus, String>;
+    fn activate(&self, input: ActivateLicenseInput) -> Result<LicenseStatus, String>;
+    fn refresh(&self) -> Result<LicenseStatus, String>;
+}
+
+trait TelemetryProvider {
+    fn track(&self, event: AppEvent) -> Result<(), String>;
+    fn flush(&self) -> Result<(), String>;
+}
+```
+
+Providers previstos:
+
+- `SupabaseLicenseProvider`: valida online, renova token e consulta Edge Functions.
+- `NoopLicenseProvider`: sempre libera o app.
+- `SupabaseTelemetryProvider`: envia eventos para Supabase.
+- `NoopTelemetryProvider`: ignora eventos.
+
+### Feature flag e config
+
+Usar dois niveis:
+
+```toml
+[features]
+default = []
+licensing = []
+```
+
+E tambem uma config runtime:
+
+```json
+{
+  "licensingEnabled": true,
+  "telemetryEnabled": true
+}
+```
+
+Feature flag ajuda em builds realmente sem Supabase. Config runtime ajuda a desligar rapidamente sem recompilar.
+
+### React
+
+Estrutura sugerida:
+
+```text
+src/licensing/
+  LicenseGate.jsx
+  ActivationView.jsx
+  LicenseBlockedView.jsx
+  useLicenseStatus.js
+
+src/lib/
+  license.js
+  telemetry.js
+```
+
+O app principal ficaria envolvido por:
+
+```jsx
+<LicenseGate>
+  <MainApp />
+</LicenseGate>
+```
+
+Em uma versao sem Supabase, o `LicenseGate` pode ser removido ou mantido usando o provider `Noop`.
+
+### Comandos Tauri
+
+Usar nomes genericos, sem Supabase no nome:
+
+- `license_status`
+- `license_activate`
+- `license_refresh`
+- `license_deactivate_device`
+- `track_event`
+- `telemetry_flush`
 
 ## Modelo de dados sugerido
 
@@ -224,11 +340,25 @@ Responsavel por:
 
 ## Fases de implementacao
 
+### Fase 0: Casca removivel
+
+- Criar modulos `licensing` e `telemetry` no Rust.
+- Criar providers `Noop`.
+- Criar comandos Tauri genericos:
+  - `license_status`
+  - `license_activate`
+  - `license_refresh`
+  - `track_event`
+- Criar `LicenseGate` no React.
+- Garantir que, usando `Noop`, o app funcione exatamente como hoje.
+
+Resultado esperado: arquitetura pronta para receber Supabase sem acoplar o app principal.
+
 ### Fase 1: Fundacao
 
 - Criar schema Supabase.
 - Criar Edge Function `validate-license`.
-- Criar comando Rust `validate_license`.
+- Implementar provider Supabase atras da interface `LicenseProvider`.
 - Criar armazenamento local de `install_id`.
 - Criar tela simples de ativacao por email.
 
@@ -263,7 +393,8 @@ Resultado esperado: alterar a data do PC deixa de ser um bypass simples.
 
 ### Fase 5: Telemetria dos botoes
 
-- Criar comando Rust `track_event`.
+- Usar o comando Rust `track_event`.
+- Enviar eventos pelo provider ativo.
 - Registrar eventos principais dos botoes.
 - Enviar eventos em lote quando fizer sentido.
 - Ignorar falhas de telemetria para nao travar o uso do app.
@@ -282,6 +413,26 @@ Resultado esperado: admin consegue ver uso real do app sem coletar dados sensive
 
 Resultado esperado: controle operacional sem precisar mexer direto no banco.
 
+## Plano de remocao ou rollback
+
+Se for preciso voltar para uma versao sem Supabase:
+
+1. Desligar `licensingEnabled` e `telemetryEnabled`, ou compilar sem a feature `licensing`.
+2. Usar `NoopLicenseProvider` e `NoopTelemetryProvider`.
+3. Manter comandos Tauri genericos retornando sucesso/noop.
+4. Opcionalmente remover `LicenseGate` do React.
+5. Remover dependencias Supabase/HTTP apenas se a remocao for definitiva.
+
+Arquivos que devem concentrar a remocao:
+
+- `src-tauri/src/licensing/`
+- `src-tauri/src/telemetry/`
+- `src/licensing/`
+- `src/lib/license.js`
+- `src/lib/telemetry.js`
+
+O restante do app deve continuar com pouca ou nenhuma alteracao.
+
 ## Decisoes pendentes
 
 - Login sera apenas por email validado ou tera magic link/codigo?
@@ -290,15 +441,16 @@ Resultado esperado: controle operacional sem precisar mexer direto no banco.
 - O admin ficara dentro do app, em uma janela separada, ou em uma pagina web?
 - Telemetria ficara apenas como tabela ou tera dashboard visual?
 - Licenca bloqueada deve impedir tudo ou permitir acesso parcial?
+- O modo sem Supabase sera controlado por feature flag, config runtime, ou ambos?
 
 ## Primeira entrega recomendada
 
-Implementar um MVP discreto:
+Implementar primeiro a casca removivel, ainda sem Supabase ativo:
 
-1. Admin cadastra organizacao e emails manualmente no Supabase.
-2. App pede email na primeira abertura.
-3. Edge Function valida email, org ativa e seats.
-4. Rust salva `install_id` e token local curto.
-5. App registra `app_open` e cliques dos botoes principais.
+1. Criar providers `Noop`.
+2. Criar comandos genericos de licenca e telemetria.
+3. Criar `LicenseGate`, mas deixando o app passar direto.
+4. Criar `trackEvent` centralizado no frontend.
+5. Confirmar que, com tudo desligado, o app funciona exatamente como hoje.
 
-Essa entrega ja cria controle real sem transformar o projeto em um sistema grande demais logo de inicio.
+Depois disso, implementar Supabase por tras da interface, sem mexer no fluxo principal do app.
