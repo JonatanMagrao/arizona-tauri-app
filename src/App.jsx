@@ -111,6 +111,7 @@ function MainApp() {
   const [isToolsOpen, setIsToolsOpen] = useState(false);
   const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(false);
   const [mainCtaPhrase] = useState(randomMainCtaPhrase);
+  const [projectTitle, setProjectTitle] = useState("");
   const [toast, setToast] = useState({ open: false, message: "", variant: "error" });
   const hideTimerRef = useRef(null);
   const projectTitleRef = useRef({ key: "", title: "" });
@@ -233,6 +234,7 @@ function MainApp() {
 
   const setProjectWindowTitle = async (projectTitle) => {
     if (!projectTitle) return;
+    setProjectTitle(projectTitle);
     try {
       await getCurrentWindow().setTitle(projectTitle);
     } catch (e) {
@@ -251,15 +253,18 @@ function MainApp() {
 
     if (!jobao || !jobinho) {
       projectTitleRef.current = { key: "", title: "" };
+      setProjectTitle("");
       getCurrentWindow().setTitle("Arizona App").catch(() => {});
       return () => {};
     }
 
     if (projectTitleRef.current.key === lookupKey && projectTitleRef.current.title) {
+      setProjectTitle(projectTitleRef.current.title);
       return () => {};
     }
 
     projectTitleRef.current = { key: lookupKey, title: "" };
+    setProjectTitle("");
     getCurrentWindow().setTitle("Arizona App").catch(() => {});
 
     const resolveProjectTitle = async () => {
@@ -271,6 +276,7 @@ function MainApp() {
 
         if (res?.ok && res.message) {
           projectTitleRef.current = { key: lookupKey, title: res.message };
+          setProjectTitle(res.message);
           await setProjectWindowTitle(res.message);
           return;
         }
@@ -381,6 +387,8 @@ function MainApp() {
     await openSecondaryView("duplicate", { jobaoCod: jobao });
   };
 
+  const titlebarLabel = projectTitle || "Arizona App";
+
   return (
     <div className="app-shell">
       <header className="app-titlebar" aria-label="Barra da janela">
@@ -388,9 +396,10 @@ function MainApp() {
           className="app-titlebar__brand"
           data-tauri-drag-region
           onMouseDown={startWindowDrag}
+          title={titlebarLabel}
         >
           <img className="app-titlebar__logo" src={appLogo} alt="" aria-hidden="true" />
-          <span>Arizona App</span>
+          <span>{titlebarLabel}</span>
         </div>
         <div
           className="app-titlebar__drag"
