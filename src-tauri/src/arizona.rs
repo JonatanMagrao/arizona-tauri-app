@@ -873,16 +873,9 @@ fn queue_product_copy_tasks(
     copy_tasks: &mut Vec<(PathBuf, String)>,
     queued_copy_names: &mut HashSet<String>,
 ) -> Result<bool, String> {
-    let codigo_lower = codigo.to_lowercase();
     let encontrados: Vec<PathBuf> = arquivos
         .iter()
-        .filter(|arquivo| {
-            arquivo
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .map(|stem| stem.to_lowercase() == codigo_lower)
-                .unwrap_or(false)
-        })
+        .filter(|arquivo| product_file_matches_code(arquivo, codigo))
         .cloned()
         .collect();
 
@@ -902,6 +895,19 @@ fn queue_product_copy_tasks(
     }
 
     Ok(true)
+}
+
+fn product_file_matches_code(arquivo: &Path, codigo: &str) -> bool {
+    let codigo = codigo.trim();
+    if codigo.is_empty() {
+        return false;
+    }
+
+    arquivo
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(|stem| stem.to_lowercase().contains(&codigo.to_lowercase()))
+        .unwrap_or(false)
 }
 
 struct CopyFilesResult {
@@ -1827,5 +1833,30 @@ mod tests {
             product_folder_path(r"D:\Produtos Fonte"),
             PathBuf::from(r"D:\Produtos Fonte")
         );
+    }
+
+    #[test]
+    fn product_source_match_accepts_exact_stem_ignoring_case() {
+        assert!(product_file_matches_code(
+            Path::new("Fraldinha_Bovina.png"),
+            "fraldinha_bovina"
+        ));
+        assert!(product_file_matches_code(Path::new("3389987.png"), "3389987"));
+    }
+
+    #[test]
+    fn product_source_match_accepts_partial_stem_like_python_importer() {
+        assert!(product_file_matches_code(
+            Path::new("4136152_A_OK.png"),
+            "4136152"
+        ));
+        assert!(product_file_matches_code(
+            Path::new("Icone_Borda_Memoria_256GB.png"),
+            "Borda_Memoria"
+        ));
+        assert!(!product_file_matches_code(
+            Path::new("Fraldinha_Bovina.png"),
+            "Picanha_Bovina"
+        ));
     }
 }
