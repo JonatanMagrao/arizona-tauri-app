@@ -18,25 +18,25 @@ const HISTORY_META = Object.freeze({
   [HISTORY_TYPES.PROJECTS]: {
     label: "Projetos",
     empty: "Nenhum projeto aberto ainda.",
-    table: "Historico de projetos",
-    search: "Pesquisar por jobao, jobinho ou regiao",
+    table: "Histórico de projetos",
+    search: "Pesquisar por jobão, jobinho ou região",
     column: "Projeto",
     epochKey: "openedAtEpoch",
   },
   [HISTORY_TYPES.COPIES]: {
-    label: "Copias MP4",
-    empty: "Nenhuma copia registrada ainda.",
-    table: "Historico de copias",
-    search: "Pesquisar por jobao, matriz ou copia",
-    column: "Copia",
+    label: "Cópias MP4",
+    empty: "Nenhuma cópia registrada ainda.",
+    table: "Histórico de cópias",
+    search: "Pesquisar por jobão, matriz ou cópia",
+    column: "Cópia",
     epochKey: "copiedAtEpoch",
   },
   [HISTORY_TYPES.PRODUCT_IMPORTS]: {
     label: "Produtos",
-    empty: "Nenhuma importacao de produtos registrada ainda.",
-    table: "Historico de importacoes de produtos",
-    search: "Pesquisar por jobao, arquivo ou pasta",
-    column: "Importacao",
+    empty: "Nenhuma importação de produtos registrada ainda.",
+    table: "Histórico de importações de produtos",
+    search: "Pesquisar por jobão, arquivo ou pasta",
+    column: "Importação",
     epochKey: "importedAtEpoch",
   },
 });
@@ -83,7 +83,7 @@ function HistoryWindow({ onClose }) {
       setCopyEntries(Array.isArray(copies) ? copies : []);
       setProductImportEntries(Array.isArray(productImports) ? productImports : []);
     } catch (err) {
-      setMessage(String(err || "Nao foi possivel carregar o historico."));
+      setMessage(String(err || "Não foi possível carregar o histórico."));
     } finally {
       setIsLoading(false);
     }
@@ -95,7 +95,7 @@ function HistoryWindow({ onClose }) {
 
   const runAction = async (fnName, args, refresh = false) => {
     setMessage("");
-    const result = await invokeAction(fnName, args, "Nao foi possivel executar a acao.");
+    const result = await invokeAction(fnName, args, "Não foi possível executar a ação.");
     if (!result.ok) {
       setMessage(result.message);
       return;
@@ -106,7 +106,7 @@ function HistoryWindow({ onClose }) {
     try {
       if (refresh) await loadHistory();
     } catch (err) {
-      setMessage(String(err || "Nao foi possivel executar a acao."));
+      setMessage(String(err || "Não foi possível executar a ação."));
     }
   };
 
@@ -121,7 +121,7 @@ function HistoryWindow({ onClose }) {
     const result = await invokeAction(
       commandNames.historyRefreshAllEntries,
       {},
-      "Nao foi possivel atualizar os paths."
+      "Não foi possível atualizar os paths."
     );
     setIsRefreshingAll(false);
 
@@ -183,7 +183,7 @@ function HistoryWindow({ onClose }) {
     },
     {
       value: HISTORY_TYPES.COPIES,
-      label: `Copias MP4 (${copyEntries.length})`,
+      label: `Cópias MP4 (${copyEntries.length})`,
     },
     {
       value: HISTORY_TYPES.PRODUCT_IMPORTS,
@@ -214,7 +214,7 @@ function HistoryWindow({ onClose }) {
             value={activeType}
             onChange={changeHistoryType}
             options={historyTypeOptions}
-            ariaLabel="Tipo de historico"
+            ariaLabel="Tipo de histórico"
           />
         </div>
 
@@ -227,7 +227,7 @@ function HistoryWindow({ onClose }) {
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
             placeholder={meta.search}
-            aria-label="Pesquisar historico"
+            aria-label="Pesquisar histórico"
             autoComplete="off"
             spellCheck={false}
           />
@@ -261,7 +261,7 @@ function HistoryWindow({ onClose }) {
             onClick={requestClearHistory}
             disabled={!activeEntries.length || isRefreshingAll}
           >
-            Apagar historico
+            Apagar histórico
           </button>
           {onClose && (
             <button
@@ -318,7 +318,7 @@ function HistoryWindow({ onClose }) {
                 </button>
               </div>
               <div role="columnheader">{meta.column}</div>
-              <div role="columnheader">Acoes</div>
+              <div role="columnheader">Ações</div>
             </div>
 
             {activeType === HISTORY_TYPES.PROJECTS &&
@@ -361,10 +361,10 @@ function HistoryWindow({ onClose }) {
             onMouseDown={(event) => event.stopPropagation()}
           >
             <header className="history-confirm-header">
-              <h2 id="history-confirm-title">Apagar historico?</h2>
+              <h2 id="history-confirm-title">Apagar histórico?</h2>
             </header>
 
-            <p>Essa acao remove os registros salvos nesta lista e nao pode ser desfeita.</p>
+            <p>Essa ação remove os registros salvos nesta lista e não pode ser desfeita.</p>
 
             <footer className="history-confirm-actions">
               <button
@@ -405,9 +405,9 @@ function ProjectHistoryRow({ entry, onAfterClick, onMediaClick, onOpenJobao, onR
       <div className="history-actions" role="cell">
         <IconButton
           icon={folderIcon}
-          label="Abrir pasta do Jobao"
+          label="Abrir pasta do Jobão"
           onClick={() => onOpenJobao(entry)}
-          title={pathTitle("Jobao", entry.jobaoPath)}
+          title={pathTitle("Jobão", entry.jobaoPath)}
           unavailable={!entry.jobaoPath}
         />
         <IconButton
@@ -421,14 +421,14 @@ function ProjectHistoryRow({ entry, onAfterClick, onMediaClick, onOpenJobao, onR
           icon={videoIconMP4}
           label="Abrir MP4"
           onClick={(event) => onMediaClick(event, entry, "mp4")}
-          title={pathTitle("MP4", entry.mp4Path, "Shift+clique: abrir video")}
+          title={pathTitle("MP4", entry.mp4Path, "Shift+clique: abrir vídeo")}
           unavailable={!entry.mp4Path}
         />
         <IconButton
           icon={videoIconMOV}
           label="Abrir MOV"
           onClick={(event) => onMediaClick(event, entry, "mov")}
-          title={pathTitle("MOV", entry.movPath, "Shift+clique: abrir video")}
+          title={pathTitle("MOV", entry.movPath, "Shift+clique: abrir vídeo")}
           unavailable={!entry.movPath}
         />
         <IconButton
@@ -465,7 +465,7 @@ function CopyHistoryRow({ entry, onMediaClick, onOpenFolder }) {
         />
         <IconButton
           icon={videoIconMP4}
-          label="Abrir copia MP4"
+          label="Abrir cópia MP4"
           onClick={(event) => onMediaClick(event, entry)}
           title={pathTitle("MP4", entry.targetPath, "Shift+clique: mostrar no Explorer")}
           unavailable={!entry.targetPath}
@@ -495,19 +495,19 @@ function ProductImportHistoryRow({ entry }) {
 
       <div className="history-project history-product-import" role="cell">
         <div className="history-product-topline">
-          <strong>Jobao {entry.jobaoCod || report?.jobaoCod}</strong>
+          <strong>Jobão {entry.jobaoCod || report?.jobaoCod}</strong>
           <div className="history-product-summary">
             <span>{total} processados</span>
             <span>{imported} copiados</span>
             <span>{existing} existentes</span>
-            <span>{notFound} nao encontrados</span>
+            <span>{notFound} não encontrados</span>
             <span>{groups} grupos</span>
             <span>{duration}</span>
           </div>
         </div>
         <div className="history-product-paths">
-          <span title={sourcePath}>Origem: {sourcePath || "Path indisponivel"}</span>
-          <span title={productPath}>Destino: {productPath || "Path indisponivel"}</span>
+          <span title={sourcePath}>Origem: {sourcePath || "Path indisponível"}</span>
+          <span title={productPath}>Destino: {productPath || "Path indisponível"}</span>
         </div>
         {isSnapshotOpen && <ProductImportSnapshot report={report} />}
       </div>
@@ -530,7 +530,7 @@ function ProductImportSnapshot({ report }) {
   if (!report) {
     return (
       <div className="history-product-snapshot">
-        <div className="history-product-snapshot-empty">Snapshot indisponivel.</div>
+        <div className="history-product-snapshot-empty">Snapshot indisponível.</div>
       </div>
     );
   }
@@ -552,8 +552,8 @@ function ProductImportSnapshot({ report }) {
     <div className="history-product-snapshot">
       <div className="history-product-snapshot-body">
         <SnapshotList title="Copiados" items={imported} mark="ok" />
-        <SnapshotList title="Ja existiam" items={existing} mark="skip" />
-        <SnapshotList title="Nao encontrados" items={notFound} mark="fail" />
+        <SnapshotList title="Já existiam" items={existing} mark="skip" />
+        <SnapshotList title="Não encontrados" items={notFound} mark="fail" />
         {report.groups.length > 0 && (
           <div className="history-product-snapshot-grouped">
             <h3>Grupos</h3>
@@ -638,7 +638,7 @@ function formatDuration(durationMillis) {
 }
 
 function pathTitle(label, value, hint) {
-  const path = value || "Path nao disponivel";
+  const path = value || "Path não disponível";
   return hint ? `${label}: ${path}\n${hint}` : `${label}: ${path}`;
 }
 

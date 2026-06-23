@@ -443,11 +443,11 @@ fn open_connection(app: &AppHandle) -> Result<Connection, String> {
     let path = db_path(app)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
-            .map_err(|err| format!("Nao foi possivel criar {}: {err}", parent.display()))?;
+            .map_err(|err| format!("Não foi possível criar {}: {err}", parent.display()))?;
     }
 
     let conn = Connection::open(&path)
-        .map_err(|err| format!("Nao foi possivel abrir {}: {err}", path.display()))?;
+        .map_err(|err| format!("Não foi possível abrir {}: {err}", path.display()))?;
     init_schema(&conn)?;
     Ok(conn)
 }
@@ -664,7 +664,7 @@ fn row_to_product_import_entry(row: &Row<'_>) -> rusqlite::Result<ProductImportH
 
 fn media_path(entry: &HistoryEntry, media_type: &str) -> Result<PathBuf, String> {
     let media_type =
-        MediaType::parse(media_type).ok_or_else(|| "Tipo de video invalido.".to_string())?;
+        MediaType::parse(media_type).ok_or_else(|| "Tipo de vídeo inválido.".to_string())?;
     let value = match media_type {
         MediaType::Mp4 => entry.mp4_path.as_deref(),
         MediaType::Mov => entry.mov_path.as_deref(),

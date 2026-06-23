@@ -480,11 +480,11 @@ impl Arizona {
         let origem = &self.product_folder_path;
         let destino = dstn_folder;
         if origem.as_os_str().is_empty() {
-            return Err("Selecione a pasta Fotos Flow nas configuracoes.".to_string());
+            return Err("Selecione a pasta Fotos Flow nas configurações.".to_string());
         }
         if !origem.is_dir() {
             return Err(format!(
-                "Pasta Fotos Flow nao encontrada: {}",
+                "Pasta Fotos Flow não encontrada: {}",
                 origem.display()
             ));
         }
@@ -887,7 +887,7 @@ fn queue_product_copy_tasks(
         let file_name = arquivo
             .file_name()
             .and_then(|name| name.to_str())
-            .ok_or_else(|| format!("Nome de arquivo invalido: {}", arquivo.display()))?
+            .ok_or_else(|| format!("Nome de arquivo inválido: {}", arquivo.display()))?
             .to_string();
         if queued_copy_names.insert(file_name.to_lowercase()) {
             copy_tasks.push((arquivo, file_name));

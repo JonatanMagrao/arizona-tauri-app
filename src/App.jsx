@@ -167,7 +167,7 @@ function MainApp() {
       .then((config) => {
         if (mounted) setAppConfig(normalizeSettings(config));
       })
-      .catch((e) => showError(String(e || "Nao foi possivel carregar as configuracoes.")));
+      .catch((e) => showError(String(e || "Não foi possível carregar as configurações.")));
 
     return () => {
       mounted = false;
@@ -229,7 +229,7 @@ function MainApp() {
   };
 
   const openMainCta = async () => {
-    await run(commandNames.openAuthorSite, {}, "Nao foi possivel abrir o site.");
+    await run(commandNames.openAuthorSite, {}, "Não foi possível abrir o site.");
   };
 
   const setProjectWindowTitle = async (projectTitle) => {
@@ -238,7 +238,7 @@ function MainApp() {
     try {
       await getCurrentWindow().setTitle(projectTitle);
     } catch (e) {
-      // Falha no titulo nao deve bloquear o fluxo principal.
+      // Falha no título não deve bloquear o fluxo principal.
     }
   };
 
@@ -281,7 +281,7 @@ function MainApp() {
           return;
         }
       } catch (e) {
-        // Lookup silencioso: enquanto o usuario digita, falhar e esperado.
+        // Lookup silencioso: enquanto o usuário digita, falhar é esperado.
       }
 
       if (!cancelled) retryTimer = setTimeout(resolveProjectTitle, 2000);
@@ -296,11 +296,11 @@ function MainApp() {
     };
   }, [jobaoCod, jobinhoCod, appConfig.drive]);
 
-  const projectName = async () => run(commandNames.projectName, { jobaoCod, jobinhoCod }, "Nao foi possivel recuperar o nome do projeto.");
-  const openJobao = async () => run(commandNames.openJobao, { jobaoCod }, `Nao foi possivel abrir o Jobao "${jobaoCod}".`);
-  const openJobinho = async () => run(commandNames.openJobinho, { jobaoCod, jobinhoCod }, `Nao foi possivel abrir o Jobinho "${jobinhoCod}".`);
+  const projectName = async () => run(commandNames.projectName, { jobaoCod, jobinhoCod }, "Não foi possível recuperar o nome do projeto.");
+  const openJobao = async () => run(commandNames.openJobao, { jobaoCod }, `Não foi possível abrir o Jobão "${jobaoCod}".`);
+  const openJobinho = async () => run(commandNames.openJobinho, { jobaoCod, jobinhoCod }, `Não foi possível abrir o Jobinho "${jobinhoCod}".`);
   const abrirAE = async () => {
-    const res = await run(commandNames.abrirAe, { jobaoCod, jobinhoCod }, `Nao foi possivel abrir o projeto ${jobinhoCod} no After Effects.`);
+    const res = await run(commandNames.abrirAe, { jobaoCod, jobinhoCod }, `Não foi possível abrir o projeto ${jobinhoCod} no After Effects.`);
     if (res?.ok) {
       projectTitleRef.current = {
         key: `${appConfig.drive || ""}::${jobaoCod.trim()}::${jobinhoCod.trim()}`,
@@ -309,16 +309,16 @@ function MainApp() {
       await setProjectWindowTitle(res.message);
     }
   };
-  const openVideo = async (jobao, jobinho, mediaType) => run(commandNames.openVideo, { jobaoCod: jobao, jobinhoCod: jobinho, mediaType }, `Nao foi possivel abrir o video do projeto "${jobinho}"`);
-  const openAudio = async (jobao, jobinho) => run(commandNames.openAudio, { jobaoCod: jobao, jobinhoCod: jobinho }, `Nao foi possivel abrir o audio do projeto "${jobinho}"`);
-  const revealVideo = async (jobao, jobinho, mediaType) => run(commandNames.revealVideo, { jobaoCod: jobao, jobinhoCod: jobinho, mediaType }, `Nao foi possivel localizar o video do projeto "${jobinho}"`);
-  const openRoteiro = async () => run(commandNames.openRoteiro, { jobaoCod, jobinhoCod }, `Nao foi possivel abrir o roteiro do projeto "${jobinhoCod}"`);
+  const openVideo = async (jobao, jobinho, mediaType) => run(commandNames.openVideo, { jobaoCod: jobao, jobinhoCod: jobinho, mediaType }, `Não foi possível abrir o vídeo do projeto "${jobinho}"`);
+  const openAudio = async (jobao, jobinho) => run(commandNames.openAudio, { jobaoCod: jobao, jobinhoCod: jobinho }, `Não foi possível abrir o áudio do projeto "${jobinho}"`);
+  const revealVideo = async (jobao, jobinho, mediaType) => run(commandNames.revealVideo, { jobaoCod: jobao, jobinhoCod: jobinho, mediaType }, `Não foi possível localizar o vídeo do projeto "${jobinho}"`);
+  const openRoteiro = async () => run(commandNames.openRoteiro, { jobaoCod, jobinhoCod }, `Não foi possível abrir o roteiro do projeto "${jobinhoCod}"`);
   const openOut = async (opt) => {
     if (isOpeningOut) return;
     setIsOpeningOut(true);
     const chosen = opt ?? outOption;
     try {
-      await run(commandNames.openOut, { jobaoCod, option: chosen }, "Nao foi possivel abrir a pasta OUT/RENDER.");
+      await run(commandNames.openOut, { jobaoCod, option: chosen }, "Não foi possível abrir a pasta OUT/RENDER.");
     } finally {
       setIsOpeningOut(false);
     }
@@ -336,9 +336,9 @@ function MainApp() {
 
     setIsImporting(true);
     try {
-      await run(commandNames.importProducts, { jobaoCod: targetJobao }, "Nao foi possivel copiar os arquivos.");
+      await run(commandNames.importProducts, { jobaoCod: targetJobao }, "Não foi possível copiar os arquivos.");
     } catch (e) {
-      showError("Nao foi possivel copiar os arquivos.");
+      showError("Não foi possível copiar os arquivos.");
     } finally {
       setIsImporting(false);
     }
@@ -351,7 +351,7 @@ function MainApp() {
       await getCurrentWindow().setAlwaysOnTop(nextAlwaysOnTop);
       setIsAlwaysOnTop(nextAlwaysOnTop);
     } catch (e) {
-      showError("Nao foi possivel alterar o modo sempre no topo.");
+      showError("Não foi possível alterar o modo sempre no topo.");
     }
   };
 
@@ -372,7 +372,7 @@ function MainApp() {
     await run(
       commandNames.openSecondaryWindow,
       { view, ...args },
-      "Nao foi possivel abrir a janela."
+      "Não foi possível abrir a janela."
     );
   };
 
@@ -439,7 +439,7 @@ function MainApp() {
       </header>
 
       <div className="layout layout--with-leftbar">
-        <aside className="iconbar" aria-label="Paineis">
+        <aside className="iconbar" aria-label="Painéis">
           <button
             className={`icon-tab ${activeTab === TABS.JOBS ? "icon-tab--active" : ""}`}
             onClick={() => setActiveTab(TABS.JOBS)}
@@ -466,19 +466,19 @@ function MainApp() {
                 setIsToolsOpen((open) => !open);
               }}
               tabIndex="-1"
-              title="Utilitarios"
-              aria-label="Utilitarios"
+              title="Utilitários"
+              aria-label="Utilitários"
               aria-haspopup="menu"
               aria-expanded={isToolsOpen}
             >
-              <img src={toolsIcon} alt="Utilitarios" />
+              <img src={toolsIcon} alt="Utilitários" />
             </button>
 
             {isToolsOpen && (
               <div
                 className="iconbar-popover"
                 role="menu"
-                aria-label="Utilitarios"
+                aria-label="Utilitários"
                 data-tooltip-scope="utilities"
               >
                 <button
@@ -504,7 +504,7 @@ function MainApp() {
                   tabIndex="-1"
                 >
                   <img src={imageIcon} alt="" aria-hidden="true" />
-                  <span>Pracas CRF</span>
+                  <span>Praças CRF</span>
                 </button>
                 <button
                   className="iconbar-popover__item"
@@ -516,7 +516,7 @@ function MainApp() {
                   tabIndex="-1"
                 >
                   <img src={historyIcon} alt="" aria-hidden="true" />
-                  <span>Historico</span>
+                  <span>Histórico</span>
                 </button>
               </div>
             )}
@@ -525,10 +525,10 @@ function MainApp() {
             className="icon-tab"
             onClick={openSettings}
             tabIndex="-1"
-            title="Configuracoes"
-            aria-label="Configuracoes"
+            title="Configurações"
+            aria-label="Configurações"
           >
-            <img src={settingsIcon} alt="Configuracoes" />
+            <img src={settingsIcon} alt="Configurações" />
           </button>
         </aside>
 
