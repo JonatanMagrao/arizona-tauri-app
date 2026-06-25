@@ -249,11 +249,15 @@ impl Arizona {
             }
         }
 
+        let searched = self
+            .meses
+            .iter()
+            .map(|mes| mes.label.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
         Err(format!(
-            r#"Jobão "{}" não encontrado em {} nem em {}!"#,
-            jobao_cod,
-            self.month_label_for_error(0),
-            self.month_label_for_error(1)
+            r#"Jobão "{}" não encontrado em {}!"#,
+            jobao_cod, searched
         ))
     }
 
@@ -762,13 +766,6 @@ impl Arizona {
         Ok(ActionResponse::ok())
     }
 
-    fn month_label_for_error(&self, index: usize) -> String {
-        self.meses
-            .get(index)
-            .map(|mes| mes.label.clone())
-            .unwrap_or_else(|| "(sem mês)".to_string())
-    }
-
     fn mp4_folder(&self, jobao_cod: &str) -> Result<PathBuf, String> {
         let folder = self
             .get_jobao_path(jobao_cod)?
@@ -833,6 +830,7 @@ fn build_month_labels(
     let mut labels = Vec::new();
     if next_path.exists() {
         labels.push(next);
+        labels.push(current);
     } else {
         labels.push(current);
     }
