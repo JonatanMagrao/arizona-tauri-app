@@ -40,7 +40,7 @@ function DuplicateIdenticalModal({
     const region = regionDraft.trim();
 
     if (!jobaoCod) {
-      setStatus("Informe o codigo do Jobao.", "error");
+      setStatus("Informe o código do Jobão.", "error");
       return;
     }
 
@@ -70,7 +70,7 @@ function DuplicateIdenticalModal({
         const openResult = await invokeAction(
           commandNames.openOut,
           { jobaoCod, option: "mp4" },
-          "Nao foi possivel abrir a pasta MP4."
+          "Não foi possível abrir a pasta MP4."
         );
         if (!openResult.ok) showError(openResult.message);
       } else if (region) {
@@ -79,7 +79,7 @@ function DuplicateIdenticalModal({
         setStatus("Escolha a matriz na lista.", "info");
       }
     } catch (err) {
-      setStatus(String(err || "Nao foi possivel listar os MP4."), "error");
+      setStatus(String(err || "Não foi possível listar os MP4."), "error");
     } finally {
       setIsLoading(false);
     }
@@ -146,7 +146,7 @@ function DuplicateIdenticalModal({
     }
 
     if (hasCopyErrors) {
-      setStatus("Revise os nomes das copias.", "error");
+      setStatus("Revise os nomes das cópias.", "error");
       return;
     }
 
@@ -158,18 +158,18 @@ function DuplicateIdenticalModal({
         sourceFileName: selectedFileName,
         copyNames: copyNames.map((name) => name.trim()),
       },
-      "Nao foi possivel duplicar o MP4."
+      "Não foi possível duplicar o MP4."
     );
     setIsDuplicating(false);
 
     if (!result.ok) {
-      const error = result.message || "Nao foi possivel duplicar o MP4.";
+      const error = result.message || "Não foi possível duplicar o MP4.";
       setStatus(error, "error");
       showError(error);
       return;
     }
 
-    const successMessage = result.response?.message || "Copias criadas.";
+    const successMessage = result.response?.message || "Cópias criadas.";
     showSuccess(successMessage);
     setStatus(successMessage, "success");
     setCopyNames([""]);
@@ -190,7 +190,7 @@ function DuplicateIdenticalModal({
       >
         {!standalone && (
           <header className="duplicate-modal__header">
-            <h2 id="duplicate-title">Duplicar identicos</h2>
+            <h2 id="duplicate-title">Duplicar idênticos</h2>
             {onClose && (
               <button
                 type="button"
@@ -207,7 +207,7 @@ function DuplicateIdenticalModal({
 
         <form className="duplicate-search" onSubmit={loadItems}>
           <label className="duplicate-jobao-field">
-            <span>Jobao</span>
+            <span>Jobão</span>
             <input
               className="input input-code"
               type="text"
@@ -224,7 +224,7 @@ function DuplicateIdenticalModal({
           </label>
 
           <label className="duplicate-region-field">
-            <span>Regiao</span>
+            <span>Região</span>
             <input
               className="input duplicate-region-input"
               type="text"
@@ -386,7 +386,7 @@ function buildCopyErrors(copyNames, existingNames, extension) {
     const normalizedName = normalized[index];
     if (!trimmed) return "Preencha este nome.";
     if (counts.get(normalizedName) > 1) return "Nome repetido.";
-    if (existingNames.has(normalizedName)) return "Arquivo ja existe.";
+    if (existingNames.has(normalizedName)) return "Arquivo já existe.";
     return "";
   });
 }

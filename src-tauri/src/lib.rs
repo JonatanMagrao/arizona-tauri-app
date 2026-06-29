@@ -213,7 +213,7 @@ fn import_products(app: AppHandle, jobao_cod: String) -> Result<ActionResponse, 
 
             if let Err(err) = history_result {
                 return Ok(ActionResponse::err(format!(
-                    "Produtos importados, mas o historico nao foi salvo: {err}"
+                    "Produtos importados, mas o histórico não foi salvo: {err}"
                 )));
             }
 
@@ -334,7 +334,7 @@ fn secondary_window_title(view: &str) -> &'static str {
         "places" => "Praças CRF",
         "media" => "Mídia",
         "products" => "Produtos importados",
-        "settings" => "Configuracoes",
+        "settings" => "Configurações",
         _ => "Arizona",
     }
 }
@@ -352,7 +352,7 @@ fn secondary_window_state_title(state: &SecondaryWindowState) -> String {
 
     if state.view == "products" {
         if let Some(report) = &state.product_report {
-            return format!("Jobao {}", report.jobao_cod());
+            return format!("Jobão {}", report.jobao_cod());
         }
     }
 

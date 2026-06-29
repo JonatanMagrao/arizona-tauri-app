@@ -136,7 +136,7 @@ function SecondaryTitlebar({ title, onClose }) {
       await currentWindow.toggleMaximize();
       setIsMaximized(await currentWindow.isMaximized());
     } catch (error) {
-      // O botao permanece silencioso para nao interromper fluxos como video/historico.
+      // O botão permanece silencioso para não interromper fluxos como vídeo/histórico.
     }
   };
 
@@ -241,7 +241,7 @@ function SettingsView({ showError, showSuccess }) {
       .then((config) => {
         if (mounted) setSettingsDraft(normalizeSettings(config));
       })
-      .catch((error) => showError(String(error || "Nao foi possivel carregar as configuracoes.")))
+      .catch((error) => showError(String(error || "Não foi possível carregar as configurações.")))
       .finally(() => {
         if (mounted) setIsLoading(false);
       });
@@ -280,7 +280,7 @@ function SettingsView({ showError, showSuccess }) {
       const path = Array.isArray(selected) ? selected[0] : selected;
       if (typeof path === "string") updateSettingsDraft(field, path);
     } catch (error) {
-      showError(String(error || "Nao foi possivel selecionar a pasta."));
+      showError(String(error || "Não foi possível selecionar a pasta."));
     } finally {
       setChoosingField("");
     }
@@ -299,9 +299,9 @@ function SettingsView({ showError, showSuccess }) {
         config: normalizeSettings(settingsDraft),
       });
       setSettingsDraft(normalizeSettings(saved));
-      showSuccess("Configuracoes salvas.");
+      showSuccess("Configurações salvas.");
     } catch (error) {
-      showError(String(error || "Nao foi possivel salvar as configuracoes."));
+      showError(String(error || "Não foi possível salvar as configurações."));
     } finally {
       setIsSaving(false);
     }
@@ -311,7 +311,7 @@ function SettingsView({ showError, showSuccess }) {
     const result = await invokeAction(
       commandNames.openAuthorSite,
       {},
-      "Nao foi possivel abrir o site."
+      "Não foi possível abrir o site."
     );
 
     if (!result.ok) showError(result.message);
@@ -322,10 +322,10 @@ function SettingsView({ showError, showSuccess }) {
   const currentYear = String(new Date().getFullYear());
 
   return (
-    <main className="settings-window settings-window--form" aria-label="Configuracoes">
+    <main className="settings-window settings-window--form" aria-label="Configurações">
       <section className="settings-panel">
         <header className="settings-panel__header">
-          <h1>Configuracoes</h1>
+          <h1>Configurações</h1>
           {appInfo.version && <span className="settings-version">v{appInfo.version}</span>}
         </header>
 
@@ -896,18 +896,18 @@ function normalizeView(value) {
 
 function secondaryWindowTitle(state) {
   if (state.view === "media") {
-    return state.mediaTitle || fileNameFromPath(state.mediaPath) || "Midia";
+    return state.mediaTitle || fileNameFromPath(state.mediaPath) || "Mídia";
   }
 
   if (state.view === "products" && state.productReport?.jobaoCod) {
-    return `Jobao ${state.productReport.jobaoCod}`;
+    return `Jobão ${state.productReport.jobaoCod}`;
   }
 
-  if (state.view === "duplicate") return "Produtos identicos";
-  if (state.view === "history") return "Historico";
-  if (state.view === "places") return "Pracas CRF";
+  if (state.view === "duplicate") return "Produtos idênticos";
+  if (state.view === "history") return "Histórico";
+  if (state.view === "places") return "Praças CRF";
   if (state.view === "products") return "Produtos importados";
-  if (state.view === "settings") return "Configuracoes";
+  if (state.view === "settings") return "Configurações";
   return "Arizona";
 }
 

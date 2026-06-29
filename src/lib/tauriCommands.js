@@ -49,7 +49,7 @@ export function invokeCommand(commandName, args = {}) {
   return invoke(commandName, args);
 }
 
-export async function invokeAction(commandName, args = {}, fallbackMessage = "Falha ao executar acao.") {
+export async function invokeAction(commandName, args = {}, fallbackMessage = "Falha ao executar ação.") {
   try {
     const response = await invokeCommand(commandName, args);
 
@@ -65,7 +65,7 @@ export async function invokeAction(commandName, args = {}, fallbackMessage = "Fa
   } catch (error) {
     return {
       ok: false,
-      message: fallbackMessage || String(error || "Falha ao executar acao."),
+      message: fallbackMessage || String(error || "Falha ao executar ação."),
       error,
     };
   }

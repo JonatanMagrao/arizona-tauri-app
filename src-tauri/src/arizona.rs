@@ -249,11 +249,15 @@ impl Arizona {
             }
         }
 
+        let searched = self
+            .meses
+            .iter()
+            .map(|mes| mes.label.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
         Err(format!(
-            r#"Jobão "{}" não encontrado em {} nem em {}!"#,
-            jobao_cod,
-            self.month_label_for_error(0),
-            self.month_label_for_error(1)
+            r#"Jobão "{}" não encontrado em {}!"#,
+            jobao_cod, searched
         ))
     }
 
@@ -480,11 +484,11 @@ impl Arizona {
         let origem = &self.product_folder_path;
         let destino = dstn_folder;
         if origem.as_os_str().is_empty() {
-            return Err("Selecione a pasta Fotos Flow nas configuracoes.".to_string());
+            return Err("Selecione a pasta Fotos Flow nas configurações.".to_string());
         }
         if !origem.is_dir() {
             return Err(format!(
-                "Pasta Fotos Flow nao encontrada: {}",
+                "Pasta Fotos Flow não encontrada: {}",
                 origem.display()
             ));
         }
@@ -762,13 +766,6 @@ impl Arizona {
         Ok(ActionResponse::ok())
     }
 
-    fn month_label_for_error(&self, index: usize) -> String {
-        self.meses
-            .get(index)
-            .map(|mes| mes.label.clone())
-            .unwrap_or_else(|| "(sem mês)".to_string())
-    }
-
     fn mp4_folder(&self, jobao_cod: &str) -> Result<PathBuf, String> {
         let folder = self
             .get_jobao_path(jobao_cod)?
@@ -833,6 +830,7 @@ fn build_month_labels(
     let mut labels = Vec::new();
     if next_path.exists() {
         labels.push(next);
+        labels.push(current);
     } else {
         labels.push(current);
     }
@@ -887,7 +885,7 @@ fn queue_product_copy_tasks(
         let file_name = arquivo
             .file_name()
             .and_then(|name| name.to_str())
-            .ok_or_else(|| format!("Nome de arquivo invalido: {}", arquivo.display()))?
+            .ok_or_else(|| format!("Nome de arquivo inválido: {}", arquivo.display()))?
             .to_string();
         if queued_copy_names.insert(file_name.to_lowercase()) {
             copy_tasks.push((arquivo, file_name));

@@ -104,7 +104,7 @@ function JobPanel({
     <div className="card" style={{ '--icon-size': `${ICON_SIZE}px` }}>
       {/* Linha Jobão */}
       <div className="form-row">
-        <label className="label" htmlFor="jobao">Cod Jobão</label>
+        <label className="label" htmlFor="jobao">Cód Jobão</label>
         <input
           id="jobao"
           className="input input-code"
@@ -125,7 +125,7 @@ function JobPanel({
           onClick={openJobao}
           disabled={!jobaoCod.trim()}
           aria-label="Buscar Jobão"
-          title="Abri pasta do Jobão (Enter)"
+          title="Abrir pasta do Jobão (Enter)"
         >
           <img src={searchIcon} alt="" aria-hidden="true" />
         </button>
@@ -144,7 +144,7 @@ function JobPanel({
 
       {/* Linha Jobinho */}
       <div className="form-row">
-        <label className="label" htmlFor="jobinho">Cod Jobinho</label>
+        <label className="label" htmlFor="jobinho">Cód Jobinho</label>
         <input
           id="jobinho"
           className="input input-code"

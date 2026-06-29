@@ -7,7 +7,7 @@ function CopyPanel({ copyCode, setCopyCode, importProducts, isImporting }) {
   return (
     <div className="card" style={{ '--icon-size': `${ICON_SIZE}px` }}>
       <div className="form-row">
-        <label className="label" htmlFor="copycode">Cod Jobão</label>
+        <label className="label" htmlFor="copycode">Cód Jobão</label>
         <input
           id="copycode"
           className="input input-code"
