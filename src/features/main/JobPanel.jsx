@@ -1,15 +1,14 @@
-// panels/JobPanel.jsx
-import searchIcon from "../assets/icones/folder.svg";
-import aeIcon from "../assets/icones/aeft_icon.svg";
-import copyIcon from "../assets/icones/file_copy.svg";
-import equalIcon from "../assets/icones/equal.svg";
-import roteiroIcon from "../assets/icones/roteiro.svg";
-import printIcon from "../assets/icones/print.svg";
-import videoIconMP4 from "../assets/icones/video_mp4.svg";
-import videoIconMOV from "../assets/icones/video_mov.svg";
-import productIcon from "../assets/icones/product.svg";
-import claqueteIcon from "../assets/icones/claquete.svg";
-import audioIcon from "../assets/icones/audio.svg";
+import searchIcon from "../../assets/icones/folder.svg";
+import aeIcon from "../../assets/icones/aeft_icon.svg";
+import copyIcon from "../../assets/icones/file_copy.svg";
+import equalIcon from "../../assets/icones/equal.svg";
+import roteiroIcon from "../../assets/icones/roteiro.svg";
+import printIcon from "../../assets/icones/print.svg";
+import videoIconMP4 from "../../assets/icones/video_mp4.svg";
+import videoIconMOV from "../../assets/icones/video_mov.svg";
+import productIcon from "../../assets/icones/product.svg";
+import claqueteIcon from "../../assets/icones/claquete.svg";
+import audioIcon from "../../assets/icones/audio.svg";
 
 const ICON_SIZE = 32; // altere aqui que todos os ícones do formulário mudam
 

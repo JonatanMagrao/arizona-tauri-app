@@ -36,7 +36,6 @@ export const commandNames = Object.freeze({
   openJobao: "open_jobao",
   openJobinho: "open_jobinho",
   openLinks: "open_links",
-  openLogFile: "open_log_file",
   openMediaNative: "open_media_native",
   openOut: "open_out",
   openPip: "open_pip",

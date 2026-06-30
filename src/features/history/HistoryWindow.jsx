@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import AppDropdown from "./AppDropdown";
-import { commandNames, invokeAction, invokeCommand } from "./lib/tauriCommands";
-import folderIcon from "./assets/icones/folder.svg";
-import aeIcon from "./assets/icones/aeft_icon.svg";
-import refreshIcon from "./assets/icones/history.svg";
-import videoIconMP4 from "./assets/icones/video_mp4.svg";
-import videoIconMOV from "./assets/icones/video_mov.svg";
-import chevronIcon from "./assets/icones/chevron.svg";
+import AppDropdown from "../../components/AppDropdown";
+import { commandNames, invokeAction, invokeCommand } from "../../services/tauriCommands";
+import { formatDuration } from "../../utils/formatters";
+import { numberOrZero, parseProductImportReport } from "../../utils/productReport";
+import folderIcon from "../../assets/icones/folder.svg";
+import aeIcon from "../../assets/icones/aeft_icon.svg";
+import refreshIcon from "../../assets/icones/history.svg";
+import videoIconMP4 from "../../assets/icones/video_mp4.svg";
+import videoIconMOV from "../../assets/icones/video_mov.svg";
+import chevronIcon from "../../assets/icones/chevron.svg";
 
 const HISTORY_TYPES = Object.freeze({
   PROJECTS: "projects",
@@ -630,13 +632,6 @@ function formatDate(value) {
   }).format(date);
 }
 
-function formatDuration(durationMillis) {
-  const totalSeconds = Math.max(0, Math.round(Number(durationMillis || 0) / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-}
-
 function pathTitle(label, value, hint) {
   const path = value || "Path não disponível";
   return hint ? `${label}: ${path}\n${hint}` : `${label}: ${path}`;
@@ -731,42 +726,6 @@ function filterProductImportEntries(entries, query) {
   });
 }
 
-function parseProductImportReport(value) {
-  if (!value) return null;
-
-  try {
-    return normalizeProductReport(JSON.parse(value));
-  } catch (error) {
-    return null;
-  }
-}
-
-function normalizeProductReport(value) {
-  if (!value || typeof value !== "object") return null;
-
-  const groups = toArray(value.groups).map((group) => ({
-    folderName: String(group?.folderName || group?.folder_name || "").trim(),
-    importedFiles: toArray(group?.importedFiles || group?.imported_files).map(String),
-    existingFiles: toArray(group?.existingFiles || group?.existing_files).map(String),
-    notFoundFiles: toArray(group?.notFoundFiles || group?.not_found_files).map(String),
-  }));
-
-  return {
-    jobaoCod: String(value.jobaoCod || value.jobao_cod || "").trim(),
-    productPath: String(value.productPath || value.product_path || "").trim(),
-    sourcePath: String(value.sourcePath || value.source_path || "").trim(),
-    importedFiles: toArray(value.importedFiles || value.imported_files).map(String),
-    existingFiles: toArray(value.existingFiles || value.existing_files).map(String),
-    notFoundFiles: toArray(value.notFoundFiles || value.not_found_files).map(String),
-    groups,
-    totalProcessed: numberOrZero(value.totalProcessed ?? value.total_processed),
-    totalImported: numberOrZero(value.totalImported ?? value.total_imported),
-    totalExisting: numberOrZero(value.totalExisting ?? value.total_existing),
-    totalNotFound: numberOrZero(value.totalNotFound ?? value.total_not_found),
-    durationMillis: numberOrZero(value.durationMillis ?? value.duration_millis),
-  };
-}
-
 function parseSearchTerms(value) {
   return normalizeSearchText(value)
     .split(/[,\s]+/)
@@ -779,15 +738,6 @@ function normalizeSearchText(value) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
-}
-
-function toArray(value) {
-  return Array.isArray(value) ? value : [];
-}
-
-function numberOrZero(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : 0;
 }
 
 export default HistoryWindow;

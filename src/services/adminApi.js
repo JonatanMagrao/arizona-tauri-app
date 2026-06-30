@@ -1,4 +1,4 @@
-import { supabaseConfig } from "../config";
+import { supabaseConfig } from "../config/supabase";
 
 export async function listAdminMembers(auth) {
   return functionRequest(auth, "admin-list-members", {

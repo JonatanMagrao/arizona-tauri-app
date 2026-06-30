@@ -1,4 +1,4 @@
-import { supabaseConfig } from "../config";
+import { supabaseConfig } from "../config/supabase";
 import { commandNames, invokeCommand } from "./tauriCommands";
 
 const installStorageKey = `arizona-install-id:${supabaseConfig.projectRef}`;

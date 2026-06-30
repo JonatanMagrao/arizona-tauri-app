@@ -2,15 +2,24 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
-import AdminWindow from "./AdminWindow";
-import DuplicateIdenticalModal from "./DuplicateIdenticalModal";
-import HistoryWindow from "./HistoryWindow";
-import previewImg from "./assets/hierarquia_pracas.jpg";
-import { commandNames, invokeAction, invokeCommand } from "./lib/tauriCommands";
-import appLogo from "../src-tauri/icons/arizona_icon.ico";
-import closeIcon from "./assets/icones/close.svg";
-import closeFullscreenIcon from "./assets/icones/close_fullscreen.svg";
-import openInFullIcon from "./assets/icones/open_in_full.svg";
+import AdminWindow from "../admin/AdminWindow";
+import DuplicateIdenticalModal from "../duplicates/DuplicateIdenticalModal";
+import HistoryWindow from "../history/HistoryWindow";
+import previewImg from "../../assets/hierarquia_pracas.jpg";
+import { useAutoHideToast } from "../../hooks/useAutoHideToast";
+import { commandNames, invokeAction, invokeCommand } from "../../services/tauriCommands";
+import { formatDuration } from "../../utils/formatters";
+import { normalizeProductReport } from "../../utils/productReport";
+import {
+  DEFAULT_SETTINGS,
+  isSettingsReady,
+  normalizeProductsYear,
+  normalizeSettings,
+} from "../../utils/settings";
+import appLogo from "../../../src-tauri/icons/arizona_icon.ico";
+import closeIcon from "../../assets/icones/close.svg";
+import closeFullscreenIcon from "../../assets/icones/close_fullscreen.svg";
+import openInFullIcon from "../../assets/icones/open_in_full.svg";
 
 const DEFAULT_SECONDARY_STATE = {
   view: "places",
@@ -22,30 +31,10 @@ const DEFAULT_SECONDARY_STATE = {
   adminAuth: null,
 };
 
-const DEFAULT_SETTINGS = {
-  aeVersion: "2024",
-  drive: "I:\\Drives compartilhados\\Phx CRF Copa",
-  produtos: "PRODUTOS",
-  produtosYear: "",
-  produtosPath: "I:\\Drives compartilhados\\Phx CRF Copa\\CARREFOUR\\ASSETS\\_FOTOS FLOW",
-};
-
 function SecondaryWindow() {
-  const [toast, setToast] = useState({ open: false, message: "", variant: "error" });
+  const { toast, showToast, hideToast } = useAutoHideToast();
   const [secondaryState, setSecondaryState] = useState(getInitialSecondaryState);
-  const hideTimerRef = useRef(null);
   const title = useMemo(() => secondaryWindowTitle(secondaryState), [secondaryState]);
-
-  const hideToast = () => {
-    setToast((current) => ({ ...current, open: false }));
-    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-  };
-
-  const showToast = (message, variant = "error") => {
-    setToast({ open: true, message, variant });
-    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-    hideTimerRef.current = setTimeout(hideToast, 5000);
-  };
 
   const handleAdminAccessRestricted = async () => {
     await invokeCommand(commandNames.restrictAdminSession).catch(() => {});
@@ -82,7 +71,6 @@ function SecondaryWindow() {
     return () => {
       window.removeEventListener("arizona-secondary:set-view", handleStateChange);
       if (unlistenClose) unlistenClose();
-      hideToast();
     };
   }, []);
 
@@ -969,84 +957,6 @@ function normalizeAppInfo(info) {
     authorName: String(info?.authorName || "").trim(),
     authorUrl: String(info?.authorUrl || "").trim(),
   };
-}
-
-function normalizeSettings(config) {
-  const next = { ...DEFAULT_SETTINGS, ...(config || {}) };
-  return {
-    ...next,
-    produtosYear: normalizeProductsYear(next.produtosYear),
-    produtosPath: String(next.produtosPath ?? "").trim(),
-  };
-}
-
-function normalizeProductsYear(value) {
-  const text = String(value ?? "").trim();
-  if (text.toLowerCase() === "auto") return "";
-  return text.replace(/\D/g, "").slice(0, 4);
-}
-
-function isSettingsReady(config) {
-  const year = String(config?.produtosYear ?? "").trim();
-  return Boolean(
-    String(config?.drive ?? "").trim()
-      && String(config?.produtosPath ?? "").trim()
-      && String(config?.aeVersion ?? "").trim()
-      && String(config?.produtos ?? "").trim()
-      && !isIncompleteDriveEntrypoint(config?.drive)
-      && (year === "" || /^\d{4}$/.test(year))
-  );
-}
-
-function isIncompleteDriveEntrypoint(value) {
-  const parts = String(value ?? "")
-    .trim()
-    .split(/[\\/]+/)
-    .filter(Boolean);
-  const lastPart = parts[parts.length - 1] || "";
-  return !lastPart || lastPart.toLowerCase() === "drives compartilhados";
-}
-
-function normalizeProductReport(value) {
-  if (!value || typeof value !== "object") return null;
-
-  const groups = toArray(value.groups).map((group) => ({
-    folderName: String(group?.folderName || group?.folder_name || "").trim(),
-    importedFiles: toArray(group?.importedFiles || group?.imported_files).map(String),
-    existingFiles: toArray(group?.existingFiles || group?.existing_files).map(String),
-    notFoundFiles: toArray(group?.notFoundFiles || group?.not_found_files).map(String),
-  }));
-
-  return {
-    jobaoCod: String(value.jobaoCod || value.jobao_cod || "").trim(),
-    productPath: String(value.productPath || value.product_path || "").trim(),
-    sourcePath: String(value.sourcePath || value.source_path || "").trim(),
-    importedFiles: toArray(value.importedFiles || value.imported_files).map(String),
-    existingFiles: toArray(value.existingFiles || value.existing_files).map(String),
-    notFoundFiles: toArray(value.notFoundFiles || value.not_found_files).map(String),
-    groups,
-    totalProcessed: numberOrZero(value.totalProcessed ?? value.total_processed),
-    totalImported: numberOrZero(value.totalImported ?? value.total_imported),
-    totalExisting: numberOrZero(value.totalExisting ?? value.total_existing),
-    totalNotFound: numberOrZero(value.totalNotFound ?? value.total_not_found),
-    durationMillis: numberOrZero(value.durationMillis ?? value.duration_millis),
-  };
-}
-
-function toArray(value) {
-  return Array.isArray(value) ? value : [];
-}
-
-function numberOrZero(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : 0;
-}
-
-function formatDuration(durationMillis) {
-  const totalSeconds = Math.max(0, Math.round(Number(durationMillis || 0) / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
 function pathToMediaSrc(path) {

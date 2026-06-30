@@ -8,14 +8,14 @@ import {
   normalizeEmail,
   resumeSecureSession,
   saveSecureSession,
-} from "./lib/auth";
-import { commandNames, invokeCommand } from "./lib/tauriCommands";
+} from "../../services/auth";
+import { commandNames, invokeCommand } from "../../services/tauriCommands";
 
-import appLogo from "../src-tauri/icons/arizona_icon.ico";
-import closeIcon from "./assets/icones/close.svg";
-import minimizeIcon from "./assets/icones/minimize.svg";
-import visibilityIcon from "./assets/icones/visibility.svg";
-import visibilityOffIcon from "./assets/icones/visibility_off.svg";
+import appLogo from "../../../src-tauri/icons/arizona_icon.ico";
+import closeIcon from "../../assets/icones/close.svg";
+import minimizeIcon from "../../assets/icones/minimize.svg";
+import visibilityIcon from "../../assets/icones/visibility.svg";
+import visibilityOffIcon from "../../assets/icones/visibility_off.svg";
 
 const MODES = Object.freeze({
   LOGIN: "login",

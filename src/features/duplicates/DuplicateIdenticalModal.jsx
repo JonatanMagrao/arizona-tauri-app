@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { commandNames, invokeAction, invokeCommand } from "./lib/tauriCommands";
+import { commandNames, invokeAction, invokeCommand } from "../../services/tauriCommands";
 
 function DuplicateIdenticalModal({
   initialJobaoCod,

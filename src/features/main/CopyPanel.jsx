@@ -1,5 +1,4 @@
-// panels/CopyPanel.jsx
-import fileCopy from "../assets/icones/file_copy.svg";
+import fileCopy from "../../assets/icones/file_copy.svg";
 
 const ICON_SIZE = 32;
 

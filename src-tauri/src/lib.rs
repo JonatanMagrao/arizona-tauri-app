@@ -90,7 +90,6 @@ pub fn run() {
             open_media_native,
             reveal_video,
             open_roteiro,
-            open_log_file,
             history_list,
             history_clear,
             history_copy_list,
@@ -781,12 +780,6 @@ fn open_roteiro(
     jobinho_cod: String,
 ) -> Result<ActionResponse, String> {
     arizona_from_app(&app)?.open_roteiro(&jobao_cod, &jobinho_cod)
-}
-
-#[tauri::command]
-fn open_log_file(app: AppHandle) -> Result<ActionResponse, String> {
-    arizona_from_app(&app)?.open_log_file()?;
-    Ok(ActionResponse::ok())
 }
 
 #[tauri::command]

@@ -1,36 +1,32 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import GlobalTooltip from "./GlobalTooltip";
-import JobPanel from "./panels/JobPanel";
-import LinksPanel from "./panels/LinksPanel";
-import LoginWindow from "./LoginWindow";
-import SecondaryWindow from "./SecondaryWindow";
-import { authErrorMessage, authToSession, validateActiveSession } from "./lib/auth";
-import { commandNames, invokeAction, invokeCommand } from "./lib/tauriCommands";
-import "./App.css";
+import GlobalTooltip from "../components/GlobalTooltip";
+import JobPanel from "../features/main/JobPanel";
+import LinksPanel from "../features/main/LinksPanel";
+import LoginWindow from "../features/auth/LoginWindow";
+import SecondaryWindow from "../features/secondary/SecondaryWindow";
+import { useAutoHideToast } from "../hooks/useAutoHideToast";
+import { authErrorMessage, authToSession, validateActiveSession } from "../services/auth";
+import { commandNames, invokeAction, invokeCommand } from "../services/tauriCommands";
+import { DEFAULT_SETTINGS, normalizeSettings } from "../utils/settings";
+import { currentWindowLabel, isSecondaryWindowRoute } from "../utils/windowRouting";
+import "../styles/App.css";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
-import appLogo from "../src-tauri/icons/arizona_icon.ico";
-import closeIcon from "./assets/icones/close.svg";
-import copyIcon from "./assets/icones/file_copy.svg";
-import pastaIcon from "./assets/icones/project.svg";
-import imageIcon from "./assets/icones/hierarchy.svg";
-import historyIcon from "./assets/icones/history.svg";
-import keepIcon from "./assets/icones/keep.svg";
-import keepOffIcon from "./assets/icones/keep_off.svg";
-import minimizeIcon from "./assets/icones/minimize.svg";
-import adminPanelIcon from "./assets/icones/admin_panel.svg";
-import settingsIcon from "./assets/icones/settings.svg";
-import toolsIcon from "./assets/icones/tools.svg";
+import appLogo from "../../src-tauri/icons/arizona_icon.ico";
+import closeIcon from "../assets/icones/close.svg";
+import copyIcon from "../assets/icones/file_copy.svg";
+import pastaIcon from "../assets/icones/project.svg";
+import imageIcon from "../assets/icones/hierarchy.svg";
+import historyIcon from "../assets/icones/history.svg";
+import keepIcon from "../assets/icones/keep.svg";
+import keepOffIcon from "../assets/icones/keep_off.svg";
+import minimizeIcon from "../assets/icones/minimize.svg";
+import adminPanelIcon from "../assets/icones/admin_panel.svg";
+import settingsIcon from "../assets/icones/settings.svg";
+import toolsIcon from "../assets/icones/tools.svg";
 
 const TABS = { JOBS: "jobs", LINKS: "links" };
 const AUTH_REFRESH_INTERVAL_MS = 30000;
-const DEFAULT_SETTINGS = {
-  aeVersion: "2024",
-  drive: "I:\\Drives compartilhados\\Phx CRF Copa",
-  produtos: "PRODUTOS",
-  produtosYear: "",
-  produtosPath: "I:\\Drives compartilhados\\Phx CRF Copa\\CARREFOUR\\ASSETS\\_FOTOS FLOW",
-};
 
 const MAIN_CTA_PHRASES = Object.freeze([
   "Por que fazer isso na mão?",
@@ -67,21 +63,6 @@ const MAIN_CTA_PHRASES = Object.freeze([
   "Automação com alma criativa.",
 ]);
 
-function normalizeSettings(config) {
-  const next = { ...DEFAULT_SETTINGS, ...(config || {}) };
-  return {
-    ...next,
-    produtosYear: normalizeProductsYear(next.produtosYear),
-    produtosPath: String(next.produtosPath ?? "").trim(),
-  };
-}
-
-function normalizeProductsYear(value) {
-  const text = String(value ?? "").trim();
-  if (text.toLowerCase() === "auto") return "";
-  return text.replace(/\D/g, "").slice(0, 4);
-}
-
 function randomMainCtaPhrase() {
   return MAIN_CTA_PHRASES[Math.floor(Math.random() * MAIN_CTA_PHRASES.length)];
 }
@@ -107,7 +88,7 @@ function App() {
     );
   }
 
-  if (windowLabel === "secondary" || isSecondaryWindow()) {
+  if (windowLabel === "secondary" || isSecondaryWindowRoute()) {
     return (
       <>
         <SecondaryWindow />
@@ -164,25 +145,13 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
   const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(false);
   const [mainCtaPhrase] = useState(randomMainCtaPhrase);
   const [projectTitle, setProjectTitle] = useState("");
-  const [toast, setToast] = useState({ open: false, message: "", variant: "error" });
-  const hideTimerRef = useRef(null);
+  const { toast, showToast, hideToast } = useAutoHideToast();
   const projectTitleRef = useRef({ key: "", title: "" });
   const toolsMenuRef = useRef(null);
   const toolsCloseTimerRef = useRef(null);
   const authSessionRef = useRef(authSession);
   const authRefreshInFlightRef = useRef(false);
   const canAccessAdmin = authSession?.role === "admin";
-
-  const hideToast = () => {
-    setToast((current) => ({ ...current, open: false }));
-    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-  };
-
-  const showToast = (message, variant = "error") => {
-    setToast({ open: true, message, variant });
-    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-    hideTimerRef.current = setTimeout(hideToast, 5000);
-  };
 
   const showError = (msg) => showToast(msg, "error");
 
@@ -275,7 +244,6 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
   };
 
   useEffect(() => () => {
-    hideToast();
     cancelToolsClose();
   }, []);
 
@@ -734,38 +702,6 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
       )}
     </div>
   );
-}
-
-function isSecondaryWindow() {
-  try {
-    const view = new URLSearchParams(window.location.search).get("view");
-    return [
-      "secondary",
-      "duplicate",
-      "duplicate-identical",
-      "history",
-      "places",
-      "media",
-      "midia",
-      "products",
-      "produtos",
-      "products-log",
-      "admin",
-      "settings",
-      "config",
-      "configuracoes",
-    ].includes(view);
-  } catch (error) {
-    return false;
-  }
-}
-
-function currentWindowLabel() {
-  try {
-    return getCurrentWindow().label || "";
-  } catch (error) {
-    return "";
-  }
 }
 
 function authSessionChanged(currentSession, nextSession) {
