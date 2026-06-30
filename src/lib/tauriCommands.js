@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 export const commandNames = Object.freeze({
   abrirAe: "abrir_ae",
   appInfo: "app_info",
+  clearSecureAuth: "clear_secure_auth",
   completeLogin: "complete_login",
   duplicateIdenticalMp4: "duplicate_identical_mp4",
   exitApp: "exit_app",
@@ -25,6 +26,7 @@ export const commandNames = Object.freeze({
   importProducts: "import_products",
   listIdenticalMp4Items: "list_identical_mp4_items",
   loadAppConfig: "load_app_config",
+  loadSecureAuth: "load_secure_auth",
   openBitrix: "open_bitrix",
   openClaro: "open_claro",
   openAuthorSite: "open_author_site",
@@ -44,7 +46,10 @@ export const commandNames = Object.freeze({
   openVisto: "open_visto",
   projectName: "project_name",
   revealVideo: "reveal_video",
+  restrictAdminSession: "restrict_admin_session",
   saveAppConfig: "save_app_config",
+  saveSecureAuth: "save_secure_auth",
+  updateAuthSession: "update_auth_session",
 });
 
 export function invokeCommand(commandName, args = {}) {

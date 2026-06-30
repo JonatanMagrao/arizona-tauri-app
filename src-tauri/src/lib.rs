@@ -38,6 +38,23 @@ struct AdminWindowAuth {
     role: String,
 }
 
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SecureAuthRecord {
+    refresh_token: String,
+    email: String,
+    auth_day: Option<String>,
+    password_login_at: Option<String>,
+    server_time: Option<String>,
+    local_time: Option<String>,
+    expires_at: Option<String>,
+    member_id: Option<String>,
+    role: Option<String>,
+    organization_id: Option<String>,
+    organization_name: Option<String>,
+    seats_allowed: Option<i64>,
+}
+
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 pub fn run() {
     tauri::Builder::default()
@@ -50,6 +67,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             complete_login,
+            update_auth_session,
+            restrict_admin_session,
             exit_app,
             open_visto,
             open_bitrix,
@@ -90,6 +109,9 @@ pub fn run() {
             history_refresh_all_entries,
             project_name,
             app_info,
+            load_secure_auth,
+            save_secure_auth,
+            clear_secure_auth,
             open_author_site,
             load_app_config,
             save_app_config
@@ -164,6 +186,9 @@ const AUTHOR_URL: &str = "https://www.jonatanmagrao.com.br";
 const LOGIN_WINDOW_LABEL: &str = "main";
 const APP_WINDOW_LABEL: &str = "app";
 const SECONDARY_WINDOW_LABEL: &str = "secondary";
+const SECURE_AUTH_SERVICE: &str = "Arizona App";
+const SECURE_AUTH_ACCOUNT: &str = "daily-session";
+const SECURE_AUTH_TARGET: &str = "daily-session.Arizona App";
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -189,6 +214,72 @@ fn app_info(app: AppHandle) -> Result<AppInfo, String> {
 }
 
 #[tauri::command]
+fn load_secure_auth() -> Result<Option<SecureAuthRecord>, String> {
+    let entry = secure_auth_entry()?;
+    read_secure_auth_record(&entry)
+}
+
+#[tauri::command]
+fn save_secure_auth(record: SecureAuthRecord) -> Result<ActionResponse, String> {
+    if record.refresh_token.trim().is_empty()
+        || record.email.trim().is_empty()
+    {
+        return Ok(ActionResponse::err("Sessão segura incompleta."));
+    }
+
+    let value = serde_json::to_string(&record).map_err(|err| err.to_string())?;
+    secure_auth_entry()?
+        .set_secret(value.as_bytes())
+        .map_err(|err| format!("Não foi possível salvar a sessão segura: {err}"))?;
+
+    match read_secure_auth_record(&secure_auth_entry()?)? {
+        Some(saved) if saved.refresh_token == record.refresh_token && saved.email == record.email => {}
+        Some(_) => return Ok(ActionResponse::err("A sessão segura salva não confere.")),
+        None => return Ok(ActionResponse::err("A sessão segura não foi encontrada após salvar.")),
+    }
+
+    Ok(ActionResponse::ok())
+}
+
+#[tauri::command]
+fn clear_secure_auth() -> Result<ActionResponse, String> {
+    let entry = secure_auth_entry()?;
+    let _ = entry.delete_credential();
+    Ok(ActionResponse::ok())
+}
+
+fn secure_auth_entry() -> Result<keyring::Entry, String> {
+    keyring::Entry::new_with_target(
+        SECURE_AUTH_TARGET,
+        SECURE_AUTH_SERVICE,
+        SECURE_AUTH_ACCOUNT,
+    )
+        .map_err(|_| "Não foi possível acessar o cofre do sistema.".to_string())
+}
+
+fn read_secure_auth_record(entry: &keyring::Entry) -> Result<Option<SecureAuthRecord>, String> {
+    match entry.get_secret() {
+        Ok(value) => {
+            if let Ok(text) = String::from_utf8(value) {
+                if let Ok(record) = serde_json::from_str(&text) {
+                    return Ok(Some(record));
+                }
+            }
+
+            match entry.get_password() {
+                Ok(value) => serde_json::from_str(&value)
+                    .map(Some)
+                    .map_err(|_| "Sessão segura inválida.".to_string()),
+                Err(keyring::Error::NoEntry) => Err("Sessão segura inválida.".to_string()),
+                Err(err) => Err(format!("Não foi possível ler a sessão segura: {err}")),
+            }
+        }
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(err) => Err(format!("Não foi possível ler a sessão segura: {err}")),
+    }
+}
+
+#[tauri::command]
 fn complete_login(
     app: AppHandle,
     auth: State<AuthState>,
@@ -199,23 +290,13 @@ fn complete_login(
         return Ok(ActionResponse::err("Email da sessao invalido."));
     }
 
-    let session_json = serde_json::to_string(&session).map_err(|err| err.to_string())?;
-    {
-        let mut stored_session = auth
-            .session
-            .lock()
-            .map_err(|_| "Nao foi possivel atualizar a sessao.".to_string())?;
-        *stored_session = Some(session);
-    }
+    store_auth_session(&auth, session.clone())?;
+    emit_auth_session(&app, "arizona-auth:login", &session)?;
 
     let app_window = app
         .get_webview_window(APP_WINDOW_LABEL)
         .ok_or_else(|| "Janela principal nao foi inicializada.".to_string())?;
-    let script = format!(
-        "window.__ARIZONA_AUTH_SESSION__ = {session_json}; window.dispatchEvent(new CustomEvent('arizona-auth:login', {{ detail: {session_json} }}));"
-    );
 
-    let _ = app_window.eval(script);
     app_window
         .set_title("Arizona App")
         .map_err(|err| err.to_string())?;
@@ -228,6 +309,70 @@ fn complete_login(
     }
 
     Ok(ActionResponse::ok())
+}
+
+#[tauri::command]
+fn update_auth_session(
+    app: AppHandle,
+    auth: State<AuthState>,
+    session: AuthSession,
+) -> Result<ActionResponse, String> {
+    let email = session.email.trim();
+    if email.is_empty() {
+        return Ok(ActionResponse::err("Email da sessao invalido."));
+    }
+
+    store_auth_session(&auth, session.clone())?;
+    emit_auth_session(&app, "arizona-auth:update", &session)?;
+    Ok(ActionResponse::ok())
+}
+
+#[tauri::command]
+fn restrict_admin_session(app: AppHandle, auth: State<AuthState>) -> Result<ActionResponse, String> {
+    let session = {
+        let mut stored_session = auth
+            .session
+            .lock()
+            .map_err(|_| "Nao foi possivel atualizar a sessao.".to_string())?;
+        let Some(session) = stored_session.as_mut() else {
+            return Ok(ActionResponse::err("Entre com email e senha para continuar."));
+        };
+
+        if session.role.as_deref().unwrap_or_default().trim() == "admin" {
+            session.role = Some("user".to_string());
+        }
+
+        session.clone()
+    };
+
+    emit_auth_session(&app, "arizona-auth:update", &session)?;
+    Ok(ActionResponse::ok())
+}
+
+fn store_auth_session(auth: &State<AuthState>, session: AuthSession) -> Result<(), String> {
+    let mut stored_session = auth
+        .session
+        .lock()
+        .map_err(|_| "Nao foi possivel atualizar a sessao.".to_string())?;
+    *stored_session = Some(session);
+    Ok(())
+}
+
+fn emit_auth_session(
+    app: &AppHandle,
+    event_name: &str,
+    session: &AuthSession,
+) -> Result<(), String> {
+    let session_json = serde_json::to_string(session).map_err(|err| err.to_string())?;
+    let script = format!(
+        "window.__ARIZONA_AUTH_SESSION__ = {session_json}; window.dispatchEvent(new CustomEvent('{event_name}', {{ detail: {session_json} }}));"
+    );
+
+    if let Some(app_window) = app.get_webview_window(APP_WINDOW_LABEL) {
+        let _ = app_window.eval(script);
+    }
+
+    Ok(())
 }
 
 #[tauri::command]

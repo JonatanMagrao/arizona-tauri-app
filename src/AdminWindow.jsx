@@ -12,12 +12,14 @@ import removeUserIcon from "./assets/icones/remove_user.svg";
 
 const REFRESH_INTERVAL_MS = 5000;
 
-function AdminWindow({ auth, showError, showSuccess }) {
+function AdminWindow({ auth, showError, showSuccess, onAccessRestricted }) {
   const [data, setData] = useState(null);
   const [draft, setDraft] = useState({ name: "", email: "" });
   const [isLoading, setIsLoading] = useState(true);
   const [busyId, setBusyId] = useState("");
+  const [isAccessRestricted, setIsAccessRestricted] = useState(false);
   const mountedRef = useRef(true);
+  const accessRestrictedRef = useRef(false);
 
   const users = data?.users || [];
   const seatsAllowed = Number(data?.organization?.seatsAllowed || 0);
@@ -34,7 +36,7 @@ function AdminWindow({ auth, showError, showSuccess }) {
   const seatSegmentCount = Math.max(1, seatsAllowed);
   const usedSeatSegments = Math.min(consumedSeats, seatSegmentCount);
   const canManageManagers = Boolean(data?.canManageManagers);
-  const canAdd = availableSeats > 0 && cleanText(draft.name) && cleanEmail(draft.email) && !busyId;
+  const canAdd = !isAccessRestricted && availableSeats > 0 && cleanText(draft.name) && cleanEmail(draft.email) && !busyId;
   const addButtonTitle = availableSeats <= 0
     ? "Sem vagas disponíveis."
     : !cleanText(draft.name) || !cleanEmail(draft.email)
@@ -45,6 +47,8 @@ function AdminWindow({ auth, showError, showSuccess }) {
 
   useEffect(() => {
     mountedRef.current = true;
+    accessRestrictedRef.current = false;
+    setIsAccessRestricted(false);
     refresh({ silent: false });
 
     const interval = setInterval(() => refresh({ silent: true }), REFRESH_INTERVAL_MS);
@@ -74,15 +78,36 @@ function AdminWindow({ auth, showError, showSuccess }) {
       return;
     }
 
+    if (accessRestrictedRef.current) {
+      setIsLoading(false);
+      return;
+    }
+
     if (!silent) setIsLoading(true);
     try {
       const nextData = await listAdminMembers(auth);
       if (mountedRef.current) setData(nextData);
     } catch (error) {
-      if (!silent) showError(adminErrorMessage(error));
+      handleAdminError(error, { silent });
     } finally {
       if (mountedRef.current && !silent) setIsLoading(false);
     }
+  }
+
+  function handleAdminError(error, { silent = false } = {}) {
+    const code = String(error?.code || "");
+    if (code === "forbidden") {
+      onAccessRestricted?.();
+      if (!accessRestrictedRef.current) {
+        accessRestrictedRef.current = true;
+        setIsAccessRestricted(true);
+        setData(null);
+        showError("Seu acesso de gestão foi removido.");
+      }
+      return;
+    }
+
+    if (!silent) showError(adminErrorMessage(error));
   }
 
   const submitMember = async (event) => {
@@ -99,7 +124,7 @@ function AdminWindow({ auth, showError, showSuccess }) {
       showSuccess("Usuário adicionado.");
       await refresh({ silent: true });
     } catch (error) {
-      showError(adminErrorMessage(error));
+      handleAdminError(error);
     } finally {
       setBusyId("");
     }
@@ -126,7 +151,7 @@ function AdminWindow({ auth, showError, showSuccess }) {
       showSuccess("Acesso liberado.");
       await refresh({ silent: true });
     } catch (error) {
-      showError(adminErrorMessage(error));
+      handleAdminError(error);
     } finally {
       setBusyId("");
     }
@@ -142,11 +167,21 @@ function AdminWindow({ auth, showError, showSuccess }) {
       showSuccess("Usuário removido.");
       await refresh({ silent: true });
     } catch (error) {
-      showError(adminErrorMessage(error));
+      handleAdminError(error);
     } finally {
       setBusyId("");
     }
   };
+
+  if (isAccessRestricted) {
+    return (
+      <main className="admin-window" aria-label="Gestão de usuários">
+        <section className="admin-table" aria-label="Acesso de gestão">
+          <div className="admin-empty">Seu acesso de gestão foi removido.</div>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="admin-window" aria-label="Gestão de usuários">

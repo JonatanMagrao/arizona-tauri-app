@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import GlobalTooltip from "./GlobalTooltip";
 import JobPanel from "./panels/JobPanel";
 import LinksPanel from "./panels/LinksPanel";
 import LoginWindow from "./LoginWindow";
 import SecondaryWindow from "./SecondaryWindow";
+import { authErrorMessage, authToSession, validateActiveSession } from "./lib/auth";
 import { commandNames, invokeAction, invokeCommand } from "./lib/tauriCommands";
 import "./App.css";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -22,6 +23,7 @@ import settingsIcon from "./assets/icones/settings.svg";
 import toolsIcon from "./assets/icones/tools.svg";
 
 const TABS = { JOBS: "jobs", LINKS: "links" };
+const AUTH_REFRESH_INTERVAL_MS = 30000;
 const DEFAULT_SETTINGS = {
   aeVersion: "2024",
   drive: "I:\\Drives compartilhados\\Phx CRF Copa",
@@ -124,24 +126,33 @@ function App() {
 
 function AuthenticatedAppWindow() {
   const [authSession, setAuthSession] = useState(() => window.__ARIZONA_AUTH_SESSION__ || null);
+  const applyAuthSession = useCallback((session) => {
+    const nextSession = session || null;
+    window.__ARIZONA_AUTH_SESSION__ = nextSession;
+    setAuthSession(nextSession);
+  }, []);
 
   useEffect(() => {
-    const handleLogin = (event) => {
-      setAuthSession(event.detail || window.__ARIZONA_AUTH_SESSION__ || null);
+    const handleAuthChange = (event) => {
+      applyAuthSession(event.detail || window.__ARIZONA_AUTH_SESSION__ || null);
     };
 
-    window.addEventListener("arizona-auth:login", handleLogin);
-    return () => window.removeEventListener("arizona-auth:login", handleLogin);
-  }, []);
+    window.addEventListener("arizona-auth:login", handleAuthChange);
+    window.addEventListener("arizona-auth:update", handleAuthChange);
+    return () => {
+      window.removeEventListener("arizona-auth:login", handleAuthChange);
+      window.removeEventListener("arizona-auth:update", handleAuthChange);
+    };
+  }, [applyAuthSession]);
 
   if (!authSession) {
     return <div className="app-locked" aria-hidden="true"></div>;
   }
 
-  return <MainApp authSession={authSession} />;
+  return <MainApp authSession={authSession} onAuthSessionChange={applyAuthSession} />;
 }
 
-function MainApp({ authSession }) {
+function MainApp({ authSession, onAuthSessionChange = () => {} }) {
   const [activeTab, setActiveTab] = useState(TABS.JOBS);
   const [jobaoCod, setJobaoCod] = useState("");
   const [jobinhoCod, setJobinhoCod] = useState("");
@@ -158,6 +169,8 @@ function MainApp({ authSession }) {
   const projectTitleRef = useRef({ key: "", title: "" });
   const toolsMenuRef = useRef(null);
   const toolsCloseTimerRef = useRef(null);
+  const authSessionRef = useRef(authSession);
+  const authRefreshInFlightRef = useRef(false);
   const canAccessAdmin = authSession?.role === "admin";
 
   const hideToast = () => {
@@ -172,6 +185,69 @@ function MainApp({ authSession }) {
   };
 
   const showError = (msg) => showToast(msg, "error");
+
+  useEffect(() => {
+    authSessionRef.current = authSession;
+  }, [authSession]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const applyValidatedAuth = async (nextAuth) => {
+      if (!nextAuth) return;
+      const nextSession = authToSession(nextAuth);
+      const currentSession = authSessionRef.current;
+      if (!authSessionChanged(currentSession, nextSession)) return;
+
+      await invokeCommand(commandNames.updateAuthSession, { session: nextSession }).catch(() => {});
+      if (!mounted) return;
+
+      const lostAdminAccess = currentSession?.role === "admin" && nextSession.role !== "admin";
+      onAuthSessionChange(nextSession);
+      authSessionRef.current = nextSession;
+
+      if (lostAdminAccess) {
+        closeToolsMenu();
+        showToast("Seu acesso de gestão foi atualizado.", "error");
+      }
+    };
+
+    const refreshAuth = async () => {
+      const currentSession = authSessionRef.current;
+      if (!currentSession?.accessToken || authRefreshInFlightRef.current) return;
+
+      authRefreshInFlightRef.current = true;
+      try {
+        const nextAuth = await validateActiveSession(currentSession, { appVersion: "" });
+        if (mounted) await applyValidatedAuth(nextAuth);
+      } catch (error) {
+        const code = String(error?.code || "");
+        if (code === "daily_login_required" || code === "stored_session_invalid") {
+          showToast(authErrorMessage(error), "error");
+        }
+      } finally {
+        authRefreshInFlightRef.current = false;
+      }
+    };
+
+    const handleFocus = () => refreshAuth();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") refreshAuth();
+    };
+
+    const interval = setInterval(refreshAuth, AUTH_REFRESH_INTERVAL_MS);
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    refreshAuth();
+
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [onAuthSessionChange]);
 
   const hideGlobalTooltip = () => {
     window.dispatchEvent(new Event("app:hide-tooltip"));
@@ -690,6 +766,21 @@ function currentWindowLabel() {
   } catch (error) {
     return "";
   }
+}
+
+function authSessionChanged(currentSession, nextSession) {
+  if (!currentSession || !nextSession) return currentSession !== nextSession;
+  return [
+    "accessToken",
+    "refreshToken",
+    "email",
+    "memberId",
+    "role",
+    "organizationId",
+    "organizationName",
+    "seatsAllowed",
+    "expiresAt",
+  ].some((key) => String(currentSession?.[key] ?? "") !== String(nextSession?.[key] ?? ""));
 }
 
 export default App;

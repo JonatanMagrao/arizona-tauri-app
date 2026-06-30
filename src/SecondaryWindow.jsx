@@ -47,6 +47,10 @@ function SecondaryWindow() {
     hideTimerRef.current = setTimeout(hideToast, 5000);
   };
 
+  const handleAdminAccessRestricted = async () => {
+    await invokeCommand(commandNames.restrictAdminSession).catch(() => {});
+  };
+
   const closeWindow = async () => {
     pauseWindowMedia();
     const result = await invokeAction(
@@ -105,7 +109,7 @@ function SecondaryWindow() {
       <SecondaryTitlebar title={title} onClose={closeWindow} />
 
       <div className="secondary-window__content">
-        {renderSecondaryView(secondaryState, closeWindow, showToast)}
+        {renderSecondaryView(secondaryState, closeWindow, showToast, handleAdminAccessRestricted)}
       </div>
 
       {toast.open && (
@@ -201,7 +205,7 @@ function SecondaryTitlebar({ title, onClose }) {
   );
 }
 
-function renderSecondaryView(state, closeWindow, showToast) {
+function renderSecondaryView(state, closeWindow, showToast, onAdminAccessRestricted) {
   if (state.view === "duplicate") {
     return (
       <DuplicateIdenticalModal
@@ -251,6 +255,7 @@ function renderSecondaryView(state, closeWindow, showToast) {
         auth={state.adminAuth}
         showError={(message) => showToast(message, "error")}
         showSuccess={(message) => showToast(message, "success")}
+        onAccessRestricted={onAdminAccessRestricted}
       />
     );
   }

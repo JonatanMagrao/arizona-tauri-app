@@ -172,25 +172,26 @@ body{
 }
 
 .login-panel{
+  position: relative;
   min-height: 0;
   display: grid;
   grid-template-rows: auto auto auto minmax(0, 1fr);
-  gap: 12px;
+  gap: 10px;
   align-content: start;
-  padding: 24px 30px 22px;
+  padding: 22px 30px 18px;
 }
 
 .login-brand{
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr);
+  grid-template-columns: 44px minmax(0, 1fr);
   gap: 12px;
   align-items: center;
   padding-bottom: 4px;
 }
 
 .login-brand img{
-  width: 48px;
-  height: 48px;
+  width: 44px;
+  height: 44px;
   object-fit: contain;
 }
 
@@ -203,17 +204,19 @@ body{
   letter-spacing: 0;
 }
 
-.login-brand span{
-  display: block;
-  margin-top: 5px;
+.login-version{
+  position: absolute;
+  top: 24px;
+  right: 30px;
   color: var(--muted);
   font-size: 12px;
-  font-weight: 750;
+  font-weight: 850;
+  letter-spacing: 0;
 }
 
 .login-form{
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .login-field{
@@ -229,15 +232,91 @@ body{
 }
 
 .login-field .input{
-  height: 38px;
+  height: 36px;
   border-radius: 8px;
   font-size: 14px;
+}
+
+.login-password-control{
+  position: relative;
+  min-width: 0;
+}
+
+.login-password-control .input{
+  width: 100%;
+  padding-right: 38px;
+}
+
+.login-password-toggle{
+  position: absolute;
+  top: 50%;
+  right: 7px;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.login-password-toggle:hover:not(:disabled),
+.login-password-toggle:focus-visible:not(:disabled){
+  background: rgba(255, 255, 255, .06);
+}
+
+.login-password-toggle:disabled{
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+.login-password-toggle img{
+  width: 18px;
+  height: 18px;
+  opacity: .72;
+}
+
+.login-password-toggle:hover:not(:disabled) img,
+.login-password-toggle:focus-visible:not(:disabled) img{
+  opacity: 1;
+}
+
+.login-label-row{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.login-label-chip{
+  display: inline-flex;
+  align-items: center;
+  min-height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: var(--primary);
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.login-label-chip:not(.login-label-chip--muted){
+  color: #ff6400;
+}
+
+.login-label-chip--muted{
+  color: var(--muted);
 }
 
 .login-submit{
   width: 100%;
   min-height: 40px;
-  margin-top: 2px;
+  margin-top: 1px;
   border-radius: 8px;
 }
 
