@@ -6,14 +6,51 @@ mod settings;
 use arizona::{ActionResponse, Arizona, MediaFile, ProductImportReport};
 use settings::AppConfig;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, LogicalSize, Manager};
+use std::sync::Mutex;
+use tauri::{AppHandle, LogicalSize, Manager, State};
+
+#[derive(Default)]
+struct AuthState {
+    session: Mutex<Option<AuthSession>>,
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthSession {
+    access_token: Option<String>,
+    refresh_token: Option<String>,
+    email: String,
+    member_id: Option<String>,
+    role: Option<String>,
+    organization_id: Option<String>,
+    organization_name: Option<String>,
+    seats_allowed: Option<i64>,
+    expires_at: Option<String>,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AdminWindowAuth {
+    access_token: String,
+    organization_id: String,
+    current_member_id: Option<String>,
+    email: String,
+    role: String,
+}
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 pub fn run() {
     tauri::Builder::default()
+        .manage(AuthState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            disable_browser_accelerator_keys(app);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
+            complete_login,
+            exit_app,
             open_visto,
             open_bitrix,
             open_pip,
@@ -61,6 +98,35 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
+fn disable_browser_accelerator_keys(app: &tauri::App) {
+    #[cfg(windows)]
+    {
+        for label in [
+            LOGIN_WINDOW_LABEL,
+            APP_WINDOW_LABEL,
+            SECONDARY_WINDOW_LABEL,
+        ] {
+            if let Some(window) = app.get_webview_window(label) {
+                let _ = window.with_webview(|webview| unsafe {
+                    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+                    use windows_core::Interface;
+
+                    if let Ok(core_webview) = webview.controller().CoreWebView2() {
+                        if let Ok(settings) = core_webview.Settings() {
+                            if let Ok(settings3) = settings.cast::<ICoreWebView2Settings3>() {
+                                let _ = settings3.SetAreBrowserAcceleratorKeysEnabled(false);
+                            }
+                        }
+                    }
+                });
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    let _ = app;
+}
+
 #[tauri::command]
 fn open_visto() -> Result<ActionResponse, String> {
     Ok(match Arizona::new(AppConfig::default()).open_visto() {
@@ -95,6 +161,9 @@ fn open_claro() -> Result<ActionResponse, String> {
 
 const AUTHOR_NAME: &str = "Jonatan Magr\u{00e3}o";
 const AUTHOR_URL: &str = "https://www.jonatanmagrao.com.br";
+const LOGIN_WINDOW_LABEL: &str = "main";
+const APP_WINDOW_LABEL: &str = "app";
+const SECONDARY_WINDOW_LABEL: &str = "secondary";
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -117,6 +186,54 @@ fn app_info(app: AppHandle) -> Result<AppInfo, String> {
         author_name: AUTHOR_NAME.to_string(),
         author_url: AUTHOR_URL.to_string(),
     })
+}
+
+#[tauri::command]
+fn complete_login(
+    app: AppHandle,
+    auth: State<AuthState>,
+    session: AuthSession,
+) -> Result<ActionResponse, String> {
+    let email = session.email.trim();
+    if email.is_empty() {
+        return Ok(ActionResponse::err("Email da sessao invalido."));
+    }
+
+    let session_json = serde_json::to_string(&session).map_err(|err| err.to_string())?;
+    {
+        let mut stored_session = auth
+            .session
+            .lock()
+            .map_err(|_| "Nao foi possivel atualizar a sessao.".to_string())?;
+        *stored_session = Some(session);
+    }
+
+    let app_window = app
+        .get_webview_window(APP_WINDOW_LABEL)
+        .ok_or_else(|| "Janela principal nao foi inicializada.".to_string())?;
+    let script = format!(
+        "window.__ARIZONA_AUTH_SESSION__ = {session_json}; window.dispatchEvent(new CustomEvent('arizona-auth:login', {{ detail: {session_json} }}));"
+    );
+
+    let _ = app_window.eval(script);
+    app_window
+        .set_title("Arizona App")
+        .map_err(|err| err.to_string())?;
+    app_window.unminimize().map_err(|err| err.to_string())?;
+    app_window.show().map_err(|err| err.to_string())?;
+    app_window.set_focus().map_err(|err| err.to_string())?;
+
+    if let Some(login_window) = app.get_webview_window(LOGIN_WINDOW_LABEL) {
+        let _ = login_window.hide();
+    }
+
+    Ok(ActionResponse::ok())
+}
+
+#[tauri::command]
+fn exit_app(app: AppHandle) -> Result<(), String> {
+    app.exit(0);
+    Ok(())
 }
 
 #[tauri::command]
@@ -223,8 +340,6 @@ fn import_products(app: AppHandle, jobao_cod: String) -> Result<ActionResponse, 
     }
 }
 
-const MAIN_WINDOW_LABEL: &str = "main";
-const SECONDARY_WINDOW_LABEL: &str = "secondary";
 const SECONDARY_WINDOW_WIDTH: f64 = 950.0;
 const SECONDARY_WINDOW_HEIGHT: f64 = 650.0;
 
@@ -237,15 +352,23 @@ struct SecondaryWindowState {
     media_kind: Option<String>,
     media_title: Option<String>,
     product_report: Option<ProductImportReport>,
+    admin_auth: Option<AdminWindowAuth>,
 }
 
 #[tauri::command]
 fn open_secondary_window(
     app: AppHandle,
+    auth: State<AuthState>,
     view: String,
     jobao_cod: Option<String>,
 ) -> Result<ActionResponse, String> {
     let normalized_view = normalize_secondary_view(&view)?;
+    let admin_auth = if normalized_view == "admin" {
+        Some(admin_window_auth(&auth)?)
+    } else {
+        require_authenticated(&auth)?;
+        None
+    };
     let state = SecondaryWindowState {
         view: normalized_view.to_string(),
         jobao_cod: normalize_optional_text(jobao_cod),
@@ -253,6 +376,7 @@ fn open_secondary_window(
         media_kind: None,
         media_title: None,
         product_report: None,
+        admin_auth,
     };
     show_secondary_window(app, state)
 }
@@ -286,8 +410,8 @@ fn show_secondary_window(
     window.show().map_err(|err| err.to_string())?;
     window.set_focus().map_err(|err| err.to_string())?;
 
-    if let Some(main_window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-        let _ = main_window.set_enabled(false);
+    if let Some(app_window) = app.get_webview_window(APP_WINDOW_LABEL) {
+        let _ = app_window.set_enabled(false);
     }
 
     Ok(ActionResponse::ok())
@@ -299,9 +423,9 @@ fn close_secondary_window(app: AppHandle) -> Result<ActionResponse, String> {
         let _ = window.hide();
     }
 
-    if let Some(main_window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-        let _ = main_window.set_enabled(true);
-        let _ = main_window.set_focus();
+    if let Some(app_window) = app.get_webview_window(APP_WINDOW_LABEL) {
+        let _ = app_window.set_enabled(true);
+        let _ = app_window.set_focus();
     }
 
     Ok(ActionResponse::ok())
@@ -310,9 +434,62 @@ fn close_secondary_window(app: AppHandle) -> Result<ActionResponse, String> {
 #[tauri::command]
 fn open_duplicate_identical_window(
     app: AppHandle,
+    auth: State<AuthState>,
     jobao_cod: String,
 ) -> Result<ActionResponse, String> {
-    open_secondary_window(app, "duplicate".to_string(), Some(jobao_cod))
+    open_secondary_window(app, auth, "duplicate".to_string(), Some(jobao_cod))
+}
+
+fn require_authenticated(auth: &State<AuthState>) -> Result<(), String> {
+    let stored_session = auth
+        .session
+        .lock()
+        .map_err(|_| "Nao foi possivel ler a sessao.".to_string())?;
+
+    if stored_session.is_some() {
+        Ok(())
+    } else {
+        Err("Entre com email e senha para continuar.".to_string())
+    }
+}
+
+fn admin_window_auth(auth: &State<AuthState>) -> Result<AdminWindowAuth, String> {
+    let session = auth
+        .session
+        .lock()
+        .map_err(|_| "Nao foi possivel ler a sessao.".to_string())?
+        .clone()
+        .ok_or_else(|| "Entre com email e senha para continuar.".to_string())?;
+    let role = session.role.as_deref().unwrap_or_default().trim().to_string();
+
+    if role != "admin" {
+        return Err("Acesso admin disponivel apenas para gestores.".to_string());
+    }
+
+    let access_token = session
+        .access_token
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let organization_id = session
+        .organization_id
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    if access_token.is_empty() || organization_id.is_empty() {
+        return Err("Sessao admin incompleta. Entre novamente.".to_string());
+    }
+
+    Ok(AdminWindowAuth {
+        access_token,
+        organization_id,
+        current_member_id: session.member_id,
+        email: session.email,
+        role,
+    })
 }
 
 fn normalize_secondary_view(view: &str) -> Result<&'static str, String> {
@@ -323,6 +500,7 @@ fn normalize_secondary_view(view: &str) -> Result<&'static str, String> {
         "media" | "midia" => Ok("media"),
         "products" | "produtos" | "products-log" | "product-log" => Ok("products"),
         "settings" | "config" | "configuracoes" => Ok("settings"),
+        "admin" | "gestao" | "gestor" => Ok("admin"),
         _ => Err("Tela secundária inválida.".to_string()),
     }
 }
@@ -335,6 +513,7 @@ fn secondary_window_title(view: &str) -> &'static str {
         "media" => "Mídia",
         "products" => "Produtos importados",
         "settings" => "Configurações",
+        "admin" => "Admin",
         _ => "Arizona",
     }
 }
@@ -615,6 +794,7 @@ fn show_product_import_report(
         media_kind: None,
         media_title: None,
         product_report: Some(report),
+        admin_auth: None,
     };
 
     show_secondary_window(app, state)
@@ -633,6 +813,7 @@ fn show_media_path_with_title(
         media_kind: Some(media_kind.to_string()),
         media_title: Some(title),
         product_report: None,
+        admin_auth: None,
     };
 
     show_secondary_window(app, state)

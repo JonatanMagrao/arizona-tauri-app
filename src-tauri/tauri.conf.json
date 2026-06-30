@@ -12,12 +12,23 @@
   "app": {
     "windows": [
       {
-        "title": "Arizona App",
-        "width": 440,
-        "height": 210,
+        "label": "main",
+        "title": "Arizona Login",
+        "width": 420,
+        "height": 430,
         "center": true,
         "resizable": false,
         "decorations": false
+      },
+      {
+        "label": "app",
+        "title": "Arizona App",
+        "width": 440,
+        "height": 232,
+        "center": true,
+        "resizable": false,
+        "decorations": false,
+        "visible": false
       },
       {
         "label": "secondary",
@@ -26,7 +37,7 @@
         "height": 650,
         "minWidth": 560,
         "minHeight": 420,
-        "parent": "main",
+        "parent": "app",
         "center": true,
         "resizable": true,
         "minimizable": false,

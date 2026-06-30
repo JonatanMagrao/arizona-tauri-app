@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
+import AdminWindow from "./AdminWindow";
 import DuplicateIdenticalModal from "./DuplicateIdenticalModal";
 import HistoryWindow from "./HistoryWindow";
 import previewImg from "./assets/hierarquia_pracas.jpg";
@@ -18,6 +19,7 @@ const DEFAULT_SECONDARY_STATE = {
   mediaKind: "video",
   mediaTitle: "",
   productReport: null,
+  adminAuth: null,
 };
 
 const DEFAULT_SETTINGS = {
@@ -79,6 +81,24 @@ function SecondaryWindow() {
       hideToast();
     };
   }, []);
+
+  useEffect(() => {
+    const handleReloadShortcut = (event) => {
+      const isReloadShortcut = (event.key?.toLowerCase() === "r" && (event.ctrlKey || event.metaKey))
+        || event.key === "F5";
+      if (!isReloadShortcut) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (secondaryState.view === "admin") {
+        window.dispatchEvent(new Event("arizona-admin:refresh"));
+      }
+    };
+
+    window.addEventListener("keydown", handleReloadShortcut, { capture: true });
+    return () => window.removeEventListener("keydown", handleReloadShortcut, { capture: true });
+  }, [secondaryState.view]);
 
   return (
     <div className="secondary-window secondary-window--custom">
@@ -218,6 +238,17 @@ function renderSecondaryView(state, closeWindow, showToast) {
     return (
       <SettingsView
         key="settings"
+        showError={(message) => showToast(message, "error")}
+        showSuccess={(message) => showToast(message, "success")}
+      />
+    );
+  }
+
+  if (state.view === "admin") {
+    return (
+      <AdminWindow
+        key="admin"
+        auth={state.adminAuth}
         showError={(message) => showToast(message, "error")}
         showSuccess={(message) => showToast(message, "success")}
       />
@@ -859,6 +890,7 @@ function getInitialSecondaryState() {
       mediaKind: params.get("kind") || "video",
       mediaTitle: params.get("title") || "",
       productReport: null,
+      adminAuth: null,
     });
   } catch (error) {
     return DEFAULT_SECONDARY_STATE;
@@ -874,6 +906,7 @@ function normalizeSecondaryState(payload) {
   const rawMediaKind = String(payload?.mediaKind || payload?.media_kind || "").trim().toLowerCase();
   const mediaKind = rawMediaKind === "audio" ? "audio" : "video";
   const productReport = normalizeProductReport(payload?.productReport || payload?.product_report);
+  const adminAuth = normalizeAdminAuth(payload?.adminAuth || payload?.admin_auth);
 
   return {
     view,
@@ -882,6 +915,7 @@ function normalizeSecondaryState(payload) {
     mediaKind,
     mediaTitle,
     productReport,
+    adminAuth,
   };
 }
 
@@ -890,7 +924,7 @@ function normalizeView(value) {
   if (value === "midia") return "media";
   if (value === "produtos" || value === "products-log" || value === "product-log") return "products";
   if (value === "config" || value === "configuracoes") return "settings";
-  if (["duplicate", "history", "places", "media", "products", "settings"].includes(value)) return value;
+  if (["duplicate", "history", "places", "media", "products", "settings", "admin"].includes(value)) return value;
   return DEFAULT_SECONDARY_STATE.view;
 }
 
@@ -907,8 +941,21 @@ function secondaryWindowTitle(state) {
   if (state.view === "history") return "Histórico";
   if (state.view === "places") return "Praças CRF";
   if (state.view === "products") return "Produtos importados";
+  if (state.view === "admin") return "Gestão";
   if (state.view === "settings") return "Configurações";
   return "Arizona";
+}
+
+function normalizeAdminAuth(value) {
+  if (!value || typeof value !== "object") return null;
+
+  return {
+    accessToken: String(value.accessToken || value.access_token || "").trim(),
+    organizationId: String(value.organizationId || value.organization_id || "").trim(),
+    currentMemberId: String(value.currentMemberId || value.current_member_id || "").trim(),
+    email: String(value.email || "").trim(),
+    role: String(value.role || "").trim(),
+  };
 }
 
 function normalizeAppInfo(info) {

@@ -28,3 +28,7 @@ regex = "1"
 roxmltree = "0.20"
 rusqlite = { version = "0.32", features = ["bundled"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
+windows-core = "0.61"

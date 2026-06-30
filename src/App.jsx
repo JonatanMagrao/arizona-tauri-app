@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import GlobalTooltip from "./GlobalTooltip";
 import JobPanel from "./panels/JobPanel";
 import LinksPanel from "./panels/LinksPanel";
+import LoginWindow from "./LoginWindow";
 import SecondaryWindow from "./SecondaryWindow";
 import { commandNames, invokeAction, invokeCommand } from "./lib/tauriCommands";
 import "./App.css";
@@ -16,6 +17,7 @@ import historyIcon from "./assets/icones/history.svg";
 import keepIcon from "./assets/icones/keep.svg";
 import keepOffIcon from "./assets/icones/keep_off.svg";
 import minimizeIcon from "./assets/icones/minimize.svg";
+import adminPanelIcon from "./assets/icones/admin_panel.svg";
 import settingsIcon from "./assets/icones/settings.svg";
 import toolsIcon from "./assets/icones/tools.svg";
 
@@ -83,7 +85,27 @@ function randomMainCtaPhrase() {
 }
 
 function App() {
-  if (isSecondaryWindow()) {
+  const windowLabel = currentWindowLabel();
+
+  if (windowLabel === "main") {
+    return (
+      <>
+        <LoginWindow />
+        <GlobalTooltip />
+      </>
+    );
+  }
+
+  if (windowLabel === "app") {
+    return (
+      <>
+        <AuthenticatedAppWindow />
+        <GlobalTooltip />
+      </>
+    );
+  }
+
+  if (windowLabel === "secondary" || isSecondaryWindow()) {
     return (
       <>
         <SecondaryWindow />
@@ -100,7 +122,26 @@ function App() {
   );
 }
 
-function MainApp() {
+function AuthenticatedAppWindow() {
+  const [authSession, setAuthSession] = useState(() => window.__ARIZONA_AUTH_SESSION__ || null);
+
+  useEffect(() => {
+    const handleLogin = (event) => {
+      setAuthSession(event.detail || window.__ARIZONA_AUTH_SESSION__ || null);
+    };
+
+    window.addEventListener("arizona-auth:login", handleLogin);
+    return () => window.removeEventListener("arizona-auth:login", handleLogin);
+  }, []);
+
+  if (!authSession) {
+    return <div className="app-locked" aria-hidden="true"></div>;
+  }
+
+  return <MainApp authSession={authSession} />;
+}
+
+function MainApp({ authSession }) {
   const [activeTab, setActiveTab] = useState(TABS.JOBS);
   const [jobaoCod, setJobaoCod] = useState("");
   const [jobinhoCod, setJobinhoCod] = useState("");
@@ -117,6 +158,7 @@ function MainApp() {
   const projectTitleRef = useRef({ key: "", title: "" });
   const toolsMenuRef = useRef(null);
   const toolsCloseTimerRef = useRef(null);
+  const canAccessAdmin = authSession?.role === "admin";
 
   const hideToast = () => {
     setToast((current) => ({ ...current, open: false }));
@@ -356,7 +398,11 @@ function MainApp() {
   };
 
   const closeMainWindow = async () => {
-    await getCurrentWindow().close();
+    try {
+      await invokeCommand(commandNames.exitApp);
+    } catch (error) {
+      await getCurrentWindow().close();
+    }
   };
 
   const minimizeMainWindow = async () => {
@@ -378,6 +424,7 @@ function MainApp() {
 
   const openPlaces = async () => openSecondaryView("places");
   const openHistory = async () => openSecondaryView("history");
+  const openAdmin = async () => openSecondaryView("admin");
   const openSettings = async () => openSecondaryView("settings");
 
   const openDuplicateIdentical = async () => {
@@ -388,6 +435,18 @@ function MainApp() {
   };
 
   const titlebarLabel = projectTitle || "Arizona App";
+  const mainCta = (
+    <button
+      type="button"
+      className="main-cta"
+      onClick={openMainCta}
+      tabIndex="-1"
+      title="Conheça o Nerd do After"
+      aria-label={`${mainCtaPhrase} Conheça o Nerd do After`}
+    >
+      <span>{mainCtaPhrase}</span>
+    </button>
+  );
 
   return (
     <div className="app-shell">
@@ -521,6 +580,17 @@ function MainApp() {
               </div>
             )}
           </div>
+          {canAccessAdmin && (
+            <button
+              className="icon-tab"
+              onClick={openAdmin}
+              tabIndex="-1"
+              title="Gestão"
+              aria-label="Gestão"
+            >
+              <img src={adminPanelIcon} alt="Gestão" />
+            </button>
+          )}
           <button
             className="icon-tab"
             onClick={openSettings}
@@ -552,6 +622,7 @@ function MainApp() {
               openRoteiro={openRoteiro}
               projectName={projectName}
               openDuplicateIdentical={openDuplicateIdentical}
+              footer={mainCta}
             />
           )}
 
@@ -562,19 +633,10 @@ function MainApp() {
               openBitrix={openBitrix}
               openClaro={openClaro}
               openLinks={openLinks}
+              footer={mainCta}
             />
           )}
 
-          <button
-            type="button"
-            className="main-cta"
-            onClick={openMainCta}
-            tabIndex="-1"
-            title="Conheça o Nerd do After"
-            aria-label={`${mainCtaPhrase} Conheça o Nerd do After`}
-          >
-            <span>{mainCtaPhrase}</span>
-          </button>
         </main>
       </div>
 
@@ -600,12 +662,6 @@ function MainApp() {
 
 function isSecondaryWindow() {
   try {
-    if (getCurrentWindow().label === "secondary") return true;
-  } catch (error) {
-    // Fora do Tauri, mantemos a query como fallback para abrir a tela no browser.
-  }
-
-  try {
     const view = new URLSearchParams(window.location.search).get("view");
     return [
       "secondary",
@@ -618,12 +674,21 @@ function isSecondaryWindow() {
       "products",
       "produtos",
       "products-log",
+      "admin",
       "settings",
       "config",
       "configuracoes",
     ].includes(view);
   } catch (error) {
     return false;
+  }
+}
+
+function currentWindowLabel() {
+  try {
+    return getCurrentWindow().label || "";
+  } catch (error) {
+    return "";
   }
 }
 

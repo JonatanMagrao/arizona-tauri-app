@@ -3,7 +3,9 @@ import { invoke } from "@tauri-apps/api/core";
 export const commandNames = Object.freeze({
   abrirAe: "abrir_ae",
   appInfo: "app_info",
+  completeLogin: "complete_login",
   duplicateIdenticalMp4: "duplicate_identical_mp4",
+  exitApp: "exit_app",
   historyClear: "history_clear",
   historyCopyClear: "history_copy_clear",
   historyCopyList: "history_copy_list",

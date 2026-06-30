@@ -29,7 +29,8 @@ function JobPanel({
   openAudio,
   revealVideo,
   openRoteiro,
-  openDuplicateIdentical
+  openDuplicateIdentical,
+  footer
 }) {
 
   const handleJobaoKeyDown = (e) => {
@@ -213,6 +214,7 @@ function JobPanel({
         </div>
       </div>
 
+      {footer}
     </div>
   );
 }
