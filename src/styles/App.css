@@ -1459,7 +1459,8 @@ textarea:focus{
 }
 
 .settings-actions .btn,
-.settings-drive-row .btn{
+.settings-drive-row .btn,
+.settings-shortcut-row .btn{
   min-height: 34px;
   padding: 8px 12px;
   border-radius: 9px;
@@ -1677,6 +1678,34 @@ textarea:focus{
   width: 160px;
 }
 
+.settings-bridge-shortcuts{
+  display: grid;
+  gap: 10px;
+  margin-top: 2px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-bridge-shortcuts h2{
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.1;
+  font-weight: 850;
+}
+
+.settings-shortcut-row{
+  display: grid;
+  grid-template-columns: minmax(0, 160px) max-content;
+  gap: 8px;
+  align-items: center;
+  justify-self: start;
+}
+
+.settings-shortcut-row .settings-short-input{
+  width: 100%;
+}
+
 .settings-path-row{
   grid-template-columns: minmax(0, 1fr) max-content;
 }
@@ -1733,6 +1762,11 @@ textarea:focus{
   .settings-path-row,
   .settings-path-row--clearable{
     grid-template-columns: 1fr;
+  }
+
+  .settings-shortcut-row{
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr) max-content;
   }
 
   .settings-form--window .settings-short-input{

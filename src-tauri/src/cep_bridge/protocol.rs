@@ -51,6 +51,8 @@ pub struct ClientMessage {
     pub id: Option<String>,
     pub protocol_version: Option<String>,
     pub client: Option<ClientHello>,
+    pub event: Option<String>,
+    pub payload: Option<Value>,
     pub result: Option<Value>,
     pub error: Option<Value>,
 }
@@ -144,5 +146,6 @@ pub fn is_allowed_command(command: &str) -> bool {
             | "ping"
             | "render_queue_add"
             | "replace_text"
+            | "show_alert"
     )
 }

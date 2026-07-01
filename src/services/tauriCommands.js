@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 
 export const commandNames = Object.freeze({
   abrirAe: "abrir_ae",
+  aegpBridgeMoveLayersToMarkersCommand: "aegp_bridge_move_layers_to_markers_command",
+  aegpBridgeSendTestCommand: "aegp_bridge_send_test_command",
   appInfo: "app_info",
   cepBridgeSendTestCommand: "cep_bridge_send_test_command",
   cepBridgeStatus: "cep_bridge_status",

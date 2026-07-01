@@ -173,7 +173,7 @@ impl CepBridgeState {
         self.lock_inner().next_seq()
     }
 
-    fn license(&self) -> LicenseStatus {
+    pub fn license(&self) -> LicenseStatus {
         self.lock_inner().license.clone()
     }
 
@@ -365,6 +365,7 @@ fn handle_client_text(state: &CepBridgeState, tx: &Sender<String>, text: &str) {
             let _ = message.error;
             send_ack(state, tx, message.id, "ae.result");
         }
+        "cep.event" => handle_cep_event(state, tx, message.id, message.event, message.payload),
         "cep.ping" => {
             let value = json!({
                 "type": "cep.pong",
@@ -382,6 +383,59 @@ fn handle_client_text(state: &CepBridgeState, tx: &Sender<String>, text: &str) {
             "unsupported_message",
             format!("Mensagem CEP nao suportada: {other}"),
         ),
+    }
+}
+
+fn handle_cep_event(
+    state: &CepBridgeState,
+    tx: &Sender<String>,
+    id: Option<String>,
+    event: Option<String>,
+    payload: Option<Value>,
+) {
+    let event_name = event.as_deref().unwrap_or_default();
+
+    if event_name != "shortcut" {
+        send_ack(state, tx, id, "cep.event");
+        return;
+    }
+
+    let shortcut = payload
+        .as_ref()
+        .and_then(|value| value.get("shortcut"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    if shortcut != "ctrl+shift+alt+a" {
+        send_ack(state, tx, id, "cep.event");
+        return;
+    }
+
+    send_ack(state, tx, id, "cep.event");
+    send_bridge_command(
+        state,
+        tx,
+        "show_alert",
+        json!({
+            "message": "ponte feita"
+        }),
+    );
+}
+
+fn send_bridge_command(state: &CepBridgeState, tx: &Sender<String>, command: &str, args: Value) {
+    let message = {
+        let mut inner = state.lock_inner();
+        if !inner.license.licensed || !is_allowed_command(command) {
+            return;
+        }
+
+        let seq = inner.next_seq();
+        encode(command_message(seq, format!("cmd_{seq}"), command, args))
+    };
+
+    if let Ok(message) = message {
+        let _ = tx.send(message);
     }
 }
 

@@ -31,6 +31,34 @@ const DEFAULT_SECONDARY_STATE = {
   adminAuth: null,
 };
 
+const BRIDGE_SHORTCUT_ACTIONS = Object.freeze([
+  {
+    field: "moveLayersBackwardShortcut",
+    label: "Mover Layers Atrás",
+    placeholder: "Ctrl+Numpad1",
+  },
+  {
+    field: "moveLayersForwardShortcut",
+    label: "Mover Layers Frente",
+    placeholder: "Ctrl+Numpad3",
+  },
+  {
+    field: "moveJumpMarkerShortcut",
+    label: "Aplicar Jump",
+    placeholder: "Ctrl+Numpad2",
+  },
+  {
+    field: "selectJumpMarkerLayerShortcut",
+    label: "Selecionar Oferta",
+    placeholder: "Ctrl+Numpad0",
+  },
+  {
+    field: "adjustMarkersShortcut",
+    label: "Reset Markers",
+    placeholder: "Ctrl+NumpadDecimal",
+  },
+]);
+
 function SecondaryWindow() {
   const { toast, showToast, hideToast } = useAutoHideToast();
   const [secondaryState, setSecondaryState] = useState(getInitialSecondaryState);
@@ -257,6 +285,7 @@ function SettingsView({ showError, showSuccess }) {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [choosingField, setChoosingField] = useState("");
+  const [recordingShortcutField, setRecordingShortcutField] = useState("");
 
   useEffect(() => {
     let mounted = true;
@@ -293,6 +322,29 @@ function SettingsView({ showError, showSuccess }) {
     setSettingsDraft((config) => ({ ...config, [field]: value }));
   };
 
+  useEffect(() => {
+    if (!recordingShortcutField) return undefined;
+
+    const handleShortcutKeyDown = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (event.key === "Escape") {
+        setRecordingShortcutField("");
+        return;
+      }
+
+      const shortcut = shortcutFromKeyboardEvent(event);
+      if (!shortcut) return;
+
+      updateSettingsDraft(recordingShortcutField, shortcut);
+      setRecordingShortcutField("");
+    };
+
+    window.addEventListener("keydown", handleShortcutKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", handleShortcutKeyDown, { capture: true });
+  }, [recordingShortcutField]);
+
   const chooseFolder = async (field, title) => {
     setChoosingField(field);
     try {
@@ -313,7 +365,7 @@ function SettingsView({ showError, showSuccess }) {
   const saveSettings = async (event) => {
     event.preventDefault();
     if (!isSettingsReady(settingsDraft)) {
-      showError("Preencha Drive, Fotos Flow, After Effects e Produtos.");
+      showError("Preencha Drive, Fotos Flow, After Effects, Produtos e os atalhos Bridge.");
       return;
     }
 
@@ -342,7 +394,7 @@ function SettingsView({ showError, showSuccess }) {
   };
 
   const busy = isLoading || isSaving || Boolean(choosingField);
-  const canSave = !busy && isSettingsReady(settingsDraft);
+  const canSave = !busy && !recordingShortcutField && isSettingsReady(settingsDraft);
   const currentYear = String(new Date().getFullYear());
 
   return (
@@ -439,6 +491,38 @@ function SettingsView({ showError, showSuccess }) {
               disabled={isLoading || isSaving}
             />
           </label>
+
+          <section className="settings-bridge-shortcuts" aria-label="Atalhos Bridge">
+            <h2>Atalhos Bridge</h2>
+            {BRIDGE_SHORTCUT_ACTIONS.map((action) => {
+              const isRecording = recordingShortcutField === action.field;
+              return (
+                <label className="settings-field" key={action.field}>
+                  <span>{action.label}</span>
+                  <div className="settings-shortcut-row">
+                    <input
+                      className="input settings-short-input"
+                      type="text"
+                      value={settingsDraft[action.field]}
+                      onChange={(event) => updateSettingsDraft(action.field, event.target.value)}
+                      placeholder={action.placeholder}
+                      autoComplete="off"
+                      disabled={isLoading || isSaving || Boolean(recordingShortcutField)}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      onClick={() => setRecordingShortcutField(isRecording ? "" : action.field)}
+                      disabled={isLoading || isSaving || (Boolean(recordingShortcutField) && !isRecording)}
+                      aria-pressed={isRecording}
+                    >
+                      {isRecording ? "Cancelar" : "Gravar"}
+                    </button>
+                  </div>
+                </label>
+              );
+            })}
+          </section>
 
           <footer className="settings-actions settings-actions--window">
             <div className="settings-credit">
@@ -957,6 +1041,74 @@ function normalizeAppInfo(info) {
     authorName: String(info?.authorName || "").trim(),
     authorUrl: String(info?.authorUrl || "").trim(),
   };
+}
+
+function shortcutFromKeyboardEvent(event) {
+  const mainKey = shortcutMainKey(event);
+  if (!mainKey) return "";
+
+  const parts = [];
+  if (event.ctrlKey) parts.push("Ctrl");
+  if (event.shiftKey) parts.push("Shift");
+  if (event.altKey) parts.push("Alt");
+  if (event.metaKey) parts.push("Super");
+  parts.push(mainKey);
+  return parts.join("+");
+}
+
+function shortcutMainKey(event) {
+  const code = String(event.code || "");
+  const key = String(event.key || "");
+
+  if (["Control", "Shift", "Alt", "Meta"].includes(key)) return "";
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3);
+  if (/^Digit[0-9]$/.test(code)) return code.slice(5);
+  if (/^Numpad[0-9]$/.test(code)) return code;
+  if (/^F([1-9]|1[0-9]|2[0-4])$/.test(key)) return key.toUpperCase();
+
+  const codeAliases = {
+    ArrowDown: "ArrowDown",
+    ArrowLeft: "ArrowLeft",
+    ArrowRight: "ArrowRight",
+    ArrowUp: "ArrowUp",
+    Backspace: "Backspace",
+    Delete: "Delete",
+    End: "End",
+    Enter: "Enter",
+    Home: "Home",
+    Insert: "Insert",
+    PageDown: "PageDown",
+    PageUp: "PageUp",
+    Space: "Space",
+    Tab: "Tab",
+    NumpadAdd: "NumpadAdd",
+    NumpadDecimal: "NumpadDecimal",
+    NumpadDivide: "NumpadDivide",
+    NumpadEnter: "NumpadEnter",
+    NumpadEqual: "NumpadEqual",
+    NumpadMultiply: "NumpadMultiply",
+    NumpadSubtract: "NumpadSubtract",
+  };
+  const keyAliases = {
+    ArrowDown: "ArrowDown",
+    ArrowLeft: "ArrowLeft",
+    ArrowRight: "ArrowRight",
+    ArrowUp: "ArrowUp",
+    Backspace: "Backspace",
+    Delete: "Delete",
+    End: "End",
+    Enter: "Enter",
+    Home: "Home",
+    Insert: "Insert",
+    PageDown: "PageDown",
+    PageUp: "PageUp",
+    Tab: "Tab",
+  };
+
+  if (codeAliases[code]) return codeAliases[code];
+  if (keyAliases[key]) return keyAliases[key];
+  if (key.length === 1 && key.trim()) return key.toUpperCase();
+  return "";
 }
 
 function pathToMediaSrc(path) {

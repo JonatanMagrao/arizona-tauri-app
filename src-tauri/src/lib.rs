@@ -1,3 +1,4 @@
+mod aegp_bridge;
 mod arizona;
 mod cep_bridge;
 mod history;
@@ -12,10 +13,31 @@ use settings::AppConfig;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{AppHandle, LogicalSize, Manager, State};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 #[derive(Default)]
 struct AuthState {
     session: Mutex<Option<AuthSession>>,
+}
+
+#[derive(Default)]
+struct AfterShortcutState {
+    registered: Mutex<Vec<RegisteredAfterShortcut>>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct RegisteredAfterShortcut {
+    shortcut: Shortcut,
+    action: AegpBridgeAction,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AegpBridgeAction {
+    MoveLayersBackward,
+    MoveLayersForward,
+    MoveJumpMarker,
+    SelectJumpMarkerLayer,
+    AdjustMarkersToTail,
 }
 
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
@@ -64,11 +86,38 @@ pub fn run() {
     tauri::Builder::default()
         .manage(AuthState::default())
         .manage(CepBridgeState::new())
+        .manage(AfterShortcutState::default())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    if event.state() == ShortcutState::Pressed {
+                        let Some(action) = after_command_action_for_shortcut(app, shortcut) else {
+                            return;
+                        };
+
+                        let bridge = app.state::<CepBridgeState>();
+                        let response = send_aegp_bridge_action_command(&bridge, action);
+                        if !response.is_ok() {
+                            if let Some(message) = response.message() {
+                                eprintln!("Arizona AEGP shortcut failed: {message}");
+                            }
+                        }
+                    }
+                })
+                .build(),
+        )
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             disable_browser_accelerator_keys(app);
             let bridge = app.state::<CepBridgeState>();
+            let app_handle = app.handle().clone();
+            let config = settings::load(&app_handle).unwrap_or_default();
+            if let Err(err) = register_after_command_shortcuts(&app_handle, &config) {
+                let message = format!("Nao foi possivel registrar atalho do After: {err}");
+                eprintln!("{message}");
+                bridge.set_last_error(message);
+            }
             if let Err(err) = bridge.start(app.handle().clone()) {
                 bridge.set_last_error(err);
             }
@@ -77,6 +126,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             cep_bridge_status,
             cep_bridge_send_test_command,
+            aegp_bridge_send_test_command,
+            aegp_bridge_move_layers_to_markers_command,
             complete_login,
             update_auth_session,
             restrict_admin_session,
@@ -128,6 +179,113 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn after_command_action_for_shortcut(
+    app: &AppHandle,
+    shortcut: &Shortcut,
+) -> Option<AegpBridgeAction> {
+    app.state::<AfterShortcutState>()
+        .registered
+        .lock()
+        .ok()
+        .and_then(|registered| {
+            registered
+                .iter()
+                .find(|item| item.shortcut == *shortcut)
+                .map(|item| item.action)
+        })
+}
+
+fn register_after_command_shortcuts(app: &AppHandle, config: &AppConfig) -> Result<(), String> {
+    let requested = configured_after_shortcuts(config)?;
+
+    let shortcut_state = app.state::<AfterShortcutState>();
+    let previous = shortcut_state
+        .registered
+        .lock()
+        .map_err(|_| "Nao foi possivel atualizar os atalhos do After.".to_string())?
+        .clone();
+
+    if previous == requested {
+        return Ok(());
+    }
+
+    for item in &previous {
+        let _ = app.global_shortcut().unregister(item.shortcut);
+    }
+
+    let mut registered_now: Vec<RegisteredAfterShortcut> = Vec::new();
+    for item in &requested {
+        if let Err(err) = app.global_shortcut().register(item.shortcut) {
+            for registered_item in &registered_now {
+                let _ = app.global_shortcut().unregister(registered_item.shortcut);
+            }
+            for previous_item in &previous {
+                let _ = app.global_shortcut().register(previous_item.shortcut);
+            }
+            return Err(err.to_string());
+        }
+        registered_now.push(*item);
+    }
+
+    *shortcut_state
+        .registered
+        .lock()
+        .map_err(|_| "Nao foi possivel atualizar os atalhos do After.".to_string())? = requested;
+
+    Ok(())
+}
+
+fn configured_after_shortcuts(config: &AppConfig) -> Result<Vec<RegisteredAfterShortcut>, String> {
+    let specs = [
+        (
+            "Mover Layers atras",
+            AegpBridgeAction::MoveLayersBackward,
+            config.move_layers_backward_shortcut.as_str(),
+        ),
+        (
+            "Mover Layers frente",
+            AegpBridgeAction::MoveLayersForward,
+            config.move_layers_forward_shortcut.as_str(),
+        ),
+        (
+            "Aplicar Jump",
+            AegpBridgeAction::MoveJumpMarker,
+            config.move_jump_marker_shortcut.as_str(),
+        ),
+        (
+            "Selecionar Oferta",
+            AegpBridgeAction::SelectJumpMarkerLayer,
+            config.select_jump_marker_layer_shortcut.as_str(),
+        ),
+        (
+            "Reset Markers",
+            AegpBridgeAction::AdjustMarkersToTail,
+            config.adjust_markers_shortcut.as_str(),
+        ),
+    ];
+    let mut shortcuts = Vec::new();
+
+    for (label, action, shortcut_text) in specs {
+        let shortcut = parse_after_shortcut(label, shortcut_text)?;
+        if shortcuts
+            .iter()
+            .any(|item: &RegisteredAfterShortcut| item.shortcut == shortcut)
+        {
+            return Err(format!("Atalho duplicado em {label}: {shortcut_text}"));
+        }
+        shortcuts.push(RegisteredAfterShortcut { shortcut, action });
+    }
+
+    Ok(shortcuts)
+}
+
+fn parse_after_shortcut(label: &str, shortcut_text: &str) -> Result<Shortcut, String> {
+    let shortcut_text = shortcut_text.trim();
+    shortcut_text
+        .parse()
+        .map_err(|err| format!("Atalho invalido em {label} (\"{shortcut_text}\"): {err}"))
 }
 
 fn disable_browser_accelerator_keys(app: &tauri::App) {
@@ -302,6 +460,57 @@ fn cep_bridge_send_test_command(
             Err(err) => ActionResponse::err(err),
         },
     )
+}
+
+#[tauri::command]
+fn aegp_bridge_send_test_command(bridge: State<CepBridgeState>) -> Result<ActionResponse, String> {
+    Ok(send_aegp_bridge_test_command(&bridge))
+}
+
+#[tauri::command]
+fn aegp_bridge_move_layers_to_markers_command(
+    bridge: State<CepBridgeState>,
+) -> Result<ActionResponse, String> {
+    Ok(send_aegp_bridge_move_layers_to_markers_command(&bridge))
+}
+
+fn send_aegp_bridge_test_command(bridge: &CepBridgeState) -> ActionResponse {
+    let license = bridge.license();
+    if !license.licensed {
+        return ActionResponse::err(format!("Licenca bloqueada: {}", license.reason));
+    }
+
+    match aegp_bridge::send_show_alert("ponte feita") {
+        Ok(command_id) => ActionResponse::ok_message(command_id),
+        Err(err) => ActionResponse::err(err),
+    }
+}
+
+fn send_aegp_bridge_move_layers_to_markers_command(bridge: &CepBridgeState) -> ActionResponse {
+    send_aegp_bridge_action_command(bridge, AegpBridgeAction::MoveLayersForward)
+}
+
+fn send_aegp_bridge_action_command(
+    bridge: &CepBridgeState,
+    action: AegpBridgeAction,
+) -> ActionResponse {
+    let license = bridge.license();
+    if !license.licensed {
+        return ActionResponse::err(format!("Licenca bloqueada: {}", license.reason));
+    }
+
+    let result = match action {
+        AegpBridgeAction::MoveLayersBackward => aegp_bridge::send_move_layers_backward(),
+        AegpBridgeAction::MoveLayersForward => aegp_bridge::send_move_layers_forward(),
+        AegpBridgeAction::MoveJumpMarker => aegp_bridge::send_move_jump_marker(),
+        AegpBridgeAction::SelectJumpMarkerLayer => aegp_bridge::send_select_jump_marker_layer(),
+        AegpBridgeAction::AdjustMarkersToTail => aegp_bridge::send_adjust_markers_to_tail(),
+    };
+
+    match result {
+        Ok(command_id) => ActionResponse::ok_message(command_id),
+        Err(err) => ActionResponse::err(err),
+    }
 }
 
 #[tauri::command]
@@ -972,6 +1181,8 @@ fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
 
 #[tauri::command]
 fn save_app_config(app: AppHandle, config: AppConfig) -> Result<AppConfig, String> {
+    let config = settings::validate_config(config)?;
+    register_after_command_shortcuts(&app, &config)?;
     settings::save(&app, config)
 }
 

@@ -27,4 +27,12 @@ impl ActionResponse {
             message: Some(message.into()),
         }
     }
+
+    pub fn is_ok(&self) -> bool {
+        self.ok
+    }
+
+    pub fn message(&self) -> Option<&str> {
+        self.message.as_deref()
+    }
 }

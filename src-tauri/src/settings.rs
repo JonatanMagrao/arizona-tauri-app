@@ -7,6 +7,16 @@ use tauri::{AppHandle, Manager};
 pub struct AppConfig {
     #[serde(default = "default_ae_version")]
     pub ae_version: String,
+    #[serde(default = "default_move_layers_backward_shortcut")]
+    pub move_layers_backward_shortcut: String,
+    #[serde(default = "default_move_layers_forward_shortcut")]
+    pub move_layers_forward_shortcut: String,
+    #[serde(default = "default_move_jump_marker_shortcut")]
+    pub move_jump_marker_shortcut: String,
+    #[serde(default = "default_select_jump_marker_layer_shortcut")]
+    pub select_jump_marker_layer_shortcut: String,
+    #[serde(default = "default_adjust_markers_shortcut")]
+    pub adjust_markers_shortcut: String,
     #[serde(default = "default_drive")]
     pub drive: String,
     #[serde(default = "default_produtos")]
@@ -21,6 +31,11 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             ae_version: default_ae_version(),
+            move_layers_backward_shortcut: default_move_layers_backward_shortcut(),
+            move_layers_forward_shortcut: default_move_layers_forward_shortcut(),
+            move_jump_marker_shortcut: default_move_jump_marker_shortcut(),
+            select_jump_marker_layer_shortcut: default_select_jump_marker_layer_shortcut(),
+            adjust_markers_shortcut: default_adjust_markers_shortcut(),
             drive: default_drive(),
             produtos: default_produtos(),
             produtos_year: default_produtos_year(),
@@ -72,6 +87,14 @@ fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
 fn sanitize_config(config: AppConfig) -> AppConfig {
     AppConfig {
         ae_version: config.ae_version.trim().to_string(),
+        move_layers_backward_shortcut: config.move_layers_backward_shortcut.trim().to_string(),
+        move_layers_forward_shortcut: config.move_layers_forward_shortcut.trim().to_string(),
+        move_jump_marker_shortcut: config.move_jump_marker_shortcut.trim().to_string(),
+        select_jump_marker_layer_shortcut: config
+            .select_jump_marker_layer_shortcut
+            .trim()
+            .to_string(),
+        adjust_markers_shortcut: config.adjust_markers_shortcut.trim().to_string(),
         drive: config.drive.trim().to_string(),
         produtos: config.produtos.trim().to_string(),
         produtos_year: sanitize_produtos_year(&config.produtos_year),
@@ -79,10 +102,18 @@ fn sanitize_config(config: AppConfig) -> AppConfig {
     }
 }
 
-fn validate_config(config: AppConfig) -> Result<AppConfig, String> {
+pub fn validate_config(config: AppConfig) -> Result<AppConfig, String> {
     let config = sanitize_config(config);
     if config.ae_version.is_empty() {
         return Err("Informe a versão do After Effects.".to_string());
+    }
+    if config.move_layers_backward_shortcut.is_empty()
+        || config.move_layers_forward_shortcut.is_empty()
+        || config.move_jump_marker_shortcut.is_empty()
+        || config.select_jump_marker_layer_shortcut.is_empty()
+        || config.adjust_markers_shortcut.is_empty()
+    {
+        return Err("Informe todos os atalhos Bridge.".to_string());
     }
     if config.drive.is_empty() {
         return Err("Selecione o entrypoint do Drive.".to_string());
@@ -105,6 +136,26 @@ fn validate_config(config: AppConfig) -> Result<AppConfig, String> {
 
 fn default_ae_version() -> String {
     "2024".to_string()
+}
+
+fn default_move_layers_backward_shortcut() -> String {
+    "Ctrl+Numpad1".to_string()
+}
+
+fn default_move_layers_forward_shortcut() -> String {
+    "Ctrl+Numpad3".to_string()
+}
+
+fn default_move_jump_marker_shortcut() -> String {
+    "Ctrl+Numpad2".to_string()
+}
+
+fn default_select_jump_marker_layer_shortcut() -> String {
+    "Ctrl+Numpad0".to_string()
+}
+
+fn default_adjust_markers_shortcut() -> String {
+    "Ctrl+NumpadDecimal".to_string()
 }
 
 fn default_drive() -> String {

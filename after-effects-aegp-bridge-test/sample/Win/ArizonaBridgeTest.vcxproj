@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{B9C697C0-8E82-4E8E-990F-5C5E7218F101}</ProjectGuid>
+    <RootNamespace>ArizonaBridgeTest</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+
+  <PropertyGroup Label="Configuration" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseOfMfc>false</UseOfMfc>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Label="Configuration" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseOfMfc>false</UseOfMfc>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+
+  <PropertyGroup Label="UserMacros" />
+
+  <PropertyGroup>
+    <BundledAESdkRoot>$(MSBuildThisFileDirectory)..\..\sdk\ae25.6_61.64bit.AfterEffectsSDK</BundledAESdkRoot>
+    <AE_SDK_ROOT Condition="'$(AE_SDK_ROOT)'=='' And Exists('$(BundledAESdkRoot)\Examples\Headers\AE_GeneralPlug.h')">$(BundledAESdkRoot)</AE_SDK_ROOT>
+    <PiPLToolPath>$(AE_SDK_ROOT)\Examples\Resources\PiPLtool.exe</PiPLToolPath>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <TargetName>ArizonaBridgeTest</TargetName>
+    <TargetExt>.aex</TargetExt>
+    <OutDir>$(ProjectDir)..\..\plugin\</OutDir>
+    <IntDir>$(Platform)\$(Configuration)\</IntDir>
+    <IgnoreImportLibrary>true</IgnoreImportLibrary>
+  </PropertyGroup>
+
+  <Target Name="CheckAESdkRoot" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(AE_SDK_ROOT)'==''" Text="AE_SDK_ROOT is not set and the bundled SDK was not found under ..\..\sdk\ae25.6_61.64bit.AfterEffectsSDK." />
+    <Error Condition="!Exists('$(AE_SDK_ROOT)\Examples\Headers\AE_GeneralPlug.h')" Text="AE_SDK_ROOT does not look like an After Effects SDK root. Expected $(AE_SDK_ROOT)\Examples\Headers\AE_GeneralPlug.h." />
+    <Error Condition="!Exists('$(PiPLToolPath)')" Text="PiPLtool.exe was not found under $(AE_SDK_ROOT)\Examples\Resources." />
+  </Target>
+
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <Optimization>Disabled</Optimization>
+      <AdditionalIncludeDirectories>..\..\src;$(AE_SDK_ROOT)\Examples\Headers;$(AE_SDK_ROOT)\Examples\Headers\SP;$(AE_SDK_ROOT)\Examples\Headers\Win;$(AE_SDK_ROOT)\Examples\Resources;$(AE_SDK_ROOT)\Examples\Util;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>MSWindows;WIN32;_DEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <Culture>0x0409</Culture>
+    </ResourceCompile>
+    <Link>
+      <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <ProgramDatabaseFile>$(IntDir)$(TargetName).pdb</ProgramDatabaseFile>
+      <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
+      <TargetMachine>MachineX64</TargetMachine>
+      <RandomizedBaseAddress>false</RandomizedBaseAddress>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <Optimization>MaxSpeed</Optimization>
+      <AdditionalIncludeDirectories>..\..\src;$(AE_SDK_ROOT)\Examples\Headers;$(AE_SDK_ROOT)\Examples\Headers\SP;$(AE_SDK_ROOT)\Examples\Headers\Win;$(AE_SDK_ROOT)\Examples\Resources;$(AE_SDK_ROOT)\Examples\Util;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>MSWindows;WIN32;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <Culture>0x0409</Culture>
+    </ResourceCompile>
+    <Link>
+      <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
+      <GenerateDebugInformation>false</GenerateDebugInformation>
+      <ProgramDatabaseFile>$(IntDir)$(TargetName).pdb</ProgramDatabaseFile>
+      <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
+      <TargetMachine>MachineX64</TargetMachine>
+      <RandomizedBaseAddress>false</RandomizedBaseAddress>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemGroup>
+    <ClInclude Include="..\..\src\ArizonaBridgeTest.h" />
+    <ClInclude Include="..\..\src\BridgeContext.h" />
+    <ClInclude Include="..\..\src\actions\MoveLayersToMarkers.h" />
+    <ClInclude Include="..\..\src\actions\ShowAlert.h" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <CustomBuild Include="..\..\src\ArizonaBridgeTest_PiPL.r">
+      <Message>Compiling the PiPL</Message>
+      <Command>cl /I "$(AE_SDK_ROOT)\Examples\Headers" /EP "..\..\src\ArizonaBridgeTest_PiPL.r" &gt; "$(IntDir)ArizonaBridgeTest_PiPL.rr"
+"$(PiPLToolPath)" "$(IntDir)ArizonaBridgeTest_PiPL.rr" "$(IntDir)ArizonaBridgeTest_PiPL.rrc"
+cl /D "MSWindows" /EP "$(IntDir)ArizonaBridgeTest_PiPL.rrc" &gt; "$(ProjectDir)ArizonaBridgeTest_PiPL.rc"
+</Command>
+      <Outputs>$(ProjectDir)ArizonaBridgeTest_PiPL.rc;%(Outputs)</Outputs>
+    </CustomBuild>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ResourceCompile Include="ArizonaBridgeTest_PiPL.rc" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ClCompile Include="$(AE_SDK_ROOT)\Examples\Util\AEGP_SuiteHandler.cpp" />
+    <ClCompile Include="$(AE_SDK_ROOT)\Examples\Util\MissingSuiteError.cpp" />
+    <ClCompile Include="..\..\src\ArizonaBridgeTest.cpp" />
+    <ClCompile Include="..\..\src\actions\MoveLayersToMarkers.cpp" />
+    <ClCompile Include="..\..\src\actions\ShowAlert.cpp" />
+  </ItemGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>
