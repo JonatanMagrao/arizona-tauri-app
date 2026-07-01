@@ -45,6 +45,8 @@ enum AegpBridgeAction {
 struct AuthSession {
     access_token: Option<String>,
     refresh_token: Option<String>,
+    bridge_token: Option<String>,
+    bridge_token_expires_at: Option<String>,
     email: String,
     member_id: Option<String>,
     role: Option<String>,
@@ -52,6 +54,15 @@ struct AuthSession {
     organization_name: Option<String>,
     seats_allowed: Option<i64>,
     expires_at: Option<String>,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AegpBridgeNotice {
+    level: &'static str,
+    code: &'static str,
+    message: String,
+    detail: String,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -97,10 +108,11 @@ pub fn run() {
                         };
 
                         let bridge = app.state::<CepBridgeState>();
-                        let response = send_aegp_bridge_action_command(&bridge, action);
+                        let auth = app.state::<AuthState>();
+                        let response = send_aegp_bridge_action_command(&bridge, &auth, action);
                         if !response.is_ok() {
                             if let Some(message) = response.message() {
-                                eprintln!("Arizona AEGP shortcut failed: {message}");
+                                notify_aegp_bridge_shortcut_error(app, message);
                             }
                         }
                     }
@@ -288,6 +300,49 @@ fn parse_after_shortcut(label: &str, shortcut_text: &str) -> Result<Shortcut, St
         .map_err(|err| format!("Atalho invalido em {label} (\"{shortcut_text}\"): {err}"))
 }
 
+fn notify_aegp_bridge_shortcut_error(app: &AppHandle, message: &str) {
+    eprintln!("Arizona AEGP shortcut failed: {message}");
+
+    let (code, user_message) = aegp_bridge_shortcut_notice(message);
+    let notice = AegpBridgeNotice {
+        level: "error",
+        code,
+        message: user_message.to_string(),
+        detail: message.to_string(),
+    };
+
+    let Some(app_window) = app.get_webview_window(APP_WINDOW_LABEL) else {
+        return;
+    };
+
+    let _ = app_window.unminimize();
+    let _ = app_window.show();
+    let _ = app_window.set_focus();
+
+    let Ok(notice_json) = serde_json::to_string(&notice) else {
+        return;
+    };
+    let script = format!(
+        "window.dispatchEvent(new CustomEvent('{AEGP_SHORTCUT_ERROR_EVENT}', {{ detail: {notice_json} }}));"
+    );
+    let _ = app_window.eval(&script);
+}
+
+fn aegp_bridge_shortcut_notice(message: &str) -> (&'static str, &'static str) {
+    let normalized = message.to_ascii_lowercase();
+    if normalized.contains("token do bridge aex ausente")
+        || normalized.contains("licenca")
+        || normalized.contains("license")
+    {
+        return ("aex_bridge_license_required", AEGP_LICENSE_NOTICE_MESSAGE);
+    }
+
+    (
+        "aex_bridge_command_failed",
+        "Nao foi possivel falar com o plugin do After Effects.",
+    )
+}
+
 fn disable_browser_accelerator_keys(app: &tauri::App) {
     #[cfg(windows)]
     {
@@ -350,6 +405,9 @@ const AUTHOR_URL: &str = "https://www.jonatanmagrao.com.br";
 const LOGIN_WINDOW_LABEL: &str = "main";
 const APP_WINDOW_LABEL: &str = "app";
 const SECONDARY_WINDOW_LABEL: &str = "secondary";
+const AEGP_SHORTCUT_ERROR_EVENT: &str = "arizona-aegp:shortcut-error";
+const AEGP_LICENSE_NOTICE_MESSAGE: &str =
+    "Plugin bloqueado. Valide a licenca novamente no Arizona App.";
 const SECURE_AUTH_SERVICE: &str = "Arizona App";
 const SECURE_AUTH_ACCOUNT: &str = "daily-session";
 const SECURE_AUTH_TARGET: &str = "daily-session.Arizona App";
@@ -463,35 +521,53 @@ fn cep_bridge_send_test_command(
 }
 
 #[tauri::command]
-fn aegp_bridge_send_test_command(bridge: State<CepBridgeState>) -> Result<ActionResponse, String> {
-    Ok(send_aegp_bridge_test_command(&bridge))
+fn aegp_bridge_send_test_command(
+    bridge: State<CepBridgeState>,
+    auth: State<AuthState>,
+) -> Result<ActionResponse, String> {
+    Ok(send_aegp_bridge_test_command(&bridge, &auth))
 }
 
 #[tauri::command]
 fn aegp_bridge_move_layers_to_markers_command(
     bridge: State<CepBridgeState>,
+    auth: State<AuthState>,
 ) -> Result<ActionResponse, String> {
-    Ok(send_aegp_bridge_move_layers_to_markers_command(&bridge))
+    Ok(send_aegp_bridge_move_layers_to_markers_command(
+        &bridge, &auth,
+    ))
 }
 
-fn send_aegp_bridge_test_command(bridge: &CepBridgeState) -> ActionResponse {
+fn send_aegp_bridge_test_command(
+    bridge: &CepBridgeState,
+    auth: &State<AuthState>,
+) -> ActionResponse {
     let license = bridge.license();
     if !license.licensed {
         return ActionResponse::err(format!("Licenca bloqueada: {}", license.reason));
     }
 
-    match aegp_bridge::send_show_alert("ponte feita") {
+    let command_auth = match aegp_bridge_auth(auth) {
+        Ok(command_auth) => command_auth,
+        Err(err) => return ActionResponse::err(err),
+    };
+
+    match aegp_bridge::send_show_alert("ponte feita", &command_auth) {
         Ok(command_id) => ActionResponse::ok_message(command_id),
         Err(err) => ActionResponse::err(err),
     }
 }
 
-fn send_aegp_bridge_move_layers_to_markers_command(bridge: &CepBridgeState) -> ActionResponse {
-    send_aegp_bridge_action_command(bridge, AegpBridgeAction::MoveLayersForward)
+fn send_aegp_bridge_move_layers_to_markers_command(
+    bridge: &CepBridgeState,
+    auth: &State<AuthState>,
+) -> ActionResponse {
+    send_aegp_bridge_action_command(bridge, auth, AegpBridgeAction::MoveLayersForward)
 }
 
 fn send_aegp_bridge_action_command(
     bridge: &CepBridgeState,
+    auth: &State<AuthState>,
     action: AegpBridgeAction,
 ) -> ActionResponse {
     let license = bridge.license();
@@ -499,18 +575,65 @@ fn send_aegp_bridge_action_command(
         return ActionResponse::err(format!("Licenca bloqueada: {}", license.reason));
     }
 
+    let command_auth = match aegp_bridge_auth(auth) {
+        Ok(command_auth) => command_auth,
+        Err(err) => return ActionResponse::err(err),
+    };
+
     let result = match action {
-        AegpBridgeAction::MoveLayersBackward => aegp_bridge::send_move_layers_backward(),
-        AegpBridgeAction::MoveLayersForward => aegp_bridge::send_move_layers_forward(),
-        AegpBridgeAction::MoveJumpMarker => aegp_bridge::send_move_jump_marker(),
-        AegpBridgeAction::SelectJumpMarkerLayer => aegp_bridge::send_select_jump_marker_layer(),
-        AegpBridgeAction::AdjustMarkersToTail => aegp_bridge::send_adjust_markers_to_tail(),
+        AegpBridgeAction::MoveLayersBackward => {
+            aegp_bridge::send_move_layers_backward(&command_auth)
+        }
+        AegpBridgeAction::MoveLayersForward => aegp_bridge::send_move_layers_forward(&command_auth),
+        AegpBridgeAction::MoveJumpMarker => aegp_bridge::send_move_jump_marker(&command_auth),
+        AegpBridgeAction::SelectJumpMarkerLayer => {
+            aegp_bridge::send_select_jump_marker_layer(&command_auth)
+        }
+        AegpBridgeAction::AdjustMarkersToTail => {
+            aegp_bridge::send_adjust_markers_to_tail(&command_auth)
+        }
     };
 
     match result {
         Ok(command_id) => ActionResponse::ok_message(command_id),
         Err(err) => ActionResponse::err(err),
     }
+}
+
+fn aegp_bridge_auth(auth: &State<AuthState>) -> Result<aegp_bridge::BridgeCommandAuth, String> {
+    let bridge_token = auth
+        .session
+        .lock()
+        .map_err(|_| "Nao foi possivel ler a sessao do bridge AEX.".to_string())?
+        .as_ref()
+        .and_then(|session| session.bridge_token.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+
+    if let Some(bridge_token) = bridge_token {
+        return aegp_bridge::BridgeCommandAuth::new(bridge_token);
+    }
+
+    #[cfg(debug_assertions)]
+    if allow_dev_aex_token() {
+        return aegp_bridge::BridgeCommandAuth::new("arizona-aex-dev-token");
+    }
+
+    Err("Token do bridge AEX ausente. Valide a licenca novamente.".to_string())
+}
+
+#[cfg(debug_assertions)]
+fn allow_dev_aex_token() -> bool {
+    std::env::var("ARIZONA_ALLOW_DEV_AEX_TOKEN")
+        .map(|value| {
+            let value = value.trim();
+            value == "1"
+                || value.eq_ignore_ascii_case("true")
+                || value.eq_ignore_ascii_case("yes")
+                || value.eq_ignore_ascii_case("on")
+        })
+        .unwrap_or(false)
 }
 
 #[tauri::command]

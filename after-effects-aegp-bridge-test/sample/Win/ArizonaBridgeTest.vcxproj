@@ -58,7 +58,7 @@
     <ClCompile>
       <Optimization>Disabled</Optimization>
       <AdditionalIncludeDirectories>..\..\src;$(AE_SDK_ROOT)\Examples\Headers;$(AE_SDK_ROOT)\Examples\Headers\SP;$(AE_SDK_ROOT)\Examples\Headers\Win;$(AE_SDK_ROOT)\Examples\Resources;$(AE_SDK_ROOT)\Examples\Util;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>MSWindows;WIN32;_DEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>MSWindows;WIN32;_DEBUG;_WINDOWS;ARIZONA_TAURI_CERT_SHA256=&quot;$(ARIZONA_TAURI_CERT_SHA256)&quot;;ARIZONA_AEX_JWT_ES256_PUBLIC_X=&quot;$(ARIZONA_AEX_JWT_ES256_PUBLIC_X)&quot;;ARIZONA_AEX_JWT_ES256_PUBLIC_Y=&quot;$(ARIZONA_AEX_JWT_ES256_PUBLIC_Y)&quot;;ARIZONA_AEX_JWT_KID=&quot;$(ARIZONA_AEX_JWT_KID)&quot;;ARIZONA_ALLOW_DEV_AEX_TOKEN=$(ARIZONA_ALLOW_DEV_AEX_TOKEN);ARIZONA_ALLOW_DEV_AEX_CLIENT=$(ARIZONA_ALLOW_DEV_AEX_CLIENT);%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
       <WarningLevel>Level3</WarningLevel>
       <TreatWarningAsError>true</TreatWarningAsError>
@@ -75,6 +75,7 @@
       <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
       <TargetMachine>MachineX64</TargetMachine>
       <RandomizedBaseAddress>false</RandomizedBaseAddress>
+      <AdditionalDependencies>bcrypt.lib;wintrust.lib;crypt32.lib;advapi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
 
@@ -82,7 +83,7 @@
     <ClCompile>
       <Optimization>MaxSpeed</Optimization>
       <AdditionalIncludeDirectories>..\..\src;$(AE_SDK_ROOT)\Examples\Headers;$(AE_SDK_ROOT)\Examples\Headers\SP;$(AE_SDK_ROOT)\Examples\Headers\Win;$(AE_SDK_ROOT)\Examples\Resources;$(AE_SDK_ROOT)\Examples\Util;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>MSWindows;WIN32;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>MSWindows;WIN32;_WINDOWS;ARIZONA_TAURI_CERT_SHA256=&quot;$(ARIZONA_TAURI_CERT_SHA256)&quot;;ARIZONA_AEX_JWT_ES256_PUBLIC_X=&quot;$(ARIZONA_AEX_JWT_ES256_PUBLIC_X)&quot;;ARIZONA_AEX_JWT_ES256_PUBLIC_Y=&quot;$(ARIZONA_AEX_JWT_ES256_PUBLIC_Y)&quot;;ARIZONA_AEX_JWT_KID=&quot;$(ARIZONA_AEX_JWT_KID)&quot;;ARIZONA_ALLOW_DEV_AEX_TOKEN=0;ARIZONA_ALLOW_DEV_AEX_CLIENT=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <WarningLevel>Level3</WarningLevel>
       <TreatWarningAsError>true</TreatWarningAsError>
@@ -99,11 +100,14 @@
       <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
       <TargetMachine>MachineX64</TargetMachine>
       <RandomizedBaseAddress>false</RandomizedBaseAddress>
+      <AdditionalDependencies>bcrypt.lib;wintrust.lib;crypt32.lib;advapi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
 
   <ItemGroup>
     <ClInclude Include="..\..\src\ArizonaBridgeTest.h" />
+    <ClInclude Include="..\..\src\BridgeProtocol.h" />
+    <ClInclude Include="..\..\src\BridgeSecurity.h" />
     <ClInclude Include="..\..\src\BridgeContext.h" />
     <ClInclude Include="..\..\src\actions\MoveLayersToMarkers.h" />
     <ClInclude Include="..\..\src\actions\ShowAlert.h" />
@@ -128,6 +132,8 @@ cl /D "MSWindows" /EP "$(IntDir)ArizonaBridgeTest_PiPL.rrc" &gt; "$(ProjectDir)A
     <ClCompile Include="$(AE_SDK_ROOT)\Examples\Util\AEGP_SuiteHandler.cpp" />
     <ClCompile Include="$(AE_SDK_ROOT)\Examples\Util\MissingSuiteError.cpp" />
     <ClCompile Include="..\..\src\ArizonaBridgeTest.cpp" />
+    <ClCompile Include="..\..\src\BridgeProtocol.cpp" />
+    <ClCompile Include="..\..\src\BridgeSecurity.cpp" />
     <ClCompile Include="..\..\src\actions\MoveLayersToMarkers.cpp" />
     <ClCompile Include="..\..\src\actions\ShowAlert.cpp" />
   </ItemGroup>

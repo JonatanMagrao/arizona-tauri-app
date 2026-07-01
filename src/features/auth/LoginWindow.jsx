@@ -219,6 +219,8 @@ function LoginWindow() {
       session: {
         accessToken: auth.accessToken,
         refreshToken: auth.refreshToken,
+        bridgeToken: auth.bridgeToken,
+        bridgeTokenExpiresAt: auth.bridgeTokenExpiresAt,
         email: auth.email,
         memberId: auth.memberId,
         role: auth.role,

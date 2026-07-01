@@ -12,7 +12,19 @@ pipe:
 \\.\pipe\arizona-aegp-bridge
 ```
 
-The pipe server only queues commands from a process named `arizona-app.exe`.
+The pipe server queues commands only after two checks pass:
+
+```text
+1. the named-pipe client process is an Authenticode-signed Tauri executable;
+2. the command carries a short `bridgeToken` JWT accepted by the AEX bridge.
+```
+
+Release builds should pin the Tauri publisher certificate with
+`ARIZONA_TAURI_CERT_SHA256` and the AEX bridge token public key coordinates.
+Release builds fail before compilation if these values are missing. Development
+fallback for an unsigned `arizona-app.exe` plus the `arizona-aex-dev-token`
+bridge token is available only when building Debug with `-AllowDevBridge`.
+
 After Effects suite calls are executed later from the AEGP idle hook.
 
 Supported commands:
@@ -138,11 +150,59 @@ Command shape:
 ```json
 {
   "type": "ae.command",
-  "id": "cmd_1",
+  "protocolVersion": "arizona.aex.v1",
+  "id": "aegp_cmd_1780000000000",
+  "seq": 42,
+  "issuedAt": "2026-07-01T18:00:00.000Z",
+  "expiresAt": "2026-07-01T18:00:10.000Z",
   "command": "move_layers_forward",
-  "args": null
+  "args": null,
+  "bridgeToken": "eyJ..."
 }
 ```
 
+The AEX side validates the protocol version, command allowlist, argument schema,
+sequence replay, short command expiry window, and the JWT claims:
+
+```text
+iss = arizona-app
+aud = arizona-aex-bridge
+feature/features includes ae_bridge
+nbf/iat/exp are inside the accepted clock window
+alg = ES256
+```
+
 The Tauri app registers configurable global shortcuts for each action, validates
-the current license, then sends the matching command to the plugin.
+the current license, then sends the matching command to the plugin with the
+short bridge token returned by the backend license validation.
+
+## Release Security Configuration
+
+Set these MSBuild properties or environment variables when building the AEX for
+production:
+
+```powershell
+$env:ARIZONA_TAURI_CERT_SHA256 = "<SHA-256 thumbprint of the signed Tauri exe certificate>"
+$env:ARIZONA_AEX_JWT_ES256_PUBLIC_X = "<P-256 public key X coordinate as 64 hex chars>"
+$env:ARIZONA_AEX_JWT_ES256_PUBLIC_Y = "<P-256 public key Y coordinate as 64 hex chars>"
+$env:ARIZONA_AEX_JWT_KID = "v1"
+.\sample\Win\build.ps1 -Configuration Release
+```
+
+`ARIZONA_AEX_JWT_ES256_PUBLIC_X` and
+`ARIZONA_AEX_JWT_ES256_PUBLIC_Y` are the raw 32-byte P-256 coordinates, not a
+PEM file. The backend should sign bridge tokens with the matching private key.
+
+After signing the Tauri executable, extract the certificate hash with:
+
+```powershell
+$sig = Get-AuthenticodeSignature .\src-tauri\target\release\arizona-app.exe
+$sig.SignerCertificate.GetCertHashString("SHA256")
+```
+
+For local AEX smoke tests only:
+
+```powershell
+.\sample\Win\build.ps1 -Configuration Debug -AllowDevBridge
+npm run tauri:dev:bridge
+```

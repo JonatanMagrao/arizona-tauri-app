@@ -140,6 +140,8 @@ export function authToSession(auth) {
   return {
     accessToken: auth?.accessToken || "",
     refreshToken: auth?.refreshToken || "",
+    bridgeToken: auth?.bridgeToken || "",
+    bridgeTokenExpiresAt: auth?.bridgeTokenExpiresAt || "",
     email: auth?.email || "",
     memberId: auth?.memberId || "",
     role: auth?.role || "",
@@ -256,9 +258,28 @@ async function validateLicense(accessToken, appVersion, context = {}) {
 }
 
 function authFromSession(session, license, fallbackEmail) {
+  const bridge = license?.bridge || license?.aexBridge || license?.aex_bridge || {};
+  const bridgeToken = String(
+    license?.bridgeToken
+      || license?.aexBridgeToken
+      || license?.aex_bridge_token
+      || bridge?.token
+      || "",
+  ).trim();
+  const bridgeTokenExpiresAt = String(
+    license?.bridgeTokenExpiresAt
+      || license?.aexBridgeTokenExpiresAt
+      || license?.aex_bridge_token_expires_at
+      || bridge?.expiresAt
+      || bridge?.expires_at
+      || "",
+  ).trim();
+
   return {
     accessToken: session.accessToken,
     refreshToken: session.refreshToken,
+    bridgeToken,
+    bridgeTokenExpiresAt,
     expiresAt: license.expiresAt,
     email: license.member?.email || session.email || fallbackEmail,
     memberId: license.member?.id || "",

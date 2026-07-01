@@ -156,6 +156,18 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
   const showError = (msg) => showToast(msg, "error");
 
   useEffect(() => {
+    const handleAegpShortcutError = (event) => {
+      const message = String(
+        event?.detail?.message || "Plugin bloqueado. Valide a licenca novamente no Arizona App."
+      );
+      showToast(message, "error");
+    };
+
+    window.addEventListener("arizona-aegp:shortcut-error", handleAegpShortcutError);
+    return () => window.removeEventListener("arizona-aegp:shortcut-error", handleAegpShortcutError);
+  }, [showToast]);
+
+  useEffect(() => {
     authSessionRef.current = authSession;
   }, [authSession]);
 
@@ -709,6 +721,8 @@ function authSessionChanged(currentSession, nextSession) {
   return [
     "accessToken",
     "refreshToken",
+    "bridgeToken",
+    "bridgeTokenExpiresAt",
     "email",
     "memberId",
     "role",

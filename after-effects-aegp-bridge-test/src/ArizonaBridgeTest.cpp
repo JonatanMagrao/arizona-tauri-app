@@ -1,11 +1,12 @@
 #include "ArizonaBridgeTest.h"
 
+#include "BridgeProtocol.h"
+#include "BridgeSecurity.h"
 #include "BridgeContext.h"
 #include "actions/MoveLayersToMarkers.h"
 #include "actions/ShowAlert.h"
 
 #include <atomic>
-#include <cwctype>
 #include <mutex>
 #include <queue>
 #include <string>
@@ -15,7 +16,9 @@ static AEGP_PluginID S_my_id = 0L;
 static SPBasicSuite* sP = nullptr;
 static std::atomic<bool> S_pipe_started(false);
 static std::mutex S_command_mutex;
-static std::queue<std::string> S_commands;
+static std::queue<BridgeCommandEnvelope> S_commands;
+static std::mutex S_protocol_mutex;
+static BridgeProtocolState S_protocol_state;
 
 static BridgeContext CurrentContext()
 {
@@ -25,13 +28,13 @@ static BridgeContext CurrentContext()
     return context;
 }
 
-static void QueueCommand(const std::string& command)
+static void QueueCommand(const BridgeCommandEnvelope& command)
 {
     std::lock_guard<std::mutex> lock(S_command_mutex);
     S_commands.push(command);
 }
 
-static bool PopCommand(std::string& command)
+static bool PopCommand(BridgeCommandEnvelope& command)
 {
     std::lock_guard<std::mutex> lock(S_command_mutex);
     if (S_commands.empty()) {
@@ -43,117 +46,23 @@ static bool PopCommand(std::string& command)
     return true;
 }
 
-static std::wstring FileNameFromPath(const std::wstring& path)
+static bool ValidateCommandForClient(
+    const std::string& raw_command,
+    DWORD client_pid,
+    BridgeCommandEnvelope& command)
 {
-    const size_t slash_pos = path.find_last_of(L"\\/");
-    if (slash_pos == std::wstring::npos) {
-        return path;
-    }
-
-    return path.substr(slash_pos + 1);
+    std::string error;
+    std::lock_guard<std::mutex> lock(S_protocol_mutex);
+    return TryValidateBridgeCommand(raw_command, client_pid, S_protocol_state, command, error);
 }
 
-static bool WideEqualsIgnoreCase(const std::wstring& left, const wchar_t* right)
+static void HandleQueuedCommand(const BridgeCommandEnvelope& queued_command)
 {
-    const std::wstring right_text(right);
-    if (left.size() != right_text.size()) {
-        return false;
-    }
-
-    for (size_t index = 0; index < left.size(); ++index) {
-        if (std::towlower(left[index]) != std::towlower(right_text[index])) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-static bool IsAllowedPipeClient(HANDLE pipe)
-{
-    DWORD client_pid = 0;
-    if (!GetNamedPipeClientProcessId(pipe, &client_pid)) {
-        return false;
-    }
-
-    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, client_pid);
-    if (!process) {
-        return false;
-    }
-
-    wchar_t image_path[4096] = {};
-    DWORD image_path_len = static_cast<DWORD>(sizeof(image_path) / sizeof(image_path[0]));
-    const BOOL got_path = QueryFullProcessImageNameW(process, 0, image_path, &image_path_len);
-    CloseHandle(process);
-
-    if (!got_path || image_path_len == 0) {
-        return false;
-    }
-
-    const std::wstring file_name = FileNameFromPath(std::wstring(image_path, image_path_len));
-    return WideEqualsIgnoreCase(file_name, L"arizona-app.exe");
-}
-
-static std::string JsonStringValue(const std::string& json, const std::string& key)
-{
-    const std::string quoted_key = "\"" + key + "\"";
-    const size_t key_pos = json.find(quoted_key);
-    if (key_pos == std::string::npos) {
-        return "";
-    }
-
-    const size_t colon_pos = json.find(':', key_pos + quoted_key.size());
-    if (colon_pos == std::string::npos) {
-        return "";
-    }
-
-    const size_t start_quote = json.find('"', colon_pos + 1);
-    if (start_quote == std::string::npos) {
-        return "";
-    }
-
-    std::string value;
-    bool escaped = false;
-    for (size_t index = start_quote + 1; index < json.size(); ++index) {
-        const char ch = json[index];
-        if (escaped) {
-            switch (ch) {
-                case 'n': value.push_back('\n'); break;
-                case 'r': value.push_back('\r'); break;
-                case 't': value.push_back('\t'); break;
-                default: value.push_back(ch); break;
-            }
-            escaped = false;
-            continue;
-        }
-
-        if (ch == '\\') {
-            escaped = true;
-            continue;
-        }
-
-        if (ch == '"') {
-            break;
-        }
-
-        value.push_back(ch);
-    }
-
-    return value;
-}
-
-static void HandleQueuedCommand(const std::string& raw_command)
-{
-    const std::string command = JsonStringValue(raw_command, "command");
+    const std::string& command = queued_command.command;
     const BridgeContext context = CurrentContext();
 
     if (command == "show_alert") {
-        std::string message = JsonStringValue(raw_command, "message");
-        if (message.empty()) {
-            message = "ponte feita";
-        }
-
-        RunShowAlert(context, message);
+        RunShowAlert(context, queued_command.show_alert_message);
         return;
     }
 
@@ -191,7 +100,7 @@ static A_Err IdleHook(
         *max_sleepPL = 1;
     }
 
-    std::string command;
+    BridgeCommandEnvelope command;
     while (PopCommand(command)) {
         HandleQueuedCommand(command);
     }
@@ -201,16 +110,18 @@ static A_Err IdleHook(
 
 static DWORD WINAPI PipeServerThread(LPVOID)
 {
+    PipeSecurityAttributes pipe_security;
+
     while (true) {
         HANDLE pipe = CreateNamedPipeW(
             S_pipe_name,
             PIPE_ACCESS_INBOUND,
-            PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+            PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
             1,
-            4096,
-            4096,
+            16384,
+            16384,
             0,
-            nullptr);
+            pipe_security.get());
 
         if (pipe == INVALID_HANDLE_VALUE) {
             Sleep(1000);
@@ -220,20 +131,31 @@ static DWORD WINAPI PipeServerThread(LPVOID)
         const BOOL connected =
             ConnectNamedPipe(pipe, nullptr) ? TRUE : (GetLastError() == ERROR_PIPE_CONNECTED);
 
-        if (connected && IsAllowedPipeClient(pipe)) {
+        DWORD client_pid = 0;
+        std::wstring client_image_path;
+        std::string validation_error;
+        if (connected && IsAllowedPipeClient(pipe, client_pid, client_image_path, validation_error)) {
             char buffer[4096] = {};
             DWORD bytes_read = 0;
             std::string message;
+            bool payload_too_large = false;
 
             while (ReadFile(pipe, buffer, sizeof(buffer), &bytes_read, nullptr) && bytes_read > 0) {
+                if (message.size() + bytes_read > 16384) {
+                    payload_too_large = true;
+                    break;
+                }
                 message.append(buffer, bytes_read);
                 if (bytes_read < sizeof(buffer)) {
                     break;
                 }
             }
 
-            if (!message.empty()) {
-                QueueCommand(message);
+            if (!message.empty() && !payload_too_large) {
+                BridgeCommandEnvelope command;
+                if (ValidateCommandForClient(message, client_pid, command)) {
+                    QueueCommand(command);
+                }
             }
         }
 

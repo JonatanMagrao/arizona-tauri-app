@@ -1,43 +1,77 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use chrono::{Duration, SecondsFormat, Utc};
 use serde_json::json;
 
 const PIPE_NAME: &str = r"\\.\pipe\arizona-aegp-bridge";
+const PROTOCOL_VERSION: &str = "arizona.aex.v1";
+const COMMAND_TTL_SECONDS: i64 = 10;
+static NEXT_SEQ: AtomicU64 = AtomicU64::new(1);
 
-pub fn send_show_alert(message: &str) -> Result<String, String> {
+pub struct BridgeCommandAuth {
+    bridge_token: String,
+}
+
+impl BridgeCommandAuth {
+    pub fn new(bridge_token: impl Into<String>) -> Result<Self, String> {
+        let bridge_token = bridge_token.into().trim().to_string();
+        if bridge_token.is_empty() {
+            return Err("Token do bridge AEX ausente.".to_string());
+        }
+
+        Ok(Self { bridge_token })
+    }
+}
+
+pub fn send_show_alert(message: &str, auth: &BridgeCommandAuth) -> Result<String, String> {
     send_command(
         "show_alert",
         json!({
             "message": message
         }),
+        auth,
     )
 }
 
-pub fn send_move_layers_backward() -> Result<String, String> {
-    send_command("move_layers_backward", serde_json::Value::Null)
+pub fn send_move_layers_backward(auth: &BridgeCommandAuth) -> Result<String, String> {
+    send_command("move_layers_backward", serde_json::Value::Null, auth)
 }
 
-pub fn send_move_layers_forward() -> Result<String, String> {
-    send_command("move_layers_forward", serde_json::Value::Null)
+pub fn send_move_layers_forward(auth: &BridgeCommandAuth) -> Result<String, String> {
+    send_command("move_layers_forward", serde_json::Value::Null, auth)
 }
 
-pub fn send_move_jump_marker() -> Result<String, String> {
-    send_command("move_jump_marker", serde_json::Value::Null)
+pub fn send_move_jump_marker(auth: &BridgeCommandAuth) -> Result<String, String> {
+    send_command("move_jump_marker", serde_json::Value::Null, auth)
 }
 
-pub fn send_select_jump_marker_layer() -> Result<String, String> {
-    send_command("select_jump_marker_layer", serde_json::Value::Null)
+pub fn send_select_jump_marker_layer(auth: &BridgeCommandAuth) -> Result<String, String> {
+    send_command("select_jump_marker_layer", serde_json::Value::Null, auth)
 }
 
-pub fn send_adjust_markers_to_tail() -> Result<String, String> {
-    send_command("adjust_markers_to_tail", serde_json::Value::Null)
+pub fn send_adjust_markers_to_tail(auth: &BridgeCommandAuth) -> Result<String, String> {
+    send_command("adjust_markers_to_tail", serde_json::Value::Null, auth)
 }
 
-fn send_command(command: &str, args: serde_json::Value) -> Result<String, String> {
+fn send_command(
+    command: &str,
+    args: serde_json::Value,
+    auth: &BridgeCommandAuth,
+) -> Result<String, String> {
+    let seq = NEXT_SEQ.fetch_add(1, Ordering::Relaxed);
+    let issued_at = Utc::now();
+    let expires_at = issued_at + Duration::seconds(COMMAND_TTL_SECONDS);
     let command_id = format!("aegp_cmd_{}", chrono::Utc::now().timestamp_millis());
     let payload = json!({
         "type": "ae.command",
+        "protocolVersion": PROTOCOL_VERSION,
         "id": command_id,
+        "seq": seq,
+        "issuedAt": issued_at.to_rfc3339_opts(SecondsFormat::Millis, true),
+        "expiresAt": expires_at.to_rfc3339_opts(SecondsFormat::Millis, true),
         "command": command,
-        "args": args
+        "args": args,
+        "bridgeToken": auth.bridge_token.as_str()
     });
 
     send_payload(&payload.to_string())?;

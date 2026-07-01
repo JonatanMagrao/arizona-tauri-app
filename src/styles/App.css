@@ -1610,7 +1610,7 @@ textarea:focus{
   min-height: 0;
   height: 100%;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -1648,6 +1648,42 @@ textarea:focus{
   line-height: 1;
 }
 
+.settings-tabs{
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 10px 14px 0;
+  border-bottom: 1px solid var(--border);
+  background: #15171a;
+}
+
+.settings-tab{
+  min-height: 34px;
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.settings-tab:hover{
+  color: var(--text);
+  background: #1a1c1f;
+}
+
+.settings-tab--active{
+  border-color: var(--border);
+  background: #111316;
+  color: var(--text);
+}
+
 .settings-window__body{
   min-height: 0;
   overflow: auto;
@@ -1670,6 +1706,12 @@ textarea:focus{
   scrollbar-color: var(--primary) #15171a;
 }
 
+.settings-tab-panel{
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
 .settings-form--window .settings-field{
   grid-template-columns: 136px minmax(0, 1fr);
 }
@@ -1681,9 +1723,9 @@ textarea:focus{
 .settings-bridge-shortcuts{
   display: grid;
   gap: 10px;
-  margin-top: 2px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
 }
 
 .settings-bridge-shortcuts h2{
@@ -1754,6 +1796,14 @@ textarea:focus{
 }
 
 @media (max-width: 680px){
+  .settings-tabs{
+    align-items: stretch;
+  }
+
+  .settings-tab{
+    flex: 1 1 0;
+  }
+
   .settings-form--window .settings-field{
     grid-template-columns: 1fr;
     align-items: start;

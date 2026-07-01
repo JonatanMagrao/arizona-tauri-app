@@ -12,7 +12,6 @@ import { formatDuration } from "../../utils/formatters";
 import { normalizeProductReport } from "../../utils/productReport";
 import {
   DEFAULT_SETTINGS,
-  isSettingsReady,
   normalizeProductsYear,
   normalizeSettings,
 } from "../../utils/settings";
@@ -58,6 +57,11 @@ const BRIDGE_SHORTCUT_ACTIONS = Object.freeze([
     placeholder: "Ctrl+NumpadDecimal",
   },
 ]);
+
+const SETTINGS_TABS = Object.freeze({
+  GENERAL: "general",
+  AFTER_SHORTCUTS: "afterShortcuts",
+});
 
 function SecondaryWindow() {
   const { toast, showToast, hideToast } = useAutoHideToast();
@@ -280,10 +284,14 @@ function renderSecondaryView(state, closeWindow, showToast, onAdminAccessRestric
 }
 
 function SettingsView({ showError, showSuccess }) {
+  const [activeSettingsTab, setActiveSettingsTab] = useState(SETTINGS_TABS.GENERAL);
+  const [persistedSettings, setPersistedSettings] = useState(DEFAULT_SETTINGS);
   const [settingsDraft, setSettingsDraft] = useState(DEFAULT_SETTINGS);
+  const [shortcutDraft, setShortcutDraft] = useState(DEFAULT_SETTINGS);
   const [appInfo, setAppInfo] = useState({ version: "", authorName: "", authorUrl: "" });
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [savingShortcutField, setSavingShortcutField] = useState("");
   const [choosingField, setChoosingField] = useState("");
   const [recordingShortcutField, setRecordingShortcutField] = useState("");
 
@@ -292,7 +300,11 @@ function SettingsView({ showError, showSuccess }) {
 
     invokeCommand(commandNames.loadAppConfig)
       .then((config) => {
-        if (mounted) setSettingsDraft(normalizeSettings(config));
+        if (!mounted) return;
+        const normalized = normalizeSettings(config);
+        setPersistedSettings(normalized);
+        setSettingsDraft(normalized);
+        setShortcutDraft(normalized);
       })
       .catch((error) => showError(String(error || "Não foi possível carregar as configurações.")))
       .finally(() => {
@@ -322,6 +334,53 @@ function SettingsView({ showError, showSuccess }) {
     setSettingsDraft((config) => ({ ...config, [field]: value }));
   };
 
+  const cancelShortcutRecording = () => {
+    if (recordingShortcutField) {
+      setShortcutDraft((config) => ({
+        ...config,
+        [recordingShortcutField]: persistedSettings[recordingShortcutField] || "",
+      }));
+    }
+    setRecordingShortcutField("");
+  };
+
+  const startShortcutRecording = (field) => {
+    if (recordingShortcutField === field) {
+      cancelShortcutRecording();
+      return;
+    }
+
+    setShortcutDraft((config) => ({
+      ...config,
+      [field]: persistedSettings[field] || config[field] || "",
+    }));
+    setRecordingShortcutField(field);
+  };
+
+  const saveShortcut = async (field, shortcut) => {
+    const previousShortcut = persistedSettings[field] || shortcutDraft[field] || "";
+    const nextConfig = normalizeSettings({ ...persistedSettings, [field]: shortcut });
+
+    setShortcutDraft((config) => ({ ...config, [field]: shortcut }));
+    setRecordingShortcutField("");
+    setSavingShortcutField(field);
+
+    try {
+      const saved = await invokeCommand(commandNames.saveAppConfig, {
+        config: nextConfig,
+      });
+      const normalized = normalizeSettings(saved);
+      setPersistedSettings(normalized);
+      setShortcutDraft(normalized);
+      showSuccess("Atalho salvo.");
+    } catch (error) {
+      setShortcutDraft((config) => ({ ...config, [field]: previousShortcut }));
+      showError(String(error || "NÃ£o foi possÃ­vel salvar o atalho."));
+    } finally {
+      setSavingShortcutField("");
+    }
+  };
+
   useEffect(() => {
     if (!recordingShortcutField) return undefined;
 
@@ -330,15 +389,14 @@ function SettingsView({ showError, showSuccess }) {
       event.stopPropagation();
 
       if (event.key === "Escape") {
-        setRecordingShortcutField("");
+        cancelShortcutRecording();
         return;
       }
 
       const shortcut = shortcutFromKeyboardEvent(event);
       if (!shortcut) return;
 
-      updateSettingsDraft(recordingShortcutField, shortcut);
-      setRecordingShortcutField("");
+      saveShortcut(recordingShortcutField, shortcut);
     };
 
     window.addEventListener("keydown", handleShortcutKeyDown, { capture: true });
@@ -364,17 +422,25 @@ function SettingsView({ showError, showSuccess }) {
 
   const saveSettings = async (event) => {
     event.preventDefault();
-    if (!isSettingsReady(settingsDraft)) {
-      showError("Preencha Drive, Fotos Flow, After Effects, Produtos e os atalhos Bridge.");
+    if (!isGeneralSettingsReady(settingsDraft)) {
+      showError("Preencha Drive, Fotos Flow, After Effects, Produtos e Ano Projetos.");
       return;
     }
 
     setIsSaving(true);
     try {
-      const saved = await invokeCommand(commandNames.saveAppConfig, {
-        config: normalizeSettings(settingsDraft),
+      const config = normalizeSettings({
+        ...persistedSettings,
+        ...settingsDraft,
+        ...shortcutDraft,
       });
-      setSettingsDraft(normalizeSettings(saved));
+      const saved = await invokeCommand(commandNames.saveAppConfig, {
+        config,
+      });
+      const normalized = normalizeSettings(saved);
+      setPersistedSettings(normalized);
+      setSettingsDraft(normalized);
+      setShortcutDraft(normalized);
       showSuccess("Configurações salvas.");
     } catch (error) {
       showError(String(error || "Não foi possível salvar as configurações."));
@@ -393,8 +459,9 @@ function SettingsView({ showError, showSuccess }) {
     if (!result.ok) showError(result.message);
   };
 
-  const busy = isLoading || isSaving || Boolean(choosingField);
-  const canSave = !busy && !recordingShortcutField && isSettingsReady(settingsDraft);
+  const busy = isLoading || isSaving || Boolean(choosingField) || Boolean(savingShortcutField);
+  const canSave = !busy && !recordingShortcutField && isGeneralSettingsReady(settingsDraft);
+  const shortcutsBusy = busy;
   const currentYear = String(new Date().getFullYear());
 
   return (
@@ -405,7 +472,36 @@ function SettingsView({ showError, showSuccess }) {
           {appInfo.version && <span className="settings-version">v{appInfo.version}</span>}
         </header>
 
+        <nav className="settings-tabs" role="tablist" aria-label="Configuracoes">
+          <button
+            type="button"
+            className={`settings-tab ${activeSettingsTab === SETTINGS_TABS.GENERAL ? "settings-tab--active" : ""}`}
+            onClick={() => {
+              cancelShortcutRecording();
+              setActiveSettingsTab(SETTINGS_TABS.GENERAL);
+            }}
+            role="tab"
+            aria-selected={activeSettingsTab === SETTINGS_TABS.GENERAL}
+          >
+            Configura&ccedil;&otilde;es
+          </button>
+          <button
+            type="button"
+            className={`settings-tab ${activeSettingsTab === SETTINGS_TABS.AFTER_SHORTCUTS ? "settings-tab--active" : ""}`}
+            onClick={() => {
+              cancelShortcutRecording();
+              setActiveSettingsTab(SETTINGS_TABS.AFTER_SHORTCUTS);
+            }}
+            role="tab"
+            aria-selected={activeSettingsTab === SETTINGS_TABS.AFTER_SHORTCUTS}
+          >
+            Atalhos After
+          </button>
+        </nav>
+
         <form className="settings-form settings-form--window" onSubmit={saveSettings}>
+          {activeSettingsTab === SETTINGS_TABS.GENERAL && (
+            <section className="settings-tab-panel" role="tabpanel">
           <label className="settings-field settings-field--drive">
             <span>Drive</span>
             <div className="settings-drive-row settings-path-row">
@@ -492,10 +588,15 @@ function SettingsView({ showError, showSuccess }) {
             />
           </label>
 
-          <section className="settings-bridge-shortcuts" aria-label="Atalhos Bridge">
-            <h2>Atalhos Bridge</h2>
+            </section>
+          )}
+
+          {activeSettingsTab === SETTINGS_TABS.AFTER_SHORTCUTS && (
+          <section className="settings-bridge-shortcuts settings-tab-panel" aria-label="Atalhos After" role="tabpanel">
+            <h2>Atalhos After</h2>
             {BRIDGE_SHORTCUT_ACTIONS.map((action) => {
               const isRecording = recordingShortcutField === action.field;
+              const isSavingShortcut = savingShortcutField === action.field;
               return (
                 <label className="settings-field" key={action.field}>
                   <span>{action.label}</span>
@@ -503,26 +604,27 @@ function SettingsView({ showError, showSuccess }) {
                     <input
                       className="input settings-short-input"
                       type="text"
-                      value={settingsDraft[action.field]}
-                      onChange={(event) => updateSettingsDraft(action.field, event.target.value)}
+                      value={shortcutDraft[action.field]}
                       placeholder={action.placeholder}
                       autoComplete="off"
-                      disabled={isLoading || isSaving || Boolean(recordingShortcutField)}
+                      readOnly
+                      disabled={shortcutsBusy || (Boolean(recordingShortcutField) && !isRecording)}
                     />
                     <button
                       type="button"
                       className="btn btn-outline"
-                      onClick={() => setRecordingShortcutField(isRecording ? "" : action.field)}
-                      disabled={isLoading || isSaving || (Boolean(recordingShortcutField) && !isRecording)}
+                      onClick={() => startShortcutRecording(action.field)}
+                      disabled={shortcutsBusy || (Boolean(recordingShortcutField) && !isRecording)}
                       aria-pressed={isRecording}
                     >
-                      {isRecording ? "Cancelar" : "Gravar"}
+                      {isSavingShortcut ? "Salvando..." : isRecording ? "Cancelar" : "Gravar"}
                     </button>
                   </div>
                 </label>
               );
             })}
           </section>
+          )}
 
           <footer className="settings-actions settings-actions--window">
             <div className="settings-credit">
@@ -535,9 +637,11 @@ function SettingsView({ showError, showSuccess }) {
                 </>
               )}
             </div>
-            <button type="submit" className="btn btn-primary" disabled={!canSave}>
-              {isSaving ? "Salvando..." : "Salvar"}
-            </button>
+            {activeSettingsTab === SETTINGS_TABS.GENERAL && (
+              <button type="submit" className="btn btn-primary" disabled={!canSave}>
+                {isSaving ? "Salvando..." : "Salvar"}
+              </button>
+            )}
           </footer>
         </form>
       </section>
@@ -1041,6 +1145,27 @@ function normalizeAppInfo(info) {
     authorName: String(info?.authorName || "").trim(),
     authorUrl: String(info?.authorUrl || "").trim(),
   };
+}
+
+function isGeneralSettingsReady(config) {
+  const year = String(config?.produtosYear ?? "").trim();
+  return Boolean(
+    String(config?.drive ?? "").trim()
+      && String(config?.produtosPath ?? "").trim()
+      && String(config?.aeVersion ?? "").trim()
+      && String(config?.produtos ?? "").trim()
+      && !isIncompleteDriveEntrypointValue(config?.drive)
+      && (year === "" || /^\d{4}$/.test(year))
+  );
+}
+
+function isIncompleteDriveEntrypointValue(value) {
+  const parts = String(value ?? "")
+    .trim()
+    .split(/[\\/]+/)
+    .filter(Boolean);
+  const lastPart = parts[parts.length - 1] || "";
+  return !lastPart || lastPart.toLowerCase() === "drives compartilhados";
 }
 
 function shortcutFromKeyboardEvent(event) {
