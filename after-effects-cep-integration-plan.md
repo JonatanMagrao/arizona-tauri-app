@@ -175,6 +175,33 @@ Possivel UX:
 - mensagem curta quando a licenca estiver expirada;
 - sem revelar detalhes tecnicos de seguranca.
 
+## Estado Atual no Tauri
+
+Primeira base implementada do lado Tauri:
+
+- modulo `license` com snapshot serializavel de licenca;
+- modulo `cep_bridge` com protocolo `arizona.cep.v1`;
+- servidor WebSocket local em `127.0.0.1` com porta aleatoria por execucao;
+- token efemero por execucao;
+- arquivo local `cep-bridge-session.json` com dados de descoberta para o futuro painel CEP;
+- bloqueio inicial quando nao ha sessao/licenca valida;
+- broadcast de `license.status` ou `blocked` quando a sessao muda;
+- allowlist inicial de comandos;
+- comando Tauri `cep_bridge_status` para diagnostico;
+- comando Tauri `cep_bridge_send_test_command` para enviar comandos a um cliente fake/conectado;
+- cliente fake em `tools/cep-bridge-mock.html`;
+- testes unitarios para SHA-1/base64/handshake WebSocket.
+
+Nesta primeira fase, a licenca do bridge e derivada da sessao ja validada pelo login do Arizona App. A validacao forte continua vindo do fluxo existente de login/`validate-license`; o CEP nao decide licenca.
+
+Ainda pendente para endurecimento:
+
+- assinatura HMAC por mensagem;
+- `nonce`/`seq` com rejeicao de replay;
+- expiracao curta por comando;
+- tela interna de diagnostico, caso seja util no app;
+- integracao real com painel CEP.
+
 ## Fases de Implementacao
 
 ### Fase 1: Contrato e Prototipo Local

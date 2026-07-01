@@ -89,6 +89,7 @@ version = "1.3.0"
 dependencies = [
  "chrono",
  "keyring",
+ "rand 0.9.4",
  "regex",
  "roxmltree",
  "rusqlite",

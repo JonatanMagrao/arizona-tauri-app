@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 export const commandNames = Object.freeze({
   abrirAe: "abrir_ae",
   appInfo: "app_info",
+  cepBridgeSendTestCommand: "cep_bridge_send_test_command",
+  cepBridgeStatus: "cep_bridge_status",
   clearSecureAuth: "clear_secure_auth",
   completeLogin: "complete_login",
   duplicateIdenticalMp4: "duplicate_identical_mp4",

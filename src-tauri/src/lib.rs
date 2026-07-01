@@ -1,9 +1,13 @@
 mod arizona;
+mod cep_bridge;
 mod history;
+mod license;
 mod media;
 mod settings;
 
 use arizona::{ActionResponse, Arizona, MediaFile, ProductImportReport};
+use cep_bridge::CepBridgeState;
+use license::{LicenseInput, LicenseStatus};
 use settings::AppConfig;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -59,13 +63,20 @@ struct SecureAuthRecord {
 pub fn run() {
     tauri::Builder::default()
         .manage(AuthState::default())
+        .manage(CepBridgeState::new())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             disable_browser_accelerator_keys(app);
+            let bridge = app.state::<CepBridgeState>();
+            if let Err(err) = bridge.start(app.handle().clone()) {
+                bridge.set_last_error(err);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            cep_bridge_status,
+            cep_bridge_send_test_command,
             complete_login,
             update_auth_session,
             restrict_admin_session,
@@ -122,11 +133,7 @@ pub fn run() {
 fn disable_browser_accelerator_keys(app: &tauri::App) {
     #[cfg(windows)]
     {
-        for label in [
-            LOGIN_WINDOW_LABEL,
-            APP_WINDOW_LABEL,
-            SECONDARY_WINDOW_LABEL,
-        ] {
+        for label in [LOGIN_WINDOW_LABEL, APP_WINDOW_LABEL, SECONDARY_WINDOW_LABEL] {
             if let Some(window) = app.get_webview_window(label) {
                 let _ = window.with_webview(|webview| unsafe {
                     use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
@@ -220,9 +227,7 @@ fn load_secure_auth() -> Result<Option<SecureAuthRecord>, String> {
 
 #[tauri::command]
 fn save_secure_auth(record: SecureAuthRecord) -> Result<ActionResponse, String> {
-    if record.refresh_token.trim().is_empty()
-        || record.email.trim().is_empty()
-    {
+    if record.refresh_token.trim().is_empty() || record.email.trim().is_empty() {
         return Ok(ActionResponse::err("Sessão segura incompleta."));
     }
 
@@ -232,27 +237,29 @@ fn save_secure_auth(record: SecureAuthRecord) -> Result<ActionResponse, String> 
         .map_err(|err| format!("Não foi possível salvar a sessão segura: {err}"))?;
 
     match read_secure_auth_record(&secure_auth_entry()?)? {
-        Some(saved) if saved.refresh_token == record.refresh_token && saved.email == record.email => {}
+        Some(saved)
+            if saved.refresh_token == record.refresh_token && saved.email == record.email => {}
         Some(_) => return Ok(ActionResponse::err("A sessão segura salva não confere.")),
-        None => return Ok(ActionResponse::err("A sessão segura não foi encontrada após salvar.")),
+        None => {
+            return Ok(ActionResponse::err(
+                "A sessão segura não foi encontrada após salvar.",
+            ))
+        }
     }
 
     Ok(ActionResponse::ok())
 }
 
 #[tauri::command]
-fn clear_secure_auth() -> Result<ActionResponse, String> {
+fn clear_secure_auth(bridge: State<CepBridgeState>) -> Result<ActionResponse, String> {
     let entry = secure_auth_entry()?;
     let _ = entry.delete_credential();
+    bridge.set_license_status(LicenseStatus::no_session());
     Ok(ActionResponse::ok())
 }
 
 fn secure_auth_entry() -> Result<keyring::Entry, String> {
-    keyring::Entry::new_with_target(
-        SECURE_AUTH_TARGET,
-        SECURE_AUTH_SERVICE,
-        SECURE_AUTH_ACCOUNT,
-    )
+    keyring::Entry::new_with_target(SECURE_AUTH_TARGET, SECURE_AUTH_SERVICE, SECURE_AUTH_ACCOUNT)
         .map_err(|_| "Não foi possível acessar o cofre do sistema.".to_string())
 }
 
@@ -279,9 +286,29 @@ fn read_secure_auth_record(entry: &keyring::Entry) -> Result<Option<SecureAuthRe
 }
 
 #[tauri::command]
+fn cep_bridge_status(bridge: State<CepBridgeState>) -> Result<cep_bridge::BridgeStatus, String> {
+    Ok(bridge.status())
+}
+
+#[tauri::command]
+fn cep_bridge_send_test_command(
+    bridge: State<CepBridgeState>,
+    command: String,
+    args: Option<serde_json::Value>,
+) -> Result<ActionResponse, String> {
+    Ok(
+        match bridge.send_command(&command, args.unwrap_or(serde_json::Value::Null)) {
+            Ok(command_id) => ActionResponse::ok_message(command_id),
+            Err(err) => ActionResponse::err(err),
+        },
+    )
+}
+
+#[tauri::command]
 fn complete_login(
     app: AppHandle,
     auth: State<AuthState>,
+    bridge: State<CepBridgeState>,
     session: AuthSession,
 ) -> Result<ActionResponse, String> {
     let email = session.email.trim();
@@ -290,6 +317,7 @@ fn complete_login(
     }
 
     store_auth_session(&auth, session.clone())?;
+    bridge.set_license_status(license_status_from_session(Some(&session)));
     emit_auth_session(&app, "arizona-auth:login", &session)?;
 
     let app_window = app
@@ -314,6 +342,7 @@ fn complete_login(
 fn update_auth_session(
     app: AppHandle,
     auth: State<AuthState>,
+    bridge: State<CepBridgeState>,
     session: AuthSession,
 ) -> Result<ActionResponse, String> {
     let email = session.email.trim();
@@ -322,19 +351,26 @@ fn update_auth_session(
     }
 
     store_auth_session(&auth, session.clone())?;
+    bridge.set_license_status(license_status_from_session(Some(&session)));
     emit_auth_session(&app, "arizona-auth:update", &session)?;
     Ok(ActionResponse::ok())
 }
 
 #[tauri::command]
-fn restrict_admin_session(app: AppHandle, auth: State<AuthState>) -> Result<ActionResponse, String> {
+fn restrict_admin_session(
+    app: AppHandle,
+    auth: State<AuthState>,
+    bridge: State<CepBridgeState>,
+) -> Result<ActionResponse, String> {
     let session = {
         let mut stored_session = auth
             .session
             .lock()
             .map_err(|_| "Nao foi possivel atualizar a sessao.".to_string())?;
         let Some(session) = stored_session.as_mut() else {
-            return Ok(ActionResponse::err("Entre com email e senha para continuar."));
+            return Ok(ActionResponse::err(
+                "Entre com email e senha para continuar.",
+            ));
         };
 
         if session.role.as_deref().unwrap_or_default().trim() == "admin" {
@@ -344,6 +380,7 @@ fn restrict_admin_session(app: AppHandle, auth: State<AuthState>) -> Result<Acti
         session.clone()
     };
 
+    bridge.set_license_status(license_status_from_session(Some(&session)));
     emit_auth_session(&app, "arizona-auth:update", &session)?;
     Ok(ActionResponse::ok())
 }
@@ -355,6 +392,27 @@ fn store_auth_session(auth: &State<AuthState>, session: AuthSession) -> Result<(
         .map_err(|_| "Nao foi possivel atualizar a sessao.".to_string())?;
     *stored_session = Some(session);
     Ok(())
+}
+
+fn license_status_from_session(session: Option<&AuthSession>) -> LicenseStatus {
+    let Some(session) = session else {
+        return LicenseStatus::no_session();
+    };
+
+    LicenseStatus::from_input(LicenseInput {
+        has_access_token: session
+            .access_token
+            .as_deref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false),
+        email: session.email.clone(),
+        member_id: session.member_id.clone(),
+        role: session.role.clone(),
+        organization_id: session.organization_id.clone(),
+        organization_name: session.organization_name.clone(),
+        seats_allowed: session.seats_allowed,
+        expires_at: session.expires_at.clone(),
+    })
 }
 
 fn emit_auth_session(
@@ -604,7 +662,12 @@ fn admin_window_auth(auth: &State<AuthState>) -> Result<AdminWindowAuth, String>
         .map_err(|_| "Nao foi possivel ler a sessao.".to_string())?
         .clone()
         .ok_or_else(|| "Entre com email e senha para continuar.".to_string())?;
-    let role = session.role.as_deref().unwrap_or_default().trim().to_string();
+    let role = session
+        .role
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
 
     if role != "admin" {
         return Err("Acesso admin disponivel apenas para gestores.".to_string());
