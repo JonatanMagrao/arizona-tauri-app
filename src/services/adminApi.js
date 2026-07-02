@@ -22,6 +22,10 @@ export async function releaseAdminDevice(auth, memberId) {
   });
 }
 
+export async function releaseCurrentDevice(auth) {
+  return releaseAdminDevice(auth, auth?.currentMemberId || auth?.memberId);
+}
+
 export async function removeAdminMember(auth, memberId) {
   return functionRequest(auth, "admin-remove-member", {
     organizationId: auth?.organizationId,

@@ -1756,6 +1756,49 @@ textarea:focus{
   grid-template-columns: minmax(0, 1fr) max-content max-content;
 }
 
+.settings-device-zone{
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 12px;
+  margin-top: 6px;
+  padding: 12px;
+  border: 1px solid rgba(248, 113, 113, .35);
+  border-radius: 8px;
+  background: rgba(127, 29, 29, .14);
+}
+
+.settings-device-zone__text{
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.settings-device-zone__text strong{
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.settings-device-zone__text span{
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.settings-device-zone__button{
+  border-color: rgba(248, 113, 113, .42);
+  color: #fecaca;
+}
+
+.settings-device-zone__button:hover:not(:disabled),
+.settings-device-zone__button:focus-visible:not(:disabled){
+  border-color: rgba(248, 113, 113, .72);
+  background: rgba(127, 29, 29, .28);
+  color: #fee2e2;
+}
+
 .settings-actions--window{
   margin-top: auto;
   padding-top: 14px;
@@ -1811,6 +1854,10 @@ textarea:focus{
 
   .settings-path-row,
   .settings-path-row--clearable{
+    grid-template-columns: 1fr;
+  }
+
+  .settings-device-zone{
     grid-template-columns: 1fr;
   }
 

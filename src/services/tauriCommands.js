@@ -5,7 +5,6 @@ export const commandNames = Object.freeze({
   aegpBridgeMoveLayersToMarkersCommand: "aegp_bridge_move_layers_to_markers_command",
   aegpBridgeSendTestCommand: "aegp_bridge_send_test_command",
   appInfo: "app_info",
-  cepBridgeSendTestCommand: "cep_bridge_send_test_command",
   cepBridgeStatus: "cep_bridge_status",
   clearSecureAuth: "clear_secure_auth",
   completeLogin: "complete_login",

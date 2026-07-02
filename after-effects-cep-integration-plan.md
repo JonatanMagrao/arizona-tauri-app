@@ -1,37 +1,58 @@
-# Plano: Integracao Tauri + Extensao CEP do After Effects
+﻿# Plano: Licenciamento da Extensao CEP pelo Tauri
 
 ## Objetivo
 
-Conectar o Arizona App em Tauri a uma extensao CEP do After Effects para:
+Fazer a extensao CEP do After Effects responder ao licenciamento do Arizona App em Tauri sem usar o CEP como ponte de comandos.
 
-- validar e liberar uso com base em licenca;
-- bloquear o painel CEP quando a licenca nao estiver valida;
-- enviar comandos seguros do Tauri para o painel CEP;
-- manter o ExtendScript dentro da extensao CEP, como camada local de execucao no After Effects;
-- evitar que logica sensivel de licenca, tokens duradouros ou permissoes fiquem dentro do CEP.
+A extensao deve apenas verificar um recibo de licenca assinado. Se o recibo for valido e liberar a feature `ae_panel`, a UI normal monta. Se nao for valido, a extensao fica bloqueada com uma mensagem estatica.
 
-## Premissa Principal
+## Decisao Atual
 
-O Tauri deve ser a autoridade local de sessao/licenca. O CEP deve depender do Tauri para saber se esta liberado.
+O CEP nao sera mais usado como ponte de comandos entre Tauri e After Effects.
 
-O CEP pode conter o ExtendScript necessario para controlar o After Effects, mas nao deve decidir sozinho se o usuario tem permissao para usar a ferramenta. Se o Tauri nao validar a licenca, o painel CEP entra em modo bloqueado.
+Os comandos automatizados que antes estavam planejados para passar pelo CEP foram movidos para o plugin nativo AEX. O AEX e o responsavel por receber os atalhos/comandos seguros do Tauri e executar a logica do After Effects.
 
-## Arquitetura Recomendada
+O papel do CEP fica limitado a:
+
+- ler o recibo local emitido pelo Tauri;
+- verificar a assinatura do recibo;
+- liberar ou bloquear a interface;
+- manter a logica visual e os fluxos existentes da extensao quando licenciada.
+
+## Arquitetura Final
 
 ```text
 Backend de licenca
         |
-        | login, refresh, validacao de plano, dispositivo, expiracao
+        | valida plano, dispositivo, assento e expiracao
+        | emite recibo JWS assinado
         v
 Arizona App / Tauri
         |
-        | canal local autenticado
+        | grava snapshot local sem segredo
         v
-Painel CEP no After Effects
+cep-license-receipt.json
         |
-        | CSInterface.evalScript(...)
+        | leitura local + verificacao de assinatura
         v
-ExtendScript / After Effects
+Extensao CEP no After Effects
+        |
+        | monta UI somente quando ae_panel estiver liberado
+        v
+ExtendScript local da extensao
+```
+
+Em paralelo:
+
+```text
+Arizona App / Tauri
+        |
+        | canal seguro do AEX
+        v
+Plugin AEX nativo
+        |
+        v
+After Effects
 ```
 
 ## Responsabilidades
@@ -39,230 +60,171 @@ ExtendScript / After Effects
 ### Backend
 
 - Autenticar usuario e organizacao.
-- Validar assinatura, plano, assento e status da licenca.
-- Emitir tokens curtos para o Tauri.
-- Controlar expiracao, revogacao e limite de dispositivos quando necessario.
+- Validar plano, assento, dispositivo e expiracao.
+- Emitir a sessao usada pelo Tauri.
+- Emitir o `bridgeToken` curto usado pelo AEX quando aplicavel.
+- Emitir um recibo JWS assinado para o CEP quando a feature `ae_panel` estiver liberada.
 
 ### Tauri
 
-- Fazer login e refresh de sessao.
+- Ser a autoridade local da sessao/licenca.
 - Guardar tokens sensiveis no cofre do sistema.
-- Validar se a licenca local esta ativa.
-- Abrir um canal local para o CEP.
-- Autorizar ou negar conexoes do CEP.
-- Enviar comandos estruturados para o CEP.
-- Assinar mensagens da sessao local.
-- Bloquear comandos quando a licenca expirar, for revogada ou estiver incompleta.
+- Receber o recibo assinado do backend durante login, resume e refresh.
+- Gravar `cep-license-receipt.json` no diretorio local da aplicacao.
+- Apagar `cep-license-receipt.json` quando a sessao for limpa, o device for liberado, o keyring falhar ou o app sair.
+- Remover `cep-bridge-session.json` legado no startup.
+- Continuar enviando comandos After apenas para o AEX, nao para o CEP.
 
-### CEP
+### Extensao CEP
 
-- Conectar ao Tauri quando o painel abrir.
-- Fazer handshake com o Tauri.
-- Exibir estado bloqueado quando nao houver autorizacao.
-- Receber apenas comandos conhecidos.
-- Validar argumentos antes de chamar ExtendScript.
-- Executar ExtendScript local via `CSInterface.evalScript(...)`.
-- Nunca guardar token duradouro ou segredo de licenca.
+- Ler `cep-license-receipt.json`.
+- Verificar assinatura e validade temporal do recibo.
+- Liberar a UI apenas se `licensed === true` e `allowedFeatures` contiver `ae_panel`.
+- Mostrar estado bloqueado quando o recibo estiver ausente, expirado, invalido ou sem `ae_panel`.
+- Nao guardar segredo permanente ou regra sensivel de licenca.
+- Nao receber comandos do Tauri e nao executar `evalScript` por pedido do Tauri.
 
 ### ExtendScript
 
-- Ficar como camada de execucao do After Effects.
-- Fazer operacoes especificas: trocar texto, importar arquivo, ajustar composicao, renderizar, localizar layer, etc.
+- Continuar como camada local da propria extensao.
 - Nao conter regra de licenca.
-- Nao aceitar codigo arbitrario vindo do Tauri; preferir funcoes conhecidas com argumentos controlados.
+- Nao ser alterado por esta etapa.
 
-## Canal Local
+### Plugin AEX
 
-Opcoes consideradas:
+- Continuar responsavel por comandos/atalhos After vindos do Tauri.
+- Nao ser alterado por esta etapa.
 
-- WebSocket em `127.0.0.1` com porta aleatoria por sessao.
-- HTTP local em `127.0.0.1`, bom para chamadas simples, menos ideal para eventos continuos.
-- Named pipe no Windows, preferivel para controle mais fechado por usuario.
+## Contrato do Recibo
 
-Recomendacao inicial:
+O backend retorna o recibo como string compact JWT/JWS no campo:
 
-- usar WebSocket local se a prioridade for simplicidade e compatibilidade com CEP;
-- avaliar named pipe se for viavel no CEP e se quisermos reduzir superficie de rede local.
+- `token`.
 
-## Fluxo de Autorizacao
+Por compatibilidade, o cliente tambem aceita:
 
-1. Usuario abre o Arizona App.
-2. Tauri carrega sessao segura do cofre do sistema.
-3. Tauri valida licenca com o backend ou com cache local de curta duracao.
-4. Tauri cria uma sessao local para o CEP.
-5. Usuario abre o painel CEP no After Effects.
-6. CEP tenta conectar no Tauri.
-7. Tauri exige handshake com nonce e token efemero.
-8. Se a licenca estiver valida, Tauri libera comandos.
-9. Se a licenca estiver invalida, expirada ou ausente, Tauri responde bloqueado.
-10. CEP mostra tela bloqueada e nao executa ExtendScript sensivel.
+- `cepLicenseReceipt`;
+- `cep_license_receipt`;
+- `licenseReceipt`;
+- `license_receipt`;
+- `receipt`.
 
-## Formato de Comando
-
-Evitar enviar ExtendScript bruto como texto livre. Preferir comandos estruturados:
+O Tauri grava o arquivo local:
 
 ```json
 {
-  "id": "cmd_001",
-  "type": "ae.command",
-  "command": "replace_text",
-  "args": {
-    "layerName": "PRECO",
-    "value": "19,90"
-  },
-  "nonce": "session-message-nonce",
-  "seq": 12,
-  "expiresAt": "2026-06-30T21:00:00Z",
-  "signature": "hmac..."
+  "version": 1,
+  "receipt": "<compact-jws>",
+  "updatedAt": "2026-07-01T12:00:00Z"
 }
 ```
 
-O CEP traduz esse comando para uma chamada interna conhecida, por exemplo:
+O JWS usa `ES256` e deve ser validado pela chave publica P-256 embutida na extensao.
 
-```javascript
-runReplaceText({ layerName: "PRECO", value: "19,90" });
+Payload minimo esperado:
+
+```json
+{
+  "iss": "arizona-app",
+  "aud": "arizona-license",
+  "jti": "<token-id>",
+  "sub": "<member-id>",
+  "org": "<organization-id>",
+  "device": "<device-id>",
+  "session": "<license-session-id>",
+  "role": "admin",
+  "exp": 1780000000,
+  "email": "usuario@empresa.com"
+}
 ```
 
-## Seguranca
+Campos aceitos:
 
-Medidas recomendadas:
+- `allowedFeatures`, `allowed_features` ou `features`;
+- `organizationName` ou `organization_name`;
+- `expiresAt`, `expires_at` ou `exp`;
+- `nbf` para recibo ainda nao ativo;
+- quando nao houver campo explicito de features, `aud: arizona-license` libera o painel CEP.
 
-- Conectar apenas em `127.0.0.1`, nunca em `0.0.0.0`.
-- Usar porta aleatoria por execucao, quando for WebSocket/HTTP.
-- Fazer handshake com nonce/desafio.
-- Usar token local efemero por sessao.
-- Assinar mensagens com HMAC ou chave de sessao.
-- Usar `seq` ou nonce por mensagem para evitar replay.
-- Expirar comandos rapidamente.
-- Manter allowlist de comandos conhecidos.
-- Validar argumentos no Tauri e no CEP.
-- Nao permitir comando arbitrario tipo `evalScript(rawJsx)`.
-- Nao colocar chaves, secrets ou refresh tokens dentro do CEP.
-- Guardar tokens sensiveis somente no cofre do sistema via Tauri.
-- Assinar o instalador/app Tauri.
-- Assinar/distribuir a extensao CEP de forma controlada.
-- Registrar logs sem tokens, sem signatures completas e sem payload sensivel.
+## O Que Foi Removido do Plano CEP
 
-## Limite Realista de Protecao
-
-Nao existe protecao perfeita contra interceptacao em codigo rodando na maquina do usuario. Um usuario com controle local avancado pode tentar inspecionar memoria, trafego local, arquivos da extensao, DevTools do CEP ou binarios.
-
-O objetivo e fazer com que uma interceptacao nao entregue nada valioso:
-
-- sem segredo permanente no CEP;
-- sem token reutilizavel por muito tempo;
-- sem licenca decidida localmente apenas pelo CEP;
-- sem comando bruto perigoso;
-- sem permissao offline longa demais;
-- sem endpoint local exposto para a rede.
+- WebSocket local do CEP;
+- `cep-bridge-session.json` como arquivo ativo;
+- token efemero do bridge CEP;
+- `cep.hello`;
+- `bridge.hello`;
+- `cep.ping` e `cep.pong`;
+- `license.status`;
+- `blocked` vindo por socket;
+- comandos como `ae.command`, `ae.result` e `cep.event`;
+- captura de atalhos CEP para ponte com Tauri;
+- `evalScript` acionado pelo Tauri.
 
 ## Comportamento Quando Bloqueado
 
 O painel CEP deve bloquear quando:
 
-- o Tauri nao estiver aberto;
-- o Tauri nao conseguir validar sessao;
-- o usuario nao tiver licenca ativa;
-- a organizacao estiver sem assento disponivel;
-- o token local expirar;
-- a assinatura de mensagem falhar;
-- a versao do CEP for incompatvel com a versao minima exigida pelo Tauri/backend.
+- o arquivo `cep-license-receipt.json` nao existir;
+- o recibo nao estiver assinado por chave confiavel;
+- o recibo estiver expirado ou ainda nao ativo;
+- `licensed` for falso;
+- `allowedFeatures` nao incluir `ae_panel`.
 
-Possivel UX:
+UX atual:
 
-- mostrar estado "Abra o Arizona App para validar sua licenca";
-- botao "Tentar novamente";
-- mensagem curta quando a licenca estiver expirada;
-- sem revelar detalhes tecnicos de seguranca.
+- mensagem estatica: `Plugin bloqueado. Valide a licença novamente no Arizona App.`;
+- sem botao de retry;
+- sem oscilacao visual a cada checagem.
 
-## Estado Atual no Tauri
+## O Que Manter
 
-Primeira base implementada do lado Tauri:
-
-- modulo `license` com snapshot serializavel de licenca;
-- modulo `cep_bridge` com protocolo `arizona.cep.v1`;
-- servidor WebSocket local em `127.0.0.1` com porta aleatoria por execucao;
-- token efemero por execucao;
-- arquivo local `cep-bridge-session.json` com dados de descoberta para o futuro painel CEP;
-- bloqueio inicial quando nao ha sessao/licenca valida;
-- broadcast de `license.status` ou `blocked` quando a sessao muda;
-- allowlist inicial de comandos;
-- comando Tauri `cep_bridge_status` para diagnostico;
-- comando Tauri `cep_bridge_send_test_command` para enviar comandos a um cliente fake/conectado;
-- cliente fake em `tools/cep-bridge-mock.html`;
-- testes unitarios para SHA-1/base64/handshake WebSocket.
-
-Nesta primeira fase, a licenca do bridge e derivada da sessao ja validada pelo login do Arizona App. A validacao forte continua vindo do fluxo existente de login/`validate-license`; o CEP nao decide licenca.
-
-Ainda pendente para endurecimento:
-
-- assinatura HMAC por mensagem;
-- `nonce`/`seq` com rejeicao de replay;
-- expiracao curta por comando;
-- tela interna de diagnostico, caso seja util no app;
-- integracao real com painel CEP.
+- Tauri como autoridade da sessao local;
+- AEX como executor nativo dos comandos After;
+- CEP como interface bloqueavel;
+- recibo local sem segredo, protegido por assinatura;
+- limpeza do recibo em logout, liberacao de device e perda de sessao segura.
 
 ## Fases de Implementacao
 
-### Fase 1: Contrato e Prototipo Local
+### Fase 1: Tauri
 
-- Definir lista inicial de comandos.
-- Definir payload JSON padrao.
-- Criar handshake simples entre CEP e Tauri.
-- Fazer CEP bloquear quando nao houver conexao.
-- Enviar um comando simples do Tauri para o CEP.
+- Aceitar `cepLicenseReceipt` vindo do backend.
+- Persistir o recibo no keyring junto com a sessao.
+- Gravar `cep-license-receipt.json` quando a sessao for ativada.
+- Apagar o recibo em logout, liberacao de device, keyring invalido e fechamento do app.
+- Parar de iniciar o bridge WebSocket CEP.
+- Remover `cep-bridge-session.json` legado no startup.
 
-### Fase 2: Licenca como Autoridade
+### Fase 2: Extensao
 
-- Conectar estado real de licenca do Tauri ao canal local.
-- Bloquear comandos quando a licenca estiver invalida.
-- Adicionar cache local curto para tolerar oscilacao de internet.
-- Garantir que o CEP nao consiga liberar a si mesmo.
+- Criar leitor/verificador de `cep-license-receipt.json`.
+- Verificar JWS `ES256`.
+- Liberar UI apenas com `ae_panel`.
+- Mostrar bloqueio estatico quando invalido.
 
-### Fase 3: Endurecimento do Canal
+### Fase 3: Validacao
 
-- Adicionar nonce/desafio.
-- Adicionar assinatura por mensagem.
-- Adicionar expiracao e sequencia.
-- Adicionar allowlist forte de comandos.
-- Sanitizar logs.
+- Build da extensao.
+- Build web do Tauri.
+- `cargo check` do Tauri.
+- Teste manual dos estados: sem recibo, recibo invalido, recibo expirado e recibo valido.
 
-### Fase 4: Distribuicao e Versoes
+## Pendencias de Producao
 
-- Definir versao minima do CEP aceita pelo Tauri.
-- Definir versao minima do Tauri aceita pelo backend.
-- Assinar/distribuir a extensao.
-- Criar fluxo de atualizacao quando houver incompatibilidade.
-
-### Fase 5: Auditoria e Testes
-
-- Testar CEP sem Tauri aberto.
-- Testar licenca expirada.
-- Testar comando com assinatura invalida.
-- Testar replay de comando antigo.
-- Testar porta local inacessivel de fora da maquina.
-- Testar abertura/fechamento do After Effects sem derrubar o Tauri e vice-versa.
-
-## Decisoes Pendentes
-
-- WebSocket local ou named pipe.
-- Quanto tempo o app pode funcionar offline.
-- Como vincular dispositivo/usuario/organizacao.
-- Quais comandos entram na primeira versao.
-- Como o CEP descobre a porta/sessao do Tauri.
-- Como distribuir a extensao CEP para usuarios finais.
-- Se o Tauri deve abrir o After Effects e o painel, ou apenas validar quando o painel ja estiver aberto.
+- Inserir a chave publica de producao na extensao.
+- Confirmar o `app_local_data_dir` final em Windows e macOS para instaladores assinados.
 
 ## Nao Objetivos
 
-- Esconder completamente o ExtendScript de usuarios avancados.
-- Colocar logica de licenca dentro do CEP.
-- Enviar scripts arbitrarios do Tauri para o CEP.
-- Expor servidor local na rede.
-- Depender de segredo fixo embutido no painel CEP.
+- Alterar logica do plugin AEX.
+- Alterar logica de negocio da extensao.
+- Mover comandos After para o Tauri.
+- Executar ExtendScript por comando vindo do Tauri.
+- Colocar segredo permanente dentro do CEP.
+- Impedir adulteracao por usuario local com acesso total ao binario.
 
 ## Recomendacao Final
 
-Manter o ExtendScript no CEP e usar o Tauri como autoridade de licenca e emissor de comandos e o caminho mais equilibrado.
+O recibo assinado e o desenho mais simples para producao nesta fase: o arquivo local nao precisa ser secreto, porque a extensao confia na assinatura, nao no conteudo cru do JSON.
 
-Isso permite bloquear a extensao quando a licenca nao estiver valida, sem transformar o painel CEP no guardiao da seguranca. O CEP executa; o Tauri autoriza; o backend decide a licenca.
+Isso remove a superficie do bridge CEP, evita expor token local de socket e mantem o AEX como unico caminho de comandos nativos.

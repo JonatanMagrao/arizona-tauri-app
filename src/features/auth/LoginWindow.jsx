@@ -221,6 +221,7 @@ function LoginWindow() {
         refreshToken: auth.refreshToken,
         bridgeToken: auth.bridgeToken,
         bridgeTokenExpiresAt: auth.bridgeTokenExpiresAt,
+        cepLicenseReceipt: auth.cepLicenseReceipt,
         email: auth.email,
         memberId: auth.memberId,
         role: auth.role,

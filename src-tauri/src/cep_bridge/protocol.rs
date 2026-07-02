@@ -51,10 +51,6 @@ pub struct ClientMessage {
     pub id: Option<String>,
     pub protocol_version: Option<String>,
     pub client: Option<ClientHello>,
-    pub event: Option<String>,
-    pub payload: Option<Value>,
-    pub result: Option<Value>,
-    pub error: Option<Value>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -96,16 +92,6 @@ pub fn blocked(seq: u64, reason: impl Into<String>, license: LicenseStatus) -> V
     })
 }
 
-pub fn ack(seq: u64, id: Option<String>, message_type: impl Into<String>) -> Value {
-    json!({
-        "type": "ack",
-        "protocolVersion": PROTOCOL_VERSION,
-        "seq": seq,
-        "id": id,
-        "ackType": message_type.into()
-    })
-}
-
 pub fn error(
     seq: u64,
     id: Option<String>,
@@ -122,30 +108,6 @@ pub fn error(
     })
 }
 
-pub fn command(seq: u64, id: String, command: &str, args: Value) -> Value {
-    json!({
-        "type": "ae.command",
-        "protocolVersion": PROTOCOL_VERSION,
-        "seq": seq,
-        "id": id,
-        "command": command,
-        "args": args
-    })
-}
-
 pub fn encode(value: Value) -> Result<String, String> {
     serde_json::to_string(&value).map_err(|err| err.to_string())
-}
-
-pub fn is_allowed_command(command: &str) -> bool {
-    matches!(
-        command,
-        "collect_project_info"
-            | "import_asset"
-            | "open_project"
-            | "ping"
-            | "render_queue_add"
-            | "replace_text"
-            | "show_alert"
-    )
 }

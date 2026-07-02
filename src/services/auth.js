@@ -112,6 +112,7 @@ export async function saveSecureSession(auth, options = {}) {
   const response = await invokeCommand(commandNames.saveSecureAuth, {
     record: {
       refreshToken: auth.refreshToken,
+      cepLicenseReceipt: auth.cepLicenseReceipt,
       email: auth.email,
       passwordLoginAt,
       serverTime,
@@ -142,6 +143,7 @@ export function authToSession(auth) {
     refreshToken: auth?.refreshToken || "",
     bridgeToken: auth?.bridgeToken || "",
     bridgeTokenExpiresAt: auth?.bridgeTokenExpiresAt || "",
+    cepLicenseReceipt: auth?.cepLicenseReceipt || "",
     email: auth?.email || "",
     memberId: auth?.memberId || "",
     role: auth?.role || "",
@@ -274,12 +276,22 @@ function authFromSession(session, license, fallbackEmail) {
       || bridge?.expires_at
       || "",
   ).trim();
+  const cepLicenseReceipt = String(
+    license?.cepLicenseReceipt
+      || license?.cep_license_receipt
+      || license?.licenseReceipt
+      || license?.license_receipt
+      || license?.receipt
+      || license?.token
+      || "",
+  ).trim();
 
   return {
     accessToken: session.accessToken,
     refreshToken: session.refreshToken,
     bridgeToken,
     bridgeTokenExpiresAt,
+    cepLicenseReceipt,
     expiresAt: license.expiresAt,
     email: license.member?.email || session.email || fallbackEmail,
     memberId: license.member?.id || "",

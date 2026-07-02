@@ -8,8 +8,10 @@ mod settings;
 
 use arizona::{ActionResponse, Arizona, MediaFile, ProductImportReport};
 use cep_bridge::CepBridgeState;
+use chrono::{SecondsFormat, Utc};
 use license::{LicenseInput, LicenseStatus};
 use settings::AppConfig;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{AppHandle, LogicalSize, Manager, State};
@@ -47,6 +49,7 @@ struct AuthSession {
     refresh_token: Option<String>,
     bridge_token: Option<String>,
     bridge_token_expires_at: Option<String>,
+    cep_license_receipt: Option<String>,
     email: String,
     member_id: Option<String>,
     role: Option<String>,
@@ -75,10 +78,21 @@ struct AdminWindowAuth {
     role: String,
 }
 
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionWindowAuth {
+    access_token: String,
+    organization_id: Option<String>,
+    current_member_id: Option<String>,
+    email: String,
+    role: Option<String>,
+}
+
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SecureAuthRecord {
     refresh_token: String,
+    cep_license_receipt: Option<String>,
     email: String,
     auth_day: Option<String>,
     password_login_at: Option<String>,
@@ -90,6 +104,14 @@ struct SecureAuthRecord {
     organization_id: Option<String>,
     organization_name: Option<String>,
     seats_allowed: Option<i64>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CepLicenseReceiptFile {
+    version: u8,
+    receipt: String,
+    updated_at: String,
 }
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -124,20 +146,17 @@ pub fn run() {
             disable_browser_accelerator_keys(app);
             let bridge = app.state::<CepBridgeState>();
             let app_handle = app.handle().clone();
+            remove_legacy_cep_bridge_session(&app_handle);
             let config = settings::load(&app_handle).unwrap_or_default();
             if let Err(err) = register_after_command_shortcuts(&app_handle, &config) {
                 let message = format!("Nao foi possivel registrar atalho do After: {err}");
                 eprintln!("{message}");
                 bridge.set_last_error(message);
             }
-            if let Err(err) = bridge.start(app.handle().clone()) {
-                bridge.set_last_error(err);
-            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             cep_bridge_status,
-            cep_bridge_send_test_command,
             aegp_bridge_send_test_command,
             aegp_bridge_move_layers_to_markers_command,
             complete_login,
@@ -407,7 +426,8 @@ const APP_WINDOW_LABEL: &str = "app";
 const SECONDARY_WINDOW_LABEL: &str = "secondary";
 const AEGP_SHORTCUT_ERROR_EVENT: &str = "arizona-aegp:shortcut-error";
 const AEGP_LICENSE_NOTICE_MESSAGE: &str =
-    "Plugin bloqueado. Valide a licenca novamente no Arizona App.";
+    "Plugin bloqueado. Valide a licença novamente no Arizona App.";
+const CEP_LICENSE_RECEIPT_FILE_NAME: &str = "cep-license-receipt.json";
 const SECURE_AUTH_SERVICE: &str = "Arizona App";
 const SECURE_AUTH_ACCOUNT: &str = "daily-session";
 const SECURE_AUTH_TARGET: &str = "daily-session.Arizona App";
@@ -467,10 +487,15 @@ fn save_secure_auth(record: SecureAuthRecord) -> Result<ActionResponse, String> 
 }
 
 #[tauri::command]
-fn clear_secure_auth(bridge: State<CepBridgeState>) -> Result<ActionResponse, String> {
+fn clear_secure_auth(
+    app: AppHandle,
+    auth: State<AuthState>,
+    bridge: State<CepBridgeState>,
+) -> Result<ActionResponse, String> {
     let entry = secure_auth_entry()?;
     let _ = entry.delete_credential();
-    bridge.set_license_status(LicenseStatus::no_session());
+    clear_cep_license_receipt(&app)?;
+    clear_runtime_auth_session(&auth, &bridge)?;
     Ok(ActionResponse::ok())
 }
 
@@ -504,20 +529,6 @@ fn read_secure_auth_record(entry: &keyring::Entry) -> Result<Option<SecureAuthRe
 #[tauri::command]
 fn cep_bridge_status(bridge: State<CepBridgeState>) -> Result<cep_bridge::BridgeStatus, String> {
     Ok(bridge.status())
-}
-
-#[tauri::command]
-fn cep_bridge_send_test_command(
-    bridge: State<CepBridgeState>,
-    command: String,
-    args: Option<serde_json::Value>,
-) -> Result<ActionResponse, String> {
-    Ok(
-        match bridge.send_command(&command, args.unwrap_or(serde_json::Value::Null)) {
-            Ok(command_id) => ActionResponse::ok_message(command_id),
-            Err(err) => ActionResponse::err(err),
-        },
-    )
 }
 
 #[tauri::command]
@@ -649,6 +660,7 @@ fn complete_login(
     }
 
     store_auth_session(&auth, session.clone())?;
+    sync_cep_license_receipt(&app, session.cep_license_receipt.as_deref())?;
     bridge.set_license_status(license_status_from_session(Some(&session)));
     emit_auth_session(&app, "arizona-auth:login", &session)?;
 
@@ -683,6 +695,7 @@ fn update_auth_session(
     }
 
     store_auth_session(&auth, session.clone())?;
+    sync_cep_license_receipt(&app, session.cep_license_receipt.as_deref())?;
     bridge.set_license_status(license_status_from_session(Some(&session)));
     emit_auth_session(&app, "arizona-auth:update", &session)?;
     Ok(ActionResponse::ok())
@@ -713,6 +726,7 @@ fn restrict_admin_session(
     };
 
     bridge.set_license_status(license_status_from_session(Some(&session)));
+    sync_cep_license_receipt(&app, session.cep_license_receipt.as_deref())?;
     emit_auth_session(&app, "arizona-auth:update", &session)?;
     Ok(ActionResponse::ok())
 }
@@ -764,8 +778,62 @@ fn emit_auth_session(
     Ok(())
 }
 
+fn sync_cep_license_receipt(app: &AppHandle, receipt: Option<&str>) -> Result<(), String> {
+    let receipt = receipt.map(str::trim).filter(|value| !value.is_empty());
+    let Some(receipt) = receipt else {
+        return clear_cep_license_receipt(app);
+    };
+
+    let path = cep_license_receipt_file_path(app)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("Nao foi possivel criar {}: {err}", parent.display()))?;
+    }
+
+    let file = CepLicenseReceiptFile {
+        version: 1,
+        receipt: receipt.to_string(),
+        updated_at: now_iso(),
+    };
+    let text = serde_json::to_string_pretty(&file).map_err(|err| err.to_string())?;
+    fs::write(&path, text)
+        .map_err(|err| format!("Nao foi possivel salvar {}: {err}", path.display()))
+}
+
+fn clear_cep_license_receipt(app: &AppHandle) -> Result<(), String> {
+    let path = cep_license_receipt_file_path(app)?;
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(format!(
+            "Nao foi possivel remover {}: {err}",
+            path.display()
+        )),
+    }
+}
+
+fn remove_legacy_cep_bridge_session(app: &AppHandle) {
+    if let Ok(path) = app.path().app_local_data_dir() {
+        let legacy_path = path.join(cep_bridge::SESSION_FILE_NAME);
+        let _ = fs::remove_file(legacy_path);
+    }
+}
+
+fn cep_license_receipt_file_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_local_data_dir()
+        .map_err(|err| err.to_string())?
+        .join(CEP_LICENSE_RECEIPT_FILE_NAME))
+}
+
+fn now_iso() -> String {
+    Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
+}
+
 #[tauri::command]
 fn exit_app(app: AppHandle) -> Result<(), String> {
+    let _ = clear_cep_license_receipt(&app);
     app.exit(0);
     Ok(())
 }
@@ -887,21 +955,43 @@ struct SecondaryWindowState {
     media_title: Option<String>,
     product_report: Option<ProductImportReport>,
     admin_auth: Option<AdminWindowAuth>,
+    session_auth: Option<SessionWindowAuth>,
 }
 
 #[tauri::command]
 fn open_secondary_window(
     app: AppHandle,
     auth: State<AuthState>,
+    bridge: State<CepBridgeState>,
     view: String,
     jobao_cod: Option<String>,
 ) -> Result<ActionResponse, String> {
     let normalized_view = normalize_secondary_view(&view)?;
-    let admin_auth = if normalized_view == "admin" {
-        Some(admin_window_auth(&auth)?)
-    } else {
-        require_authenticated(&auth)?;
-        None
+    let (admin_auth, session_auth) = match normalized_view {
+        "admin" => {
+            let admin_auth = match admin_window_auth(&app, &auth, &bridge) {
+                Ok(admin_auth) => admin_auth,
+                Err(err) => return Ok(ActionResponse::err(err)),
+            };
+            (Some(admin_auth), None)
+        }
+        "settings" => {
+            let session = match authenticated_session(&auth) {
+                Ok(session) => session,
+                Err(err) => return Ok(ActionResponse::err(err)),
+            };
+            let session_auth = match session_window_auth_from_session(&session) {
+                Ok(session_auth) => session_auth,
+                Err(err) => return Ok(ActionResponse::err(err)),
+            };
+            (None, Some(session_auth))
+        }
+        _ => {
+            if let Err(err) = require_authenticated(&auth) {
+                return Ok(ActionResponse::err(err));
+            }
+            (None, None)
+        }
     };
     let state = SecondaryWindowState {
         view: normalized_view.to_string(),
@@ -911,6 +1001,7 @@ fn open_secondary_window(
         media_title: None,
         product_report: None,
         admin_auth,
+        session_auth,
     };
     show_secondary_window(app, state)
 }
@@ -969,31 +1060,30 @@ fn close_secondary_window(app: AppHandle) -> Result<ActionResponse, String> {
 fn open_duplicate_identical_window(
     app: AppHandle,
     auth: State<AuthState>,
+    bridge: State<CepBridgeState>,
     jobao_cod: String,
 ) -> Result<ActionResponse, String> {
-    open_secondary_window(app, auth, "duplicate".to_string(), Some(jobao_cod))
+    open_secondary_window(app, auth, bridge, "duplicate".to_string(), Some(jobao_cod))
 }
 
 fn require_authenticated(auth: &State<AuthState>) -> Result<(), String> {
-    let stored_session = auth
-        .session
-        .lock()
-        .map_err(|_| "Nao foi possivel ler a sessao.".to_string())?;
-
-    if stored_session.is_some() {
-        Ok(())
-    } else {
-        Err("Entre com email e senha para continuar.".to_string())
-    }
+    authenticated_session(auth).map(|_| ())
 }
 
-fn admin_window_auth(auth: &State<AuthState>) -> Result<AdminWindowAuth, String> {
-    let session = auth
-        .session
+fn authenticated_session(auth: &State<AuthState>) -> Result<AuthSession, String> {
+    auth.session
         .lock()
         .map_err(|_| "Nao foi possivel ler a sessao.".to_string())?
         .clone()
-        .ok_or_else(|| "Entre com email e senha para continuar.".to_string())?;
+        .ok_or_else(|| "Entre com email e senha para continuar.".to_string())
+}
+
+fn admin_window_auth(
+    app: &AppHandle,
+    auth: &State<AuthState>,
+    bridge: &CepBridgeState,
+) -> Result<AdminWindowAuth, String> {
+    let session = authenticated_session(auth)?;
     let role = session
         .role
         .as_deref()
@@ -1003,6 +1093,13 @@ fn admin_window_auth(auth: &State<AuthState>) -> Result<AdminWindowAuth, String>
 
     if role != "admin" {
         return Err("Acesso admin disponivel apenas para gestores.".to_string());
+    }
+
+    if let Err(err) = ensure_secure_auth_matches_session(&session) {
+        clear_cep_license_receipt(app)?;
+        clear_runtime_auth_session(auth, bridge)?;
+        emit_auth_cleared(app);
+        return Err(err);
     }
 
     let access_token = session
@@ -1029,6 +1126,68 @@ fn admin_window_auth(auth: &State<AuthState>) -> Result<AdminWindowAuth, String>
         email: session.email,
         role,
     })
+}
+
+fn session_window_auth_from_session(session: &AuthSession) -> Result<SessionWindowAuth, String> {
+    let access_token = session
+        .access_token
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    if access_token.is_empty() {
+        return Err("Sessao incompleta. Entre novamente.".to_string());
+    }
+
+    Ok(SessionWindowAuth {
+        access_token,
+        organization_id: normalize_optional_text(session.organization_id.clone()),
+        current_member_id: normalize_optional_text(session.member_id.clone()),
+        email: session.email.clone(),
+        role: normalize_optional_text(session.role.clone()),
+    })
+}
+
+fn ensure_secure_auth_matches_session(session: &AuthSession) -> Result<(), String> {
+    let entry = secure_auth_entry()?;
+    let record = read_secure_auth_record(&entry)?;
+    let Some(record) = record else {
+        return Err("Sessao segura nao encontrada. Entre novamente.".to_string());
+    };
+
+    let session_refresh_token = session.refresh_token.as_deref().unwrap_or_default().trim();
+    let session_email = session.email.trim();
+
+    if session_refresh_token.is_empty()
+        || record.refresh_token.trim() != session_refresh_token
+        || !record.email.trim().eq_ignore_ascii_case(session_email)
+    {
+        return Err("Sessao segura invalida. Entre novamente.".to_string());
+    }
+
+    Ok(())
+}
+
+fn clear_runtime_auth_session(
+    auth: &State<AuthState>,
+    bridge: &CepBridgeState,
+) -> Result<(), String> {
+    let mut stored_session = auth
+        .session
+        .lock()
+        .map_err(|_| "Nao foi possivel limpar a sessao.".to_string())?;
+    *stored_session = None;
+    bridge.set_license_status(LicenseStatus::no_session());
+    Ok(())
+}
+
+fn emit_auth_cleared(app: &AppHandle) {
+    if let Some(app_window) = app.get_webview_window(APP_WINDOW_LABEL) {
+        let _ = app_window.eval(
+            "window.__ARIZONA_AUTH_SESSION__ = null; window.dispatchEvent(new CustomEvent('arizona-auth:update', { detail: null }));",
+        );
+    }
 }
 
 fn normalize_secondary_view(view: &str) -> Result<&'static str, String> {
@@ -1330,6 +1489,7 @@ fn show_product_import_report(
         media_title: None,
         product_report: Some(report),
         admin_auth: None,
+        session_auth: None,
     };
 
     show_secondary_window(app, state)
@@ -1349,6 +1509,7 @@ fn show_media_path_with_title(
         media_title: Some(title),
         product_report: None,
         admin_auth: None,
+        session_auth: None,
     };
 
     show_secondary_window(app, state)

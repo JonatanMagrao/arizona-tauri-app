@@ -158,7 +158,7 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
   useEffect(() => {
     const handleAegpShortcutError = (event) => {
       const message = String(
-        event?.detail?.message || "Plugin bloqueado. Valide a licenca novamente no Arizona App."
+        event?.detail?.message || "Plugin bloqueado. Valide a licença novamente no Arizona App."
       );
       showToast(message, "error");
     };
@@ -723,6 +723,7 @@ function authSessionChanged(currentSession, nextSession) {
     "refreshToken",
     "bridgeToken",
     "bridgeTokenExpiresAt",
+    "cepLicenseReceipt",
     "email",
     "memberId",
     "role",

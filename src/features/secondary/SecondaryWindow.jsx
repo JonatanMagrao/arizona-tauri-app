@@ -19,6 +19,7 @@ import appLogo from "../../../src-tauri/icons/arizona_icon.ico";
 import closeIcon from "../../assets/icones/close.svg";
 import closeFullscreenIcon from "../../assets/icones/close_fullscreen.svg";
 import openInFullIcon from "../../assets/icones/open_in_full.svg";
+import { adminErrorMessage, releaseCurrentDevice } from "../../services/adminApi";
 
 const DEFAULT_SECONDARY_STATE = {
   view: "places",
@@ -28,6 +29,7 @@ const DEFAULT_SECONDARY_STATE = {
   mediaTitle: "",
   productReport: null,
   adminAuth: null,
+  sessionAuth: null,
 };
 
 const BRIDGE_SHORTCUT_ACTIONS = Object.freeze([
@@ -262,6 +264,7 @@ function renderSecondaryView(state, closeWindow, showToast, onAdminAccessRestric
     return (
       <SettingsView
         key="settings"
+        auth={state.sessionAuth}
         showError={(message) => showToast(message, "error")}
         showSuccess={(message) => showToast(message, "success")}
       />
@@ -283,7 +286,7 @@ function renderSecondaryView(state, closeWindow, showToast, onAdminAccessRestric
   return <PlacesView />;
 }
 
-function SettingsView({ showError, showSuccess }) {
+function SettingsView({ auth, showError, showSuccess }) {
   const [activeSettingsTab, setActiveSettingsTab] = useState(SETTINGS_TABS.GENERAL);
   const [persistedSettings, setPersistedSettings] = useState(DEFAULT_SETTINGS);
   const [settingsDraft, setSettingsDraft] = useState(DEFAULT_SETTINGS);
@@ -291,6 +294,7 @@ function SettingsView({ showError, showSuccess }) {
   const [appInfo, setAppInfo] = useState({ version: "", authorName: "", authorUrl: "" });
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isReleasingDevice, setIsReleasingDevice] = useState(false);
   const [savingShortcutField, setSavingShortcutField] = useState("");
   const [choosingField, setChoosingField] = useState("");
   const [recordingShortcutField, setRecordingShortcutField] = useState("");
@@ -459,7 +463,29 @@ function SettingsView({ showError, showSuccess }) {
     if (!result.ok) showError(result.message);
   };
 
-  const busy = isLoading || isSaving || Boolean(choosingField) || Boolean(savingShortcutField);
+  const releaseDeviceAndExit = async () => {
+    if (!auth?.accessToken || !auth?.organizationId || !auth?.currentMemberId) {
+      showError("Sessao incompleta. Entre novamente para liberar este dispositivo.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Liberar este dispositivo e sair do Arizona App? O acesso local sera encerrado."
+    );
+    if (!confirmed) return;
+
+    setIsReleasingDevice(true);
+    try {
+      await releaseCurrentDevice(auth);
+      await invokeCommand(commandNames.clearSecureAuth);
+      await invokeCommand(commandNames.exitApp);
+    } catch (error) {
+      showError(adminErrorMessage(error));
+      setIsReleasingDevice(false);
+    }
+  };
+
+  const busy = isLoading || isSaving || isReleasingDevice || Boolean(choosingField) || Boolean(savingShortcutField);
   const canSave = !busy && !recordingShortcutField && isGeneralSettingsReady(settingsDraft);
   const shortcutsBusy = busy;
   const currentYear = String(new Date().getFullYear());
@@ -587,6 +613,21 @@ function SettingsView({ showError, showSuccess }) {
               disabled={isLoading || isSaving}
             />
           </label>
+
+          <section className="settings-device-zone" aria-label="Dispositivo">
+            <div className="settings-device-zone__text">
+              <strong>Dispositivo</strong>
+              <span>Libera este acesso no banco, apaga a sessao local e fecha o Arizona App.</span>
+            </div>
+            <button
+              type="button"
+              className="btn btn-outline settings-device-zone__button"
+              onClick={releaseDeviceAndExit}
+              disabled={busy || !auth?.accessToken || !auth?.organizationId || !auth?.currentMemberId}
+            >
+              {isReleasingDevice ? "Liberando..." : "Liberar e sair"}
+            </button>
+          </section>
 
             </section>
           )}
@@ -1072,6 +1113,7 @@ function getInitialSecondaryState() {
       mediaTitle: params.get("title") || "",
       productReport: null,
       adminAuth: null,
+      sessionAuth: null,
     });
   } catch (error) {
     return DEFAULT_SECONDARY_STATE;
@@ -1088,6 +1130,7 @@ function normalizeSecondaryState(payload) {
   const mediaKind = rawMediaKind === "audio" ? "audio" : "video";
   const productReport = normalizeProductReport(payload?.productReport || payload?.product_report);
   const adminAuth = normalizeAdminAuth(payload?.adminAuth || payload?.admin_auth);
+  const sessionAuth = normalizeSessionAuth(payload?.sessionAuth || payload?.session_auth);
 
   return {
     view,
@@ -1097,6 +1140,7 @@ function normalizeSecondaryState(payload) {
     mediaTitle,
     productReport,
     adminAuth,
+    sessionAuth,
   };
 }
 
@@ -1128,6 +1172,18 @@ function secondaryWindowTitle(state) {
 }
 
 function normalizeAdminAuth(value) {
+  if (!value || typeof value !== "object") return null;
+
+  return {
+    accessToken: String(value.accessToken || value.access_token || "").trim(),
+    organizationId: String(value.organizationId || value.organization_id || "").trim(),
+    currentMemberId: String(value.currentMemberId || value.current_member_id || "").trim(),
+    email: String(value.email || "").trim(),
+    role: String(value.role || "").trim(),
+  };
+}
+
+function normalizeSessionAuth(value) {
   if (!value || typeof value !== "object") return null;
 
   return {
