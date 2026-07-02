@@ -47,6 +47,12 @@ function GlobalTooltip() {
       return tooltipTarget.closest(`[data-tooltip-scope="${activeScope}"]`) ? tooltipTarget : null;
     };
 
+    const isEditableTarget = (target) => {
+      if (!(target instanceof Element)) return false;
+      const editable = target.closest("input, textarea, select, [contenteditable='true']");
+      return Boolean(editable);
+    };
+
     const showTooltip = (target, via = "pointer") => {
       const text = target.getAttribute(TOOLTIP_ATTR)?.trim();
       if (!text) return;
@@ -94,6 +100,10 @@ function GlobalTooltip() {
       hideTooltip();
     };
 
+    const handleTypingStart = (event) => {
+      if (isEditableTarget(event.target)) hideTooltip();
+    };
+
     scanTitles(document.body);
 
     const observer = new MutationObserver((mutations) => {
@@ -118,6 +128,10 @@ function GlobalTooltip() {
     document.addEventListener("pointerout", handlePointerOut, true);
     document.addEventListener("focusin", handleFocusIn, true);
     document.addEventListener("focusout", handleFocusOut, true);
+    document.addEventListener("keydown", handleTypingStart, true);
+    document.addEventListener("beforeinput", handleTypingStart, true);
+    document.addEventListener("input", handleTypingStart, true);
+    document.addEventListener("compositionstart", handleTypingStart, true);
     window.addEventListener("app:hide-tooltip", hideTooltip);
     window.addEventListener("blur", hideTooltip);
     window.addEventListener("scroll", hideTooltip, true);
@@ -129,6 +143,10 @@ function GlobalTooltip() {
       document.removeEventListener("pointerout", handlePointerOut, true);
       document.removeEventListener("focusin", handleFocusIn, true);
       document.removeEventListener("focusout", handleFocusOut, true);
+      document.removeEventListener("keydown", handleTypingStart, true);
+      document.removeEventListener("beforeinput", handleTypingStart, true);
+      document.removeEventListener("input", handleTypingStart, true);
+      document.removeEventListener("compositionstart", handleTypingStart, true);
       window.removeEventListener("app:hide-tooltip", hideTooltip);
       window.removeEventListener("blur", hideTooltip);
       window.removeEventListener("scroll", hideTooltip, true);

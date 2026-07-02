@@ -15,6 +15,7 @@ export function normalizeSettings(config) {
   const next = { ...DEFAULT_SETTINGS, ...(config || {}) };
   return {
     ...next,
+    aeVersion: normalizeFourDigits(next.aeVersion),
     moveLayersBackwardShortcut: String(next.moveLayersBackwardShortcut ?? "").trim(),
     moveLayersForwardShortcut: String(next.moveLayersForwardShortcut ?? "").trim(),
     moveJumpMarkerShortcut: String(next.moveJumpMarkerShortcut ?? "").trim(),
@@ -26,17 +27,23 @@ export function normalizeSettings(config) {
 }
 
 export function normalizeProductsYear(value) {
+  const text = normalizeFourDigits(value);
+  if (String(value ?? "").trim().toLowerCase() === "auto") return "";
+  return text;
+}
+
+export function normalizeFourDigits(value) {
   const text = String(value ?? "").trim();
-  if (text.toLowerCase() === "auto") return "";
   return text.replace(/\D/g, "").slice(0, 4);
 }
 
 export function isSettingsReady(config) {
+  const aeVersion = String(config?.aeVersion ?? "").trim();
   const year = String(config?.produtosYear ?? "").trim();
   return Boolean(
     String(config?.drive ?? "").trim()
       && String(config?.produtosPath ?? "").trim()
-      && String(config?.aeVersion ?? "").trim()
+      && /^\d{4}$/.test(aeVersion)
       && String(config?.moveLayersBackwardShortcut ?? "").trim()
       && String(config?.moveLayersForwardShortcut ?? "").trim()
       && String(config?.moveJumpMarkerShortcut ?? "").trim()

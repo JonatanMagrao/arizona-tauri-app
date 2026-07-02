@@ -12,7 +12,7 @@ import { formatDuration } from "../../utils/formatters";
 import { normalizeProductReport } from "../../utils/productReport";
 import {
   DEFAULT_SETTINGS,
-  normalizeProductsYear,
+  normalizeFourDigits,
   normalizeSettings,
 } from "../../utils/settings";
 import appLogo from "../../../src-tauri/icons/arizona_icon.ico";
@@ -64,6 +64,9 @@ const SETTINGS_TABS = Object.freeze({
   GENERAL: "general",
   AFTER_SHORTCUTS: "afterShortcuts",
 });
+
+const NUMERIC_SETTINGS_SAVE_DELAY_MS = 1000;
+const TEXT_SETTINGS_SAVE_DELAY_MS = 1500;
 
 function SecondaryWindow() {
   const { toast, showToast, hideToast } = useAutoHideToast();
@@ -128,7 +131,7 @@ function SecondaryWindow() {
 
   return (
     <div className="secondary-window secondary-window--custom">
-      <SecondaryTitlebar title={title} onClose={closeWindow} />
+      <SecondaryTitlebar title={title} view={secondaryState.view} onClose={closeWindow} />
 
       <div className="secondary-window__content">
         {renderSecondaryView(secondaryState, closeWindow, showToast, handleAdminAccessRestricted)}
@@ -148,8 +151,9 @@ function SecondaryWindow() {
   );
 }
 
-function SecondaryTitlebar({ title, onClose }) {
+function SecondaryTitlebar({ title, view, onClose }) {
   const [isMaximized, setIsMaximized] = useState(false);
+  const isSettingsTitlebar = view === "settings";
 
   useEffect(() => {
     let unlistenResize = null;
@@ -194,14 +198,14 @@ function SecondaryTitlebar({ title, onClose }) {
         onMouseDown={startWindowDrag}
       >
         <img className="secondary-titlebar__logo" src={appLogo} alt="" aria-hidden="true" />
-        <span>Arizona App</span>
+        <span>{isSettingsTitlebar ? title : "Arizona App"}</span>
       </div>
       <div
         className="secondary-titlebar__drag"
         data-tauri-drag-region
         onMouseDown={startWindowDrag}
       >
-        <span>{title}</span>
+        {!isSettingsTitlebar && <span>{title}</span>}
       </div>
       <div className="secondary-titlebar__controls">
         <button
@@ -295,9 +299,13 @@ function SettingsView({ auth, showError, showSuccess }) {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isReleasingDevice, setIsReleasingDevice] = useState(false);
+  const [isReleaseConfirmOpen, setIsReleaseConfirmOpen] = useState(false);
   const [savingShortcutField, setSavingShortcutField] = useState("");
   const [choosingField, setChoosingField] = useState("");
   const [recordingShortcutField, setRecordingShortcutField] = useState("");
+  const persistedSettingsRef = useRef(DEFAULT_SETTINGS);
+  const autoSaveTimersRef = useRef({});
+  const saveQueueRef = useRef(Promise.resolve());
 
   useEffect(() => {
     let mounted = true;
@@ -321,6 +329,16 @@ function SettingsView({ auth, showError, showSuccess }) {
   }, []);
 
   useEffect(() => {
+    persistedSettingsRef.current = persistedSettings;
+  }, [persistedSettings]);
+
+  useEffect(() => () => {
+    Object.values(autoSaveTimersRef.current).forEach((timer) => {
+      clearTimeout(timer);
+    });
+  }, []);
+
+  useEffect(() => {
     let mounted = true;
 
     invokeCommand(commandNames.appInfo)
@@ -336,6 +354,90 @@ function SettingsView({ auth, showError, showSuccess }) {
 
   const updateSettingsDraft = (field, value) => {
     setSettingsDraft((config) => ({ ...config, [field]: value }));
+  };
+
+  const clearSettingsAutoSaveTimer = (field) => {
+    const timer = autoSaveTimersRef.current[field];
+    if (!timer) return;
+
+    clearTimeout(timer);
+    delete autoSaveTimersRef.current[field];
+  };
+
+  const saveSettingsPatch = async (patch, successMessage = "Configurações salvas.") => {
+    const runSave = async () => {
+      const config = normalizeSettings({
+        ...persistedSettingsRef.current,
+        ...patch,
+      });
+      const savedFields = Object.keys(patch);
+
+      setIsSaving(true);
+      try {
+        const saved = await invokeCommand(commandNames.saveAppConfig, {
+          config,
+        });
+        const normalized = normalizeSettings(saved);
+        const normalizedPatch = savedFields.reduce((nextPatch, field) => ({
+          ...nextPatch,
+          [field]: normalized[field],
+        }), {});
+
+        persistedSettingsRef.current = normalized;
+        setPersistedSettings(normalized);
+        setSettingsDraft((current) => ({ ...current, ...normalizedPatch }));
+        showSuccess(successMessage);
+        return normalized;
+      } catch (error) {
+        showError(String(error || "Não foi possível salvar as configurações."));
+        return null;
+      } finally {
+        setIsSaving(false);
+      }
+    };
+
+    const queuedSave = saveQueueRef.current.catch(() => null).then(runSave);
+    saveQueueRef.current = queuedSave.catch(() => null);
+    return queuedSave;
+  };
+
+  const scheduleSettingsAutoSave = (field, value, { delay, canSave, successMessage }) => {
+    clearSettingsAutoSaveTimer(field);
+    if (!canSave || isLoading || isReleasingDevice) return;
+
+    const config = normalizeSettings({
+      ...persistedSettingsRef.current,
+      [field]: value,
+    });
+    const normalizedValue = config[field] ?? "";
+    const currentValue = persistedSettingsRef.current[field] ?? "";
+    if (String(normalizedValue) === String(currentValue)) return;
+
+    autoSaveTimersRef.current[field] = setTimeout(() => {
+      delete autoSaveTimersRef.current[field];
+      saveSettingsPatch({ [field]: normalizedValue }, successMessage);
+    }, delay);
+  };
+
+  const updateNumericSetting = (field, value, successMessage) => {
+    const nextValue = normalizeFourDigits(value);
+    updateSettingsDraft(field, nextValue);
+    scheduleSettingsAutoSave(field, nextValue, {
+      delay: NUMERIC_SETTINGS_SAVE_DELAY_MS,
+      canSave: /^\d{4}$/.test(nextValue),
+      successMessage,
+    });
+  };
+
+  const updateProductsSetting = (value) => {
+    const nextValue = String(value ?? "");
+    const valueToSave = nextValue.trim();
+    updateSettingsDraft("produtos", nextValue);
+    scheduleSettingsAutoSave("produtos", valueToSave, {
+      delay: TEXT_SETTINGS_SAVE_DELAY_MS,
+      canSave: Boolean(valueToSave),
+      successMessage: "Produtos salvo.",
+    });
   };
 
   const cancelShortcutRecording = () => {
@@ -416,40 +518,20 @@ function SettingsView({ auth, showError, showSuccess }) {
         title,
       });
       const path = Array.isArray(selected) ? selected[0] : selected;
-      if (typeof path === "string") updateSettingsDraft(field, path);
+      if (typeof path === "string") {
+        const nextPath = path.trim();
+        if (!nextPath) return;
+
+        updateSettingsDraft(field, nextPath);
+        await saveSettingsPatch(
+          { [field]: nextPath },
+          field === "drive" ? "Drive Carrefour salvo." : "Fotos Flow salvo."
+        );
+      }
     } catch (error) {
       showError(String(error || "Não foi possível selecionar a pasta."));
     } finally {
       setChoosingField("");
-    }
-  };
-
-  const saveSettings = async (event) => {
-    event.preventDefault();
-    if (!isGeneralSettingsReady(settingsDraft)) {
-      showError("Preencha Drive, Fotos Flow, After Effects, Produtos e Ano Projetos.");
-      return;
-    }
-
-    setIsSaving(true);
-    try {
-      const config = normalizeSettings({
-        ...persistedSettings,
-        ...settingsDraft,
-        ...shortcutDraft,
-      });
-      const saved = await invokeCommand(commandNames.saveAppConfig, {
-        config,
-      });
-      const normalized = normalizeSettings(saved);
-      setPersistedSettings(normalized);
-      setSettingsDraft(normalized);
-      setShortcutDraft(normalized);
-      showSuccess("Configurações salvas.");
-    } catch (error) {
-      showError(String(error || "Não foi possível salvar as configurações."));
-    } finally {
-      setIsSaving(false);
     }
   };
 
@@ -463,17 +545,22 @@ function SettingsView({ auth, showError, showSuccess }) {
     if (!result.ok) showError(result.message);
   };
 
+  const requestReleaseDeviceAndExit = () => {
+    if (!auth?.accessToken || !auth?.organizationId || !auth?.currentMemberId) {
+      showError("Sessao incompleta. Entre novamente para liberar este dispositivo.");
+      return;
+    }
+
+    setIsReleaseConfirmOpen(true);
+  };
+
   const releaseDeviceAndExit = async () => {
     if (!auth?.accessToken || !auth?.organizationId || !auth?.currentMemberId) {
       showError("Sessao incompleta. Entre novamente para liberar este dispositivo.");
       return;
     }
 
-    const confirmed = window.confirm(
-      "Liberar este dispositivo e sair do Arizona App? O acesso local sera encerrado."
-    );
-    if (!confirmed) return;
-
+    setIsReleaseConfirmOpen(false);
     setIsReleasingDevice(true);
     try {
       await releaseCurrentDevice(auth);
@@ -485,51 +572,62 @@ function SettingsView({ auth, showError, showSuccess }) {
     }
   };
 
-  const busy = isLoading || isSaving || isReleasingDevice || Boolean(choosingField) || Boolean(savingShortcutField);
-  const canSave = !busy && !recordingShortcutField && isGeneralSettingsReady(settingsDraft);
+  useEffect(() => {
+    if (!isReleaseConfirmOpen) return undefined;
+
+    const handleEscape = (event) => {
+      if (event.key === "Escape" && !isReleasingDevice) {
+        setIsReleaseConfirmOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [isReleaseConfirmOpen, isReleasingDevice]);
+
+  const busy = isLoading || isReleasingDevice || Boolean(choosingField) || Boolean(savingShortcutField);
+  const generalActionBusy = busy || isSaving;
   const shortcutsBusy = busy;
   const currentYear = String(new Date().getFullYear());
 
   return (
     <main className="settings-window settings-window--form" aria-label="Configurações">
       <section className="settings-panel">
-        <header className="settings-panel__header">
-          <h1>Configurações</h1>
+        <div className="settings-panel__tabs-row">
+          <nav className="settings-tabs" role="tablist" aria-label="Configuracoes">
+            <button
+              type="button"
+              className={`settings-tab ${activeSettingsTab === SETTINGS_TABS.GENERAL ? "settings-tab--active" : ""}`}
+              onClick={() => {
+                cancelShortcutRecording();
+                setActiveSettingsTab(SETTINGS_TABS.GENERAL);
+              }}
+              role="tab"
+              aria-selected={activeSettingsTab === SETTINGS_TABS.GENERAL}
+            >
+              Ambiente
+            </button>
+            <button
+              type="button"
+              className={`settings-tab ${activeSettingsTab === SETTINGS_TABS.AFTER_SHORTCUTS ? "settings-tab--active" : ""}`}
+              onClick={() => {
+                cancelShortcutRecording();
+                setActiveSettingsTab(SETTINGS_TABS.AFTER_SHORTCUTS);
+              }}
+              role="tab"
+              aria-selected={activeSettingsTab === SETTINGS_TABS.AFTER_SHORTCUTS}
+            >
+              Atalhos After
+            </button>
+          </nav>
           {appInfo.version && <span className="settings-version">v{appInfo.version}</span>}
-        </header>
+        </div>
 
-        <nav className="settings-tabs" role="tablist" aria-label="Configuracoes">
-          <button
-            type="button"
-            className={`settings-tab ${activeSettingsTab === SETTINGS_TABS.GENERAL ? "settings-tab--active" : ""}`}
-            onClick={() => {
-              cancelShortcutRecording();
-              setActiveSettingsTab(SETTINGS_TABS.GENERAL);
-            }}
-            role="tab"
-            aria-selected={activeSettingsTab === SETTINGS_TABS.GENERAL}
-          >
-            Configura&ccedil;&otilde;es
-          </button>
-          <button
-            type="button"
-            className={`settings-tab ${activeSettingsTab === SETTINGS_TABS.AFTER_SHORTCUTS ? "settings-tab--active" : ""}`}
-            onClick={() => {
-              cancelShortcutRecording();
-              setActiveSettingsTab(SETTINGS_TABS.AFTER_SHORTCUTS);
-            }}
-            role="tab"
-            aria-selected={activeSettingsTab === SETTINGS_TABS.AFTER_SHORTCUTS}
-          >
-            Atalhos After
-          </button>
-        </nav>
-
-        <form className="settings-form settings-form--window" onSubmit={saveSettings}>
+        <form className="settings-form settings-form--window" onSubmit={(event) => event.preventDefault()}>
           {activeSettingsTab === SETTINGS_TABS.GENERAL && (
             <section className="settings-tab-panel" role="tabpanel">
           <label className="settings-field settings-field--drive">
-            <span>Drive</span>
+            <span>Carrefour Drive</span>
             <div className="settings-drive-row settings-path-row">
               <input
                 className="input settings-drive-input"
@@ -542,7 +640,7 @@ function SettingsView({ auth, showError, showSuccess }) {
               <button
                 type="button"
                 className="btn btn-outline"
-                onClick={() => chooseFolder("drive", "Selecionar entrypoint do Drive")}
+                onClick={() => chooseFolder("drive", "Selecionar Carrefour Drive")}
                 disabled={busy}
               >
                 {choosingField === "drive" ? "..." : "Selecionar"}
@@ -573,15 +671,18 @@ function SettingsView({ auth, showError, showSuccess }) {
           </label>
 
           <label className="settings-field">
-            <span>After Effects</span>
+            <span>Vers&atilde;o After Effects</span>
             <input
               className="input settings-short-input"
               type="text"
               value={settingsDraft.aeVersion}
-              onChange={(event) => updateSettingsDraft("aeVersion", event.target.value)}
+              onChange={(event) => updateNumericSetting("aeVersion", event.target.value, "After Effects Versão salvo.")}
               placeholder="2024"
               autoComplete="off"
-              disabled={isLoading || isSaving}
+              inputMode="numeric"
+              maxLength={4}
+              pattern="\d{4}"
+              disabled={isLoading || isReleasingDevice}
             />
           </label>
 
@@ -591,43 +692,28 @@ function SettingsView({ auth, showError, showSuccess }) {
               className="input settings-short-input"
               type="text"
               value={settingsDraft.produtos}
-              onChange={(event) => updateSettingsDraft("produtos", event.target.value)}
+              onChange={(event) => updateProductsSetting(event.target.value)}
               placeholder="PRODUTOS"
               autoComplete="off"
-              disabled={isLoading || isSaving}
+              disabled={isLoading || isReleasingDevice}
             />
           </label>
 
           <label className="settings-field">
-            <span>Ano Projetos</span>
+            <span>Projetos Ano</span>
             <input
               className="input settings-short-input"
               type="text"
               value={settingsDraft.produtosYear}
-              onChange={(event) => updateSettingsDraft("produtosYear", normalizeProductsYear(event.target.value))}
+              onChange={(event) => updateNumericSetting("produtosYear", event.target.value, "Projetos Ano salvo.")}
               placeholder={currentYear}
               autoComplete="off"
               inputMode="numeric"
               maxLength={4}
               pattern="\d{4}"
-              disabled={isLoading || isSaving}
+              disabled={isLoading || isReleasingDevice}
             />
           </label>
-
-          <section className="settings-device-zone" aria-label="Dispositivo">
-            <div className="settings-device-zone__text">
-              <strong>Dispositivo</strong>
-              <span>Libera este acesso no banco, apaga a sessao local e fecha o Arizona App.</span>
-            </div>
-            <button
-              type="button"
-              className="btn btn-outline settings-device-zone__button"
-              onClick={releaseDeviceAndExit}
-              disabled={busy || !auth?.accessToken || !auth?.organizationId || !auth?.currentMemberId}
-            >
-              {isReleasingDevice ? "Liberando..." : "Liberar e sair"}
-            </button>
-          </section>
 
             </section>
           )}
@@ -671,7 +757,7 @@ function SettingsView({ auth, showError, showSuccess }) {
             <div className="settings-credit">
               {appInfo.authorName && (
                 <>
-                  <span>Criado por:</span>
+                  <span>Desenvolvido por:</span>
                   <button type="button" className="settings-credit__link" onClick={openAuthorSite}>
                     {appInfo.authorName}
                   </button>
@@ -679,12 +765,53 @@ function SettingsView({ auth, showError, showSuccess }) {
               )}
             </div>
             {activeSettingsTab === SETTINGS_TABS.GENERAL && (
-              <button type="submit" className="btn btn-primary" disabled={!canSave}>
-                {isSaving ? "Salvando..." : "Salvar"}
+              <button
+                type="button"
+                className="btn btn-outline settings-release-button"
+                onClick={requestReleaseDeviceAndExit}
+                disabled={generalActionBusy || !auth?.accessToken || !auth?.organizationId || !auth?.currentMemberId}
+              >
+                {isReleasingDevice ? "Liberando..." : "Liberar e sair"}
               </button>
             )}
           </footer>
         </form>
+
+        {isReleaseConfirmOpen && (
+          <div className="settings-confirm-backdrop" role="presentation">
+            <section
+              className="settings-confirm-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="settingsReleaseTitle"
+            >
+              <header className="settings-confirm-header">
+                <h2 id="settingsReleaseTitle">Liberar este acesso?</h2>
+              </header>
+              <p>
+                Este dispositivo será liberado. A sessão local será apagada e o Arizona App será fechado.
+              </p>
+              <div className="settings-confirm-actions">
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  onClick={() => setIsReleaseConfirmOpen(false)}
+                  disabled={isReleasingDevice}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline settings-release-button"
+                  onClick={releaseDeviceAndExit}
+                  disabled={isReleasingDevice}
+                >
+                  {isReleasingDevice ? "Liberando..." : "Liberar e sair"}
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
       </section>
     </main>
   );
@@ -1201,27 +1328,6 @@ function normalizeAppInfo(info) {
     authorName: String(info?.authorName || "").trim(),
     authorUrl: String(info?.authorUrl || "").trim(),
   };
-}
-
-function isGeneralSettingsReady(config) {
-  const year = String(config?.produtosYear ?? "").trim();
-  return Boolean(
-    String(config?.drive ?? "").trim()
-      && String(config?.produtosPath ?? "").trim()
-      && String(config?.aeVersion ?? "").trim()
-      && String(config?.produtos ?? "").trim()
-      && !isIncompleteDriveEntrypointValue(config?.drive)
-      && (year === "" || /^\d{4}$/.test(year))
-  );
-}
-
-function isIncompleteDriveEntrypointValue(value) {
-  const parts = String(value ?? "")
-    .trim()
-    .split(/[\\/]+/)
-    .filter(Boolean);
-  const lastPart = parts[parts.length - 1] || "";
-  return !lastPart || lastPart.toLowerCase() === "drives compartilhados";
 }
 
 function shortcutFromKeyboardEvent(event) {
