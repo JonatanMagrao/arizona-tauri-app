@@ -11,7 +11,11 @@
     "tauri:clean": "cd src-tauri && cargo clean",
     "tauri:dev": "tauri dev",
     "tauri:dev:bridge": "set ARIZONA_ALLOW_DEV_AEX_TOKEN=1&& tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "cep:dev": "npm --prefix ARIZONA-EXTENSION run dev",
+    "cep:build": "npm --prefix ARIZONA-EXTENSION run build",
+    "dev:all": "concurrently -k -n tauri,cep -c cyan,magenta \"npm run tauri:dev:bridge\" \"npm run cep:dev\"",
+    "license:check": "node ADMIN/scripts/check-license-parity.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "2.8.0",
@@ -23,6 +27,7 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2",
     "@vitejs/plugin-react": "^4.6.0",
+    "concurrently": "^10.0.3",
     "vite": "^7.0.4"
   }
 }

@@ -261,6 +261,8 @@ async function validateLicense(accessToken, appVersion, context = {}) {
 
 function authFromSession(session, license, fallbackEmail) {
   const bridge = license?.bridge || license?.aexBridge || license?.aex_bridge || {};
+  const member = license?.member || license?.appMember || license?.app_member || {};
+  const organization = license?.organization || license?.org || {};
   const bridgeToken = String(
     license?.bridgeToken
       || license?.aexBridgeToken
@@ -274,6 +276,7 @@ function authFromSession(session, license, fallbackEmail) {
       || license?.aex_bridge_token_expires_at
       || bridge?.expiresAt
       || bridge?.expires_at
+      || timestampToIso(bridge?.exp)
       || "",
   ).trim();
   const cepLicenseReceipt = String(
@@ -285,6 +288,11 @@ function authFromSession(session, license, fallbackEmail) {
       || license?.token
       || "",
   ).trim();
+  const expiresAt = firstText(
+    license?.expiresAt,
+    license?.expires_at,
+    timestampToIso(license?.exp),
+  );
 
   return {
     accessToken: session.accessToken,
@@ -292,15 +300,65 @@ function authFromSession(session, license, fallbackEmail) {
     bridgeToken,
     bridgeTokenExpiresAt,
     cepLicenseReceipt,
-    expiresAt: license.expiresAt,
-    email: license.member?.email || session.email || fallbackEmail,
-    memberId: license.member?.id || "",
-    role: license.member?.role || "",
-    organizationId: license.organization?.id || "",
-    organizationName: license.organization?.name || "",
-    seatsAllowed: Number(license.organization?.seatsAllowed || 0),
+    expiresAt,
+    email: firstText(member?.email, license?.email, session.email, fallbackEmail),
+    memberId: firstText(member?.id, member?.memberId, member?.member_id, license?.memberId, license?.member_id, license?.sub),
+    role: firstText(member?.role, license?.role),
+    organizationId: firstText(
+      organization?.id,
+      organization?.organizationId,
+      organization?.organization_id,
+      license?.organizationId,
+      license?.organization_id,
+      license?.orgId,
+      license?.org_id,
+      license?.org,
+    ),
+    organizationName: firstText(
+      organization?.name,
+      organization?.organizationName,
+      organization?.organization_name,
+      license?.organizationName,
+      license?.organization_name,
+    ),
+    seatsAllowed: firstNumber(
+      organization?.seatsAllowed,
+      organization?.seats_allowed,
+      license?.seatsAllowed,
+      license?.seats_allowed,
+    ),
     license,
   };
+}
+
+function firstText(...values) {
+  for (const value of values) {
+    const text = String(value ?? "").trim();
+    if (text) return text;
+  }
+
+  return "";
+}
+
+function firstNumber(...values) {
+  for (const value of values) {
+    const number = Number(value);
+    if (Number.isFinite(number)) return number;
+  }
+
+  return 0;
+}
+
+function timestampToIso(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+
+  const timestamp = Number(raw);
+  if (!Number.isFinite(timestamp)) return "";
+
+  const milliseconds = timestamp > 9999999999 ? timestamp : timestamp * 1000;
+  const date = new Date(milliseconds);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : "";
 }
 
 function shouldForgetStoredSession(error) {

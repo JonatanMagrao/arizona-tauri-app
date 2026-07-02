@@ -1,0 +1,241 @@
+import {
+  errorResponse,
+  handleOptions,
+  jsonResponse,
+  readJsonBody,
+  requirePost,
+} from "../_shared/http.ts";
+import {
+  createAdminClient,
+  getAuthUser,
+  requirePublishableKey,
+} from "../_shared/supabase.ts";
+import { resolveMaster, resolveMember } from "../_shared/actors.ts";
+
+type AddMemberBody = {
+  organizationId?: unknown;
+  name?: unknown;
+  email?: unknown;
+  role?: unknown;
+};
+
+function cleanString(value: unknown, maxLength: number): string {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function cleanEmail(value: unknown): string {
+  return typeof value === "string" ? value.trim().toLowerCase().slice(0, 254) : "";
+}
+
+function emailDomain(value: string): string {
+  const [, domain = ""] = value.split("@");
+  return domain.trim().toLowerCase();
+}
+
+function endOfLicenseDate(value: unknown): Date | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const date = new Date(`${value.slice(0, 10)}T23:59:59.999Z`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+async function isActiveMasterEmail(admin: ReturnType<typeof createAdminClient>, email: string): Promise<boolean> {
+  const { data, error } = await admin
+    .schema("licensing")
+    .from("master_accounts")
+    .select("id")
+    .eq("email", email)
+    .eq("status", "active")
+    .maybeSingle();
+
+  if (error) throw error;
+  return Boolean(data);
+}
+
+Deno.serve(async (req) => {
+  const options = handleOptions(req);
+  if (options) return options;
+
+  const methodError = requirePost(req);
+  if (methodError) return methodError;
+
+  try {
+    requirePublishableKey(req);
+
+    const body = await readJsonBody<AddMemberBody>(req);
+    const organizationId = typeof body.organizationId === "string" ? body.organizationId.trim() : "";
+    const name = cleanString(body.name, 160);
+    const email = cleanEmail(body.email);
+    const requestedRole = body.role === "admin" ? "admin" : "user";
+
+    if (!organizationId) return errorResponse("missing_organization_id", "organizationId is required.", 400);
+    if (!name) return errorResponse("missing_name", "name is required.", 400);
+    if (!email || !email.includes("@")) return errorResponse("invalid_email", "A valid email is required.", 400);
+
+    const admin = createAdminClient();
+    const user = await getAuthUser(req);
+    const master = await resolveMaster(admin, user);
+    const actor = master ?? await resolveMember(admin, user, organizationId);
+
+    if (!actor || (actor.kind === "member" && actor.role !== "admin")) {
+      return errorResponse("forbidden", "Only masters or organization admins can add members.", 403);
+    }
+
+    const role = actor.kind === "master" ? requestedRole : "user";
+
+    const { data: org, error: orgError } = await admin
+      .schema("licensing")
+      .from("organizations")
+      .select("id,status,seats_allowed,allowed_email_domain,license_expires_on")
+      .eq("id", organizationId)
+      .maybeSingle();
+
+    if (orgError) throw orgError;
+    if (!org || org.status !== "active") {
+      return errorResponse("organization_not_active", "Organization is not active.", 403);
+    }
+    const licenseExpiresAt = endOfLicenseDate(org.license_expires_on);
+    if (licenseExpiresAt && licenseExpiresAt.getTime() < Date.now()) {
+      return errorResponse("license_expired", "License has expired.", 403);
+    }
+    const activeMasterEmail = await isActiveMasterEmail(admin, email);
+    if (!activeMasterEmail && org.allowed_email_domain && emailDomain(email) !== org.allowed_email_domain) {
+      return errorResponse("email_domain_not_allowed", "Email is outside the organization domain.", 400);
+    }
+
+    const { data: existingMember, error: existingMemberError } = await admin
+      .schema("licensing")
+      .from("members")
+      .select("id,name,email,role,status")
+      .eq("organization_id", organizationId)
+      .eq("email", email)
+      .maybeSingle();
+
+    if (existingMemberError) throw existingMemberError;
+
+    if (existingMember) {
+      if (["invited", "active"].includes(existingMember.status)) {
+        return errorResponse("member_already_exists", "Email is already registered.", 409);
+      }
+
+      const { data: restoredMember, error: restoreError } = await admin
+        .schema("licensing")
+        .from("members")
+        .update({
+          name,
+          role,
+          status: "invited",
+          added_by_master_id: actor.kind === "master" ? actor.id : null,
+          added_by_member_id: actor.kind === "member" ? actor.id : null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", existingMember.id)
+        .select("id,name,email,role,status")
+        .single();
+
+      if (restoreError) {
+        if (String(restoreError.message).includes("seat_limit_exceeded")) {
+          return errorResponse("seat_limit_exceeded", "No seats available.", 409);
+        }
+        if (String(restoreError.message).includes("email_domain_not_allowed")) {
+          return errorResponse("email_domain_not_allowed", "Email is outside the organization domain.", 400);
+        }
+        throw restoreError;
+      }
+
+      await admin
+        .schema("licensing")
+        .from("audit_log")
+        .insert({
+          organization_id: organizationId,
+          actor_master_id: actor.kind === "master" ? actor.id : null,
+          actor_member_id: actor.kind === "member" ? actor.id : null,
+          action: "member.restored",
+          target_table: "members",
+          target_id: restoredMember.id,
+          metadata: {
+            source: "tauri_admin_panel",
+            reason: "add_existing_inactive_member",
+            actor: {
+              kind: actor.kind,
+              id: actor.id,
+              email: actor.email,
+              role: actor.kind === "member" ? actor.role : "master",
+            },
+            target: {
+              id: restoredMember.id,
+              name: restoredMember.name,
+              email: restoredMember.email,
+              role: restoredMember.role,
+              previousStatus: existingMember.status,
+              status: restoredMember.status,
+            },
+          },
+        });
+
+      return jsonResponse({ ok: true, member: restoredMember, restored: true });
+    }
+
+    const insertPayload = {
+      organization_id: organizationId,
+      name,
+      email,
+      role,
+      status: "invited",
+      added_by_master_id: actor.kind === "master" ? actor.id : null,
+      added_by_member_id: actor.kind === "member" ? actor.id : null,
+    };
+
+    const { data: member, error: insertError } = await admin
+      .schema("licensing")
+      .from("members")
+      .insert(insertPayload)
+      .select("id,name,email,role,status")
+      .single();
+
+    if (insertError) {
+      if (String(insertError.message).includes("seat_limit_exceeded")) {
+        return errorResponse("seat_limit_exceeded", "No seats available.", 409);
+      }
+      if (String(insertError.message).includes("email_domain_not_allowed")) {
+        return errorResponse("email_domain_not_allowed", "Email is outside the organization domain.", 400);
+      }
+      if (String(insertError.message).includes("duplicate key")) {
+        return errorResponse("member_already_exists", "Email is already registered.", 409);
+      }
+      throw insertError;
+    }
+
+    await admin
+      .schema("licensing")
+      .from("audit_log")
+      .insert({
+        organization_id: organizationId,
+        actor_master_id: actor.kind === "master" ? actor.id : null,
+        actor_member_id: actor.kind === "member" ? actor.id : null,
+        action: "member.added",
+        target_table: "members",
+        target_id: member.id,
+        metadata: {
+          source: "tauri_admin_panel",
+          actor: {
+            kind: actor.kind,
+            id: actor.id,
+            email: actor.email,
+            role: actor.kind === "member" ? actor.role : "master",
+          },
+          target: {
+            id: member.id,
+            name,
+            email,
+            role,
+            status: member.status,
+          },
+        },
+      });
+
+    return jsonResponse({ ok: true, member });
+  } catch (error) {
+    console.error(error);
+    return errorResponse("internal_error", "Unable to add member.", 500);
+  }
+});

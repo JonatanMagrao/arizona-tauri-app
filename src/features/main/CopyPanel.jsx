@@ -2,7 +2,13 @@ import fileCopy from "../../assets/icones/file_copy.svg";
 
 const ICON_SIZE = 32;
 
-function CopyPanel({ copyCode, setCopyCode, importProducts, isImporting }) {
+function CopyPanel({ copyCode, setCopyCode, importProducts, isImporting, footer }) {
+  const handleKeyDown = (event) => {
+    if (event.key !== "Enter" || !copyCode.trim() || isImporting) return;
+    event.preventDefault();
+    importProducts();
+  };
+
   return (
     <div className="card" style={{ '--icon-size': `${ICON_SIZE}px` }}>
       <div className="form-row">
@@ -19,17 +25,21 @@ function CopyPanel({ copyCode, setCopyCode, importProducts, isImporting }) {
           autoCorrect="off"
           autoCapitalize="off"
           disabled={isImporting}
+          onKeyDown={handleKeyDown}
         />
         <button
           className="btn"
           onClick={importProducts}
           disabled={!copyCode.trim() || isImporting}
-          aria-label="Copiar produtos"
-          title={isImporting ? "Copiando..." : "Copiar produtos"}
+          aria-label="Copiar arquivos"
+          title={isImporting ? "Copiando..." : "Copiar arquivos"}
         >
           {isImporting ? "..." : <img src={fileCopy} alt="" aria-hidden="true" />}
         </button>
+        <span aria-hidden="true"></span>
       </div>
+
+      {footer}
     </div>
   );
 }

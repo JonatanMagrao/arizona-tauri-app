@@ -1,14 +1,13 @@
-use std::{
-    path::PathBuf,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 
 use crate::license::LicenseStatus;
 
+// Nome do arquivo de sessao do antigo bridge WebSocket. O canal atual e o
+// arquivo cep-license-receipt.json; este nome so existe para limpar o arquivo
+// legado de maquinas que rodaram versoes antigas (ver lib.rs).
 pub const SESSION_FILE_NAME: &str = "cep-bridge-session.json";
-const PROTOCOL_VERSION: &str = "arizona.cep.v1";
 
 #[derive(Clone)]
 pub struct CepBridgeState {
@@ -23,25 +22,8 @@ struct BridgeInner {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BridgeStatus {
-    pub running: bool,
-    pub protocol_version: String,
-    pub endpoint: Option<String>,
-    pub port: Option<u16>,
-    pub session_file_path: Option<PathBuf>,
-    pub started_at: Option<String>,
-    pub connected_client: Option<ConnectedClient>,
     pub license: LicenseStatus,
     pub last_error: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConnectedClient {
-    pub id: String,
-    pub name: Option<String>,
-    pub version: Option<String>,
-    pub connected_at: String,
-    pub last_seen_at: String,
 }
 
 impl CepBridgeState {
@@ -57,13 +39,6 @@ impl CepBridgeState {
     pub fn status(&self) -> BridgeStatus {
         let inner = self.lock_inner();
         BridgeStatus {
-            running: false,
-            protocol_version: PROTOCOL_VERSION.to_string(),
-            endpoint: None,
-            port: None,
-            session_file_path: None,
-            started_at: None,
-            connected_client: None,
             license: inner.license.clone(),
             last_error: inner.last_error.clone(),
         }
@@ -75,10 +50,6 @@ impl CepBridgeState {
 
     pub fn set_last_error(&self, error: impl Into<String>) {
         self.lock_inner().last_error = Some(error.into());
-    }
-
-    pub fn license(&self) -> LicenseStatus {
-        self.lock_inner().license.clone()
     }
 
     fn lock_inner(&self) -> std::sync::MutexGuard<'_, BridgeInner> {

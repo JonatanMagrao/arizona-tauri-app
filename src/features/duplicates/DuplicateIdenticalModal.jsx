@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { commandNames, invokeAction, invokeCommand } from "../../services/tauriCommands";
 
 function DuplicateIdenticalModal({
-  initialJobaoCod,
+  initialJobaoCod = "",
   onClose,
   showError,
   showSuccess,

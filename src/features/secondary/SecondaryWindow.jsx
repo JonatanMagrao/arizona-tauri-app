@@ -720,7 +720,7 @@ function SettingsView({ auth, showError, showSuccess }) {
 
           {activeSettingsTab === SETTINGS_TABS.AFTER_SHORTCUTS && (
           <section className="settings-bridge-shortcuts settings-tab-panel" aria-label="Atalhos After" role="tabpanel">
-            <h2>Atalhos After</h2>
+            <h2>Mover layers para markers</h2>
             {BRIDGE_SHORTCUT_ACTIONS.map((action) => {
               const isRecording = recordingShortcutField === action.field;
               const isSavingShortcut = savingShortcutField === action.field;

@@ -1,7 +1,6 @@
 import searchIcon from "../../assets/icones/folder.svg";
 import aeIcon from "../../assets/icones/aeft_icon.svg";
 import copyIcon from "../../assets/icones/file_copy.svg";
-import equalIcon from "../../assets/icones/equal.svg";
 import roteiroIcon from "../../assets/icones/roteiro.svg";
 import printIcon from "../../assets/icones/print.svg";
 import videoIconMP4 from "../../assets/icones/video_mp4.svg";
@@ -28,7 +27,6 @@ function JobPanel({
   openAudio,
   revealVideo,
   openRoteiro,
-  openDuplicateIdentical,
   footer
 }) {
 
@@ -128,16 +126,6 @@ function JobPanel({
           title="Abrir pasta do Jobão (Enter)"
         >
           <img src={searchIcon} alt="" aria-hidden="true" />
-        </button>
-        <button
-          tabIndex="-1"
-          className="btn btn-secondary"
-          onClick={openDuplicateIdentical}
-          disabled={!jobaoCod.trim()}
-          aria-label="Produtos idênticos"
-          title="Produtos idênticos"
-        >
-          <img src={equalIcon} alt="" aria-hidden="true" />
         </button>
         <span aria-hidden="true"></span>
       </div>

@@ -1,0 +1,26 @@
+{
+  "name": "arizona-admin",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 1430",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 1431",
+    "license:check": "node scripts/check-license-parity.mjs",
+    "license:keygen": "node scripts/generate-license-token-key.mjs",
+    "license:keygen:env": "node scripts/generate-license-token-key.mjs --out-env-file supabase/functions/.env.production.local",
+    "bridge:keygen": "node scripts/generate-aex-bridge-token-key.mjs",
+    "bridge:keygen:env": "node scripts/generate-aex-bridge-token-key.mjs --out-env-file supabase/functions/.env.production.local",
+    "supabase": "supabase"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^4.6.0",
+    "vite": "^7.0.4",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "supabase": "^2.107.0"
+  }
+}

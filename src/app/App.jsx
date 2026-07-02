@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import GlobalTooltip from "../components/GlobalTooltip";
+import CopyPanel from "../features/main/CopyPanel";
 import JobPanel from "../features/main/JobPanel";
 import LinksPanel from "../features/main/LinksPanel";
 import LoginWindow from "../features/auth/LoginWindow";
@@ -15,6 +16,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import appLogo from "../../src-tauri/icons/arizona_icon.ico";
 import closeIcon from "../assets/icones/close.svg";
 import copyIcon from "../assets/icones/file_copy.svg";
+import equalIcon from "../assets/icones/equal.svg";
 import pastaIcon from "../assets/icones/project.svg";
 import imageIcon from "../assets/icones/hierarchy.svg";
 import historyIcon from "../assets/icones/history.svg";
@@ -25,8 +27,12 @@ import adminPanelIcon from "../assets/icones/admin_panel.svg";
 import settingsIcon from "../assets/icones/settings.svg";
 import toolsIcon from "../assets/icones/tools.svg";
 
-const TABS = { JOBS: "jobs", LINKS: "links" };
+const TABS = { JOBS: "jobs", LINKS: "links", COPY: "copy" };
 const AUTH_REFRESH_INTERVAL_MS = 30000;
+const TOOLS_POPOVER_GAP_PX = 10;
+const TOOLS_POPOVER_MARGIN_PX = 6;
+const AEGP_SHORTCUT_NOTICE_THROTTLE_MS = 30000;
+const AEGP_BRIDGE_TOKEN_REFRESH_MARGIN_MS = 15000;
 
 const MAIN_CTA_PHRASES = Object.freeze([
   "Por que fazer isso na mão?",
@@ -137,35 +143,120 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
   const [activeTab, setActiveTab] = useState(TABS.JOBS);
   const [jobaoCod, setJobaoCod] = useState("");
   const [jobinhoCod, setJobinhoCod] = useState("");
+  const [copyJobaoCod, setCopyJobaoCod] = useState("");
   const [outOption, setOutOption] = useState("mp4");
   const [isOpeningOut, setIsOpeningOut] = useState(false);
   const [appConfig, setAppConfig] = useState(DEFAULT_SETTINGS);
   const [isImporting, setIsImporting] = useState(false);
   const [isToolsOpen, setIsToolsOpen] = useState(false);
+  const [toolsPopoverPosition, setToolsPopoverPosition] = useState(null);
   const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(false);
   const [mainCtaPhrase] = useState(randomMainCtaPhrase);
   const [projectTitle, setProjectTitle] = useState("");
   const { toast, showToast, hideToast } = useAutoHideToast();
   const projectTitleRef = useRef({ key: "", title: "" });
   const toolsMenuRef = useRef(null);
+  const toolsButtonRef = useRef(null);
+  const toolsPopoverRef = useRef(null);
   const toolsCloseTimerRef = useRef(null);
+  const lastAegpShortcutNoticeRef = useRef({ key: "", shownAt: 0 });
   const authSessionRef = useRef(authSession);
   const authRefreshInFlightRef = useRef(false);
+  const authRefreshPromiseRef = useRef(null);
   const canAccessAdmin = authSession?.role === "admin";
 
   const showError = (msg) => showToast(msg, "error");
 
+  const syncRuntimeAuthSession = useCallback(async ({ force = false } = {}) => {
+    const currentSession = authSessionRef.current;
+    if (!currentSession?.accessToken) return null;
+
+    const bridgeExpiresAt = Date.parse(currentSession.bridgeTokenExpiresAt || "");
+    const hasFreshBridgeToken = Boolean(currentSession.bridgeToken)
+      && Number.isFinite(bridgeExpiresAt)
+      && bridgeExpiresAt - Date.now() > AEGP_BRIDGE_TOKEN_REFRESH_MARGIN_MS;
+
+    if (!force && hasFreshBridgeToken) {
+      await invokeCommand(commandNames.updateAuthSession, { session: currentSession });
+      return currentSession;
+    }
+
+    if (authRefreshInFlightRef.current && authRefreshPromiseRef.current) {
+      return authRefreshPromiseRef.current;
+    }
+    if (authRefreshInFlightRef.current) return null;
+
+    authRefreshInFlightRef.current = true;
+    authRefreshPromiseRef.current = (async () => {
+      const nextAuth = await validateActiveSession(currentSession, { appVersion: "" });
+      if (!nextAuth) return null;
+
+      const nextSession = authToSession(nextAuth);
+      await invokeCommand(commandNames.updateAuthSession, { session: nextSession });
+      onAuthSessionChange(nextSession);
+      authSessionRef.current = nextSession;
+      return nextSession;
+    })();
+
+    try {
+      return await authRefreshPromiseRef.current;
+    } finally {
+      authRefreshPromiseRef.current = null;
+      authRefreshInFlightRef.current = false;
+    }
+  }, [onAuthSessionChange]);
+
   useEffect(() => {
-    const handleAegpShortcutError = (event) => {
+    const handleAegpShortcutError = async (event) => {
+      const code = String(event?.detail?.code || "aex_bridge_command_failed");
       const message = String(
-        event?.detail?.message || "Plugin bloqueado. Valide a licença novamente no Arizona App."
+        event?.detail?.message || "Atalho do After bloqueado. Valide a licença novamente no Arizona App."
       );
-      showToast(message, "error");
+      const action = String(event?.detail?.action || "").trim();
+      const isLicenseNotice = code === "aex_bridge_license_required";
+      let refreshError = null;
+
+      if (isLicenseNotice) {
+        const refreshedSession = await syncRuntimeAuthSession({ force: true }).catch((error) => {
+          refreshError = error;
+          return null;
+        });
+
+        if (refreshedSession?.bridgeToken && action) {
+          const retryResult = await invokeAction(
+            commandNames.aegpBridgeActionCommand,
+            { action },
+            "Não foi possível executar o atalho do After."
+          );
+
+          if (retryResult.ok) return;
+
+          refreshError = new Error(retryResult.message || message);
+        } else if (refreshedSession?.bridgeToken) {
+          showToast("Licença do After revalidada.", "success");
+          return;
+        } else if (!refreshError) {
+          refreshError = new Error("Licença revalidada, mas o token do atalho do After não veio do servidor.");
+        }
+      }
+
+      const noticeKey = `${code}:${message}`;
+      const now = Date.now();
+      const lastNotice = lastAegpShortcutNoticeRef.current;
+      if (
+        lastNotice.key === noticeKey
+        && now - lastNotice.shownAt < AEGP_SHORTCUT_NOTICE_THROTTLE_MS
+      ) {
+        return;
+      }
+
+      lastAegpShortcutNoticeRef.current = { key: noticeKey, shownAt: now };
+      showToast(refreshError ? authErrorMessage(refreshError) : message, "error");
     };
 
     window.addEventListener("arizona-aegp:shortcut-error", handleAegpShortcutError);
     return () => window.removeEventListener("arizona-aegp:shortcut-error", handleAegpShortcutError);
-  }, [showToast]);
+  }, [showToast, syncRuntimeAuthSession]);
 
   useEffect(() => {
     authSessionRef.current = authSession;
@@ -175,13 +266,13 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
     let mounted = true;
 
     const applyValidatedAuth = async (nextAuth) => {
-      if (!nextAuth) return;
+      if (!nextAuth) return null;
       const nextSession = authToSession(nextAuth);
       const currentSession = authSessionRef.current;
-      if (!authSessionChanged(currentSession, nextSession)) return;
+      if (!authSessionChanged(currentSession, nextSession)) return currentSession || nextSession;
 
       await invokeCommand(commandNames.updateAuthSession, { session: nextSession }).catch(() => {});
-      if (!mounted) return;
+      if (!mounted) return nextSession;
 
       const lostAdminAccess = currentSession?.role === "admin" && nextSession.role !== "admin";
       onAuthSessionChange(nextSession);
@@ -191,6 +282,8 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
         closeToolsMenu();
         showToast("Seu acesso de gestão foi atualizado.", "error");
       }
+
+      return nextSession;
     };
 
     const refreshAuth = async () => {
@@ -198,15 +291,20 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
       if (!currentSession?.accessToken || authRefreshInFlightRef.current) return;
 
       authRefreshInFlightRef.current = true;
-      try {
+      authRefreshPromiseRef.current = (async () => {
         const nextAuth = await validateActiveSession(currentSession, { appVersion: "" });
-        if (mounted) await applyValidatedAuth(nextAuth);
+        if (!mounted) return null;
+        return applyValidatedAuth(nextAuth);
+      })();
+      try {
+        await authRefreshPromiseRef.current;
       } catch (error) {
         const code = String(error?.code || "");
         if (code === "daily_login_required" || code === "stored_session_invalid") {
           showToast(authErrorMessage(error), "error");
         }
       } finally {
+        authRefreshPromiseRef.current = null;
         authRefreshInFlightRef.current = false;
       }
     };
@@ -302,6 +400,45 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
       document.removeEventListener("mousedown", handleOutsidePointer);
       document.removeEventListener("keydown", handleEscape);
     };
+  }, [isToolsOpen]);
+
+  useLayoutEffect(() => {
+    if (!isToolsOpen) {
+      setToolsPopoverPosition(null);
+      return undefined;
+    }
+
+    const updateToolsPopoverPosition = () => {
+      const button = toolsButtonRef.current;
+      const popover = toolsPopoverRef.current;
+      if (!button || !popover) return;
+
+      const buttonRect = button.getBoundingClientRect();
+      const popoverHeight = popover.offsetHeight;
+      const popoverWidth = popover.offsetWidth;
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+      const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+      const maxTop = Math.max(
+        TOOLS_POPOVER_MARGIN_PX,
+        viewportHeight - popoverHeight - TOOLS_POPOVER_MARGIN_PX
+      );
+      const maxLeft = Math.max(
+        TOOLS_POPOVER_MARGIN_PX,
+        viewportWidth - popoverWidth - TOOLS_POPOVER_MARGIN_PX
+      );
+      const top = Math.min(Math.max(buttonRect.top, TOOLS_POPOVER_MARGIN_PX), maxTop);
+      const left = Math.min(buttonRect.right + TOOLS_POPOVER_GAP_PX, maxLeft);
+      const arrowTop = Math.min(
+        Math.max(buttonRect.top + buttonRect.height / 2 - top, 14),
+        Math.max(14, popoverHeight - 14)
+      );
+
+      setToolsPopoverPosition({ top, left, arrowTop });
+    };
+
+    updateToolsPopoverPosition();
+    window.addEventListener("resize", updateToolsPopoverPosition);
+    return () => window.removeEventListener("resize", updateToolsPopoverPosition);
   }, [isToolsOpen]);
 
   useEffect(() => {
@@ -428,8 +565,8 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
   const openClaro = async () => run(commandNames.openClaro, {}, "Falha ao abrir o Claro.");
   const openLinks = async () => run(commandNames.openLinks, {}, "Falha ao abrir os links.");
 
-  const importProducts = async () => {
-    const targetJobao = jobaoCod.trim();
+  const importProducts = async (jobaoCode = copyJobaoCod) => {
+    const targetJobao = String(jobaoCode || "").trim();
     if (!targetJobao || isImporting) return;
 
     setIsImporting(true);
@@ -483,12 +620,7 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
   const openAdmin = async () => openSecondaryView("admin");
   const openSettings = async () => openSecondaryView("settings");
 
-  const openDuplicateIdentical = async () => {
-    const jobao = jobaoCod.trim();
-    if (!jobao) return;
-
-    await openSecondaryView("duplicate", { jobaoCod: jobao });
-  };
+  const openDuplicateIdentical = async () => openSecondaryView("duplicate", { jobaoCod: "" });
 
   const titlebarLabel = projectTitle || "Arizona App";
   const mainCta = (
@@ -575,7 +707,8 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
             }}
           >
             <button
-              className={`icon-tab ${isToolsOpen ? "icon-tab--active" : ""}`}
+              ref={toolsButtonRef}
+              className={`icon-tab ${isToolsOpen || activeTab === TABS.COPY ? "icon-tab--active" : ""}`}
               onClick={() => {
                 hideGlobalTooltip();
                 setIsToolsOpen((open) => !open);
@@ -591,23 +724,40 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
 
             {isToolsOpen && (
               <div
+                ref={toolsPopoverRef}
                 className="iconbar-popover"
                 role="menu"
                 aria-label="Utilitários"
                 data-tooltip-scope="utilities"
+                style={toolsPopoverPosition ? {
+                  top: `${toolsPopoverPosition.top}px`,
+                  left: `${toolsPopoverPosition.left}px`,
+                  "--iconbar-popover-arrow-top": `${toolsPopoverPosition.arrowTop}px`,
+                } : { visibility: "hidden" }}
               >
                 <button
                   className="iconbar-popover__item"
                   onClick={() => {
                     closeToolsMenu();
-                    importProducts();
+                    setActiveTab(TABS.COPY);
                   }}
-                  disabled={!jobaoCod.trim() || isImporting}
                   role="menuitem"
                   tabIndex="-1"
                 >
                   <img src={copyIcon} alt="" aria-hidden="true" />
                   <span>Copiar arquivos</span>
+                </button>
+                <button
+                  className="iconbar-popover__item"
+                  onClick={() => {
+                    closeToolsMenu();
+                    openDuplicateIdentical();
+                  }}
+                  role="menuitem"
+                  tabIndex="-1"
+                >
+                  <img src={equalIcon} alt="" aria-hidden="true" />
+                  <span>Produtos idênticos</span>
                 </button>
                 <button
                   className="iconbar-popover__item"
@@ -677,7 +827,16 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
               revealVideo={revealVideo}
               openRoteiro={openRoteiro}
               projectName={projectName}
-              openDuplicateIdentical={openDuplicateIdentical}
+              footer={mainCta}
+            />
+          )}
+
+          {activeTab === TABS.COPY && (
+            <CopyPanel
+              copyCode={copyJobaoCod}
+              setCopyCode={setCopyJobaoCod}
+              importProducts={() => importProducts(copyJobaoCod)}
+              isImporting={isImporting}
               footer={mainCta}
             />
           )}

@@ -1,0 +1,13 @@
+{
+  "$comment": "Chaves PUBLICAS confiaveis para o cepLicenseReceipt. A extensao CEP embute esta lista no build (ARIZONA-EXTENSION/scripts/generate-license-trusted-keys.mjs). Ao rotacionar: adicione a chave nova SEM remover a antiga, distribua a extensao, atualize os secrets do Supabase e so entao remova a antiga. Nunca edite x/y na mao: eles devem ser derivados do PEM correspondente.",
+  "keys": [
+    {
+      "kid": "v1",
+      "curve": "P-256",
+      "x": "0f1eb70d31d5b10b304f2a514f670ef353d39c3ca32882d6473f0313b027e0f1",
+      "y": "4eef283cb6ab417a2a229a67fb85acb777e73bbd326e5fa037d29606b72fb551",
+      "pem": "license-token-public-key.v1.pem",
+      "createdAt": "2026-06-29"
+    }
+  ]
+}

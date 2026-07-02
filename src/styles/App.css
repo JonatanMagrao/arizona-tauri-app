@@ -640,11 +640,9 @@ html, body, #root, .content{ overflow-x: hidden; }
 }
 
 .iconbar-popover{
-  position: absolute;
-  top: 50%;
-  left: calc(100% + 10px);
-  z-index: 30;
-  min-width: 178px;
+  position: fixed;
+  z-index: 1000;
+  width: 218px;
   display: grid;
   gap: 4px;
   padding: 6px;
@@ -652,13 +650,12 @@ html, body, #root, .content{ overflow-x: hidden; }
   border-radius: 8px;
   background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,0)), #17191c;
   box-shadow: var(--shadow), var(--shadow-inset);
-  transform: translateY(-50%);
 }
 
 .iconbar-popover::before{
   content: "";
   position: absolute;
-  top: 50%;
+  top: var(--iconbar-popover-arrow-top, 19px);
   left: -6px;
   width: 10px;
   height: 10px;

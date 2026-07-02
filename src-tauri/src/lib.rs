@@ -8,7 +8,7 @@ mod settings;
 
 use arizona::{ActionResponse, Arizona, MediaFile, ProductImportReport};
 use cep_bridge::CepBridgeState;
-use chrono::{SecondsFormat, Utc};
+use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use license::{LicenseInput, LicenseStatus};
 use settings::AppConfig;
 use std::fs;
@@ -42,6 +42,33 @@ enum AegpBridgeAction {
     AdjustMarkersToTail,
 }
 
+impl AegpBridgeAction {
+    fn key(self) -> &'static str {
+        match self {
+            AegpBridgeAction::MoveLayersBackward => "moveLayersBackward",
+            AegpBridgeAction::MoveLayersForward => "moveLayersForward",
+            AegpBridgeAction::MoveJumpMarker => "moveJumpMarker",
+            AegpBridgeAction::SelectJumpMarkerLayer => "selectJumpMarkerLayer",
+            AegpBridgeAction::AdjustMarkersToTail => "adjustMarkersToTail",
+        }
+    }
+}
+
+fn aegp_bridge_action_from_key(value: &str) -> Option<AegpBridgeAction> {
+    match value.trim() {
+        "moveLayersBackward" | "move_layers_backward" => Some(AegpBridgeAction::MoveLayersBackward),
+        "moveLayersForward" | "move_layers_forward" => Some(AegpBridgeAction::MoveLayersForward),
+        "moveJumpMarker" | "move_jump_marker" => Some(AegpBridgeAction::MoveJumpMarker),
+        "selectJumpMarkerLayer" | "select_jump_marker_layer" => {
+            Some(AegpBridgeAction::SelectJumpMarkerLayer)
+        }
+        "adjustMarkersToTail" | "adjust_markers_to_tail" => {
+            Some(AegpBridgeAction::AdjustMarkersToTail)
+        }
+        _ => None,
+    }
+}
+
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AuthSession {
@@ -66,6 +93,7 @@ struct AegpBridgeNotice {
     code: &'static str,
     message: String,
     detail: String,
+    action: Option<&'static str>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -134,7 +162,7 @@ pub fn run() {
                         let response = send_aegp_bridge_action_command(&bridge, &auth, action);
                         if !response.is_ok() {
                             if let Some(message) = response.message() {
-                                notify_aegp_bridge_shortcut_error(app, message);
+                                notify_aegp_bridge_shortcut_error(app, message, Some(action));
                             }
                         }
                     }
@@ -159,6 +187,7 @@ pub fn run() {
             cep_bridge_status,
             aegp_bridge_send_test_command,
             aegp_bridge_move_layers_to_markers_command,
+            aegp_bridge_action_command,
             complete_login,
             update_auth_session,
             restrict_admin_session,
@@ -319,7 +348,11 @@ fn parse_after_shortcut(label: &str, shortcut_text: &str) -> Result<Shortcut, St
         .map_err(|err| format!("Atalho invalido em {label} (\"{shortcut_text}\"): {err}"))
 }
 
-fn notify_aegp_bridge_shortcut_error(app: &AppHandle, message: &str) {
+fn notify_aegp_bridge_shortcut_error(
+    app: &AppHandle,
+    message: &str,
+    action: Option<AegpBridgeAction>,
+) {
     eprintln!("Arizona AEGP shortcut failed: {message}");
 
     let (code, user_message) = aegp_bridge_shortcut_notice(message);
@@ -328,15 +361,12 @@ fn notify_aegp_bridge_shortcut_error(app: &AppHandle, message: &str) {
         code,
         message: user_message.to_string(),
         detail: message.to_string(),
+        action: action.map(AegpBridgeAction::key),
     };
 
     let Some(app_window) = app.get_webview_window(APP_WINDOW_LABEL) else {
         return;
     };
-
-    let _ = app_window.unminimize();
-    let _ = app_window.show();
-    let _ = app_window.set_focus();
 
     let Ok(notice_json) = serde_json::to_string(&notice) else {
         return;
@@ -349,7 +379,8 @@ fn notify_aegp_bridge_shortcut_error(app: &AppHandle, message: &str) {
 
 fn aegp_bridge_shortcut_notice(message: &str) -> (&'static str, &'static str) {
     let normalized = message.to_ascii_lowercase();
-    if normalized.contains("token do bridge aex ausente")
+    if normalized.contains("token do bridge aex")
+        || normalized.contains("bridge_token")
         || normalized.contains("licenca")
         || normalized.contains("license")
     {
@@ -426,7 +457,7 @@ const APP_WINDOW_LABEL: &str = "app";
 const SECONDARY_WINDOW_LABEL: &str = "secondary";
 const AEGP_SHORTCUT_ERROR_EVENT: &str = "arizona-aegp:shortcut-error";
 const AEGP_LICENSE_NOTICE_MESSAGE: &str =
-    "Plugin bloqueado. Valide a licença novamente no Arizona App.";
+    "Atalho do After bloqueado. Valide a licença novamente no Arizona App.";
 const CEP_LICENSE_RECEIPT_FILE_NAME: &str = "cep-license-receipt.json";
 const SECURE_AUTH_SERVICE: &str = "Arizona App";
 const SECURE_AUTH_ACCOUNT: &str = "daily-session";
@@ -549,15 +580,23 @@ fn aegp_bridge_move_layers_to_markers_command(
     ))
 }
 
+#[tauri::command]
+fn aegp_bridge_action_command(
+    bridge: State<CepBridgeState>,
+    auth: State<AuthState>,
+    action: String,
+) -> Result<ActionResponse, String> {
+    let Some(action) = aegp_bridge_action_from_key(&action) else {
+        return Ok(ActionResponse::err("Acao do bridge AEX invalida."));
+    };
+
+    Ok(send_aegp_bridge_action_command(&bridge, &auth, action))
+}
+
 fn send_aegp_bridge_test_command(
-    bridge: &CepBridgeState,
+    _bridge: &CepBridgeState,
     auth: &State<AuthState>,
 ) -> ActionResponse {
-    let license = bridge.license();
-    if !license.licensed {
-        return ActionResponse::err(format!("Licenca bloqueada: {}", license.reason));
-    }
-
     let command_auth = match aegp_bridge_auth(auth) {
         Ok(command_auth) => command_auth,
         Err(err) => return ActionResponse::err(err),
@@ -577,15 +616,10 @@ fn send_aegp_bridge_move_layers_to_markers_command(
 }
 
 fn send_aegp_bridge_action_command(
-    bridge: &CepBridgeState,
+    _bridge: &CepBridgeState,
     auth: &State<AuthState>,
     action: AegpBridgeAction,
 ) -> ActionResponse {
-    let license = bridge.license();
-    if !license.licensed {
-        return ActionResponse::err(format!("Licenca bloqueada: {}", license.reason));
-    }
-
     let command_auth = match aegp_bridge_auth(auth) {
         Ok(command_auth) => command_auth,
         Err(err) => return ActionResponse::err(err),
@@ -612,10 +646,18 @@ fn send_aegp_bridge_action_command(
 }
 
 fn aegp_bridge_auth(auth: &State<AuthState>) -> Result<aegp_bridge::BridgeCommandAuth, String> {
-    let bridge_token = auth
+    #[cfg(debug_assertions)]
+    if allow_dev_aex_token() {
+        return aegp_bridge::BridgeCommandAuth::new("arizona-aex-dev-token");
+    }
+
+    let session = auth
         .session
         .lock()
         .map_err(|_| "Nao foi possivel ler a sessao do bridge AEX.".to_string())?
+        .clone();
+
+    let bridge_token = session
         .as_ref()
         .and_then(|session| session.bridge_token.as_deref())
         .map(str::trim)
@@ -623,15 +665,28 @@ fn aegp_bridge_auth(auth: &State<AuthState>) -> Result<aegp_bridge::BridgeComman
         .map(ToOwned::to_owned);
 
     if let Some(bridge_token) = bridge_token {
+        if bridge_token_is_expired(
+            session
+                .as_ref()
+                .and_then(|session| session.bridge_token_expires_at.as_deref()),
+        ) {
+            return Err("Token do bridge AEX expirado. Valide a licenca novamente.".to_string());
+        }
+
         return aegp_bridge::BridgeCommandAuth::new(bridge_token);
     }
 
-    #[cfg(debug_assertions)]
-    if allow_dev_aex_token() {
-        return aegp_bridge::BridgeCommandAuth::new("arizona-aex-dev-token");
-    }
-
     Err("Token do bridge AEX ausente. Valide a licenca novamente.".to_string())
+}
+
+fn bridge_token_is_expired(expires_at: Option<&str>) -> bool {
+    let Some(expires_at) = expires_at.map(str::trim).filter(|value| !value.is_empty()) else {
+        return false;
+    };
+
+    DateTime::parse_from_rfc3339(expires_at)
+        .map(|expires_at| expires_at.with_timezone(&Utc) <= Utc::now() + Duration::seconds(5))
+        .unwrap_or(false)
 }
 
 #[cfg(debug_assertions)]
@@ -831,9 +886,12 @@ fn now_iso() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
+// O recibo CEP NAO e apagado ao sair: ele ja expira sozinho (exp diario) e
+// apaga-lo aqui bloqueava a extensao no meio do trabalho sempre que o app
+// fosse fechado. A remocao explicita acontece apenas no logout
+// (clear_secure_auth).
 #[tauri::command]
 fn exit_app(app: AppHandle) -> Result<(), String> {
-    let _ = clear_cep_license_receipt(&app);
     app.exit(0);
     Ok(())
 }
