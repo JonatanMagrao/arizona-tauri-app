@@ -24,4 +24,43 @@ dist-ssr
 *.sln
 *.sw?
 confidential.md
-admin/
+
+# Sensitive/local environment files
+.env
+.env.*
+!.env.example
+.env.keys
+*.key
+*.p12
+*.pfx
+*private*.pem
+*private-key*.pem
+
+# Supabase local state and production secrets
+ADMIN/supabase/.branches/
+ADMIN/supabase/.temp/
+ADMIN/supabase/functions/.env.production.local
+ADMIN/supabase/functions/.env.*.local
+# Backups datados criados pelos keygens antes de rotacionar chave (contem chave privada)
+ADMIN/supabase/functions/*.bak.*
+
+# Extensao CEP (ARIZONA-EXTENSION): o .env.production dela nao tem segredo
+# (apenas NODE_ENV) e precisa ser versionado apesar do ignore global .env.*
+!ARIZONA-EXTENSION/.env.production
+
+# Admin app generated files
+ADMIN/node_modules/
+ADMIN/dist/
+ADMIN/dist-ssr/
+
+# Adobe SDK and compiled After Effects plugins must not be committed
+AE-PLUGIN-ARIZONA/sdk/
+AE-PLUGIN-ARIZONA/plugin/
+AE-PLUGIN-ARIZONA/**/*.aex
+
+# Native build artifacts for the After Effects bridge
+AE-PLUGIN-ARIZONA/.vs/
+AE-PLUGIN-ARIZONA/**/Debug/
+AE-PLUGIN-ARIZONA/**/Release/
+AE-PLUGIN-ARIZONA/**/x64/
+AE-PLUGIN-ARIZONA/**/*.vcxproj.user

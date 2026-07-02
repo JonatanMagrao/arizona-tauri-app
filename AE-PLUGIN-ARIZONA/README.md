@@ -2,6 +2,18 @@
 
 Native After Effects AEGP/AEX test plugin for the Arizona Tauri bridge.
 
+This project is independent from the Tauri app, the CEP extension and the admin
+panel; the only contract with the outside world is the named pipe below plus
+the signed `bridgeToken`. Key/licensing rules live in
+`../LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md`; check key parity with
+`npm run license:check` at the repo root (section 7 reports whether the
+installed `.aex` is a dev build or carries the production key).
+
+Current state (2026-07-02): the committed and installed `.aex` are DEV builds —
+no embedded public key, dev token accepted. They only work with
+`npm run tauri:dev:bridge`. A production build additionally requires the Tauri
+executable to be code-signed (see Release Security Configuration below).
+
 ## Current Build
 
 The compiled plugin is an invisible AEGP receiver. It does not add a Window menu
