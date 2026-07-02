@@ -12,8 +12,8 @@ Este roadmap registra possibilidades de melhoria para o Arizona App sem pressupo
 
 ## Estado Atual
 
-- `src/App.jsx` centraliza estado, modais, toasts, configurações, comandos Tauri e título da janela.
-- `src-tauri/src/arizona.rs` concentra localização de projetos, abertura de links, After Effects, mídias, leitura de Excel, cópia de produtos e geração de log.
+- `src/app/App.jsx` centraliza estado, modais, toasts, configurações, comandos Tauri e título da janela.
+- `src-tauri/src/arizona/` concentra localização de projetos, abertura de links, After Effects, mídias, leitura de Excel, cópia de produtos e geração de log.
 - `src-tauri/src/history.rs` já está mais modularizado, com SQLite e ações próprias.
 - `src-tauri/src/settings.rs` já isola persistência e validação de configurações.
 - O contrato Tauri mistura `Result<T, String>` com payloads `ActionResponse { ok, message }`.
