@@ -14,7 +14,10 @@ use settings::AppConfig;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use tauri::{AppHandle, LogicalSize, Manager, State};
+use tauri::{
+    AppHandle, LogicalSize, Manager, PhysicalPosition, PhysicalSize, State, WebviewWindow, Window,
+    WindowEvent,
+};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 #[derive(Default)]
@@ -25,6 +28,12 @@ struct AuthState {
 #[derive(Default)]
 struct AfterShortcutState {
     registered: Mutex<Vec<RegisteredAfterShortcut>>,
+    suspended: Mutex<bool>,
+}
+
+#[derive(Default)]
+struct SecondaryWindowRuntimeState {
+    active_view: Mutex<Option<String>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -40,6 +49,7 @@ enum AegpBridgeAction {
     MoveJumpMarker,
     SelectJumpMarkerLayer,
     AdjustMarkersToTail,
+    Render,
 }
 
 impl AegpBridgeAction {
@@ -50,6 +60,7 @@ impl AegpBridgeAction {
             AegpBridgeAction::MoveJumpMarker => "moveJumpMarker",
             AegpBridgeAction::SelectJumpMarkerLayer => "selectJumpMarkerLayer",
             AegpBridgeAction::AdjustMarkersToTail => "adjustMarkersToTail",
+            AegpBridgeAction::Render => "render",
         }
     }
 }
@@ -65,6 +76,7 @@ fn aegp_bridge_action_from_key(value: &str) -> Option<AegpBridgeAction> {
         "adjustMarkersToTail" | "adjust_markers_to_tail" => {
             Some(AegpBridgeAction::AdjustMarkersToTail)
         }
+        "render" | "queueRender" | "queue_render" => Some(AegpBridgeAction::Render),
         _ => None,
     }
 }
@@ -144,10 +156,19 @@ struct CepLicenseReceiptFile {
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 pub fn run() {
+    let _single_instance_guard = match single_instance::acquire() {
+        Ok(guard) => guard,
+        Err(err) => {
+            eprintln!("{err}");
+            return;
+        }
+    };
+
     tauri::Builder::default()
         .manage(AuthState::default())
         .manage(CepBridgeState::new())
         .manage(AfterShortcutState::default())
+        .manage(SecondaryWindowRuntimeState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -156,6 +177,10 @@ pub fn run() {
                         let Some(action) = after_command_action_for_shortcut(app, shortcut) else {
                             return;
                         };
+
+                        if secondary_duplicate_window_is_active(app) {
+                            return;
+                        }
 
                         let bridge = app.state::<CepBridgeState>();
                         let auth = app.state::<AuthState>();
@@ -170,11 +195,24 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_opener::init())
+        .on_window_event(|window, event| {
+            if window.label() != APP_WINDOW_LABEL {
+                return;
+            }
+
+            match event {
+                WindowEvent::Moved(_) | WindowEvent::CloseRequested { .. } => {
+                    save_app_window_position(window);
+                }
+                _ => {}
+            }
+        })
         .setup(|app| {
             disable_browser_accelerator_keys(app);
             let bridge = app.state::<CepBridgeState>();
             let app_handle = app.handle().clone();
             remove_legacy_cep_bridge_session(&app_handle);
+            restore_app_window_position(&app_handle);
             let config = settings::load(&app_handle).unwrap_or_default();
             if let Err(err) = register_after_command_shortcuts(&app_handle, &config) {
                 let message = format!("Nao foi possivel registrar atalho do After: {err}");
@@ -206,6 +244,9 @@ pub fn run() {
             close_secondary_window,
             open_duplicate_identical_window,
             list_identical_mp4_items,
+            export_identical_mp4_names_json,
+            update_identical_mp4_names_json,
+            import_identical_mp4_names_json,
             duplicate_identical_mp4,
             open_video,
             open_audio,
@@ -257,10 +298,44 @@ fn after_command_action_for_shortcut(
         })
 }
 
+fn secondary_duplicate_window_is_active(app: &AppHandle) -> bool {
+    let Some(view) = app
+        .state::<SecondaryWindowRuntimeState>()
+        .active_view
+        .lock()
+        .ok()
+        .and_then(|active_view| active_view.clone())
+    else {
+        return false;
+    };
+
+    if view != "duplicate" {
+        return false;
+    }
+
+    app.get_webview_window(SECONDARY_WINDOW_LABEL)
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false)
+}
+
+fn set_secondary_active_view(app: &AppHandle, view: Option<&str>) {
+    if let Ok(mut active_view) = app
+        .state::<SecondaryWindowRuntimeState>()
+        .active_view
+        .lock()
+    {
+        *active_view = view.map(ToOwned::to_owned);
+    }
+}
+
 fn register_after_command_shortcuts(app: &AppHandle, config: &AppConfig) -> Result<(), String> {
     let requested = configured_after_shortcuts(config)?;
 
     let shortcut_state = app.state::<AfterShortcutState>();
+    let suspended = *shortcut_state
+        .suspended
+        .lock()
+        .map_err(|_| "Nao foi possivel atualizar os atalhos do After.".to_string())?;
     let previous = shortcut_state
         .registered
         .lock()
@@ -268,6 +343,15 @@ fn register_after_command_shortcuts(app: &AppHandle, config: &AppConfig) -> Resu
         .clone();
 
     if previous == requested {
+        return Ok(());
+    }
+
+    if suspended {
+        *shortcut_state
+            .registered
+            .lock()
+            .map_err(|_| "Nao foi possivel atualizar os atalhos do After.".to_string())? =
+            requested;
         return Ok(());
     }
 
@@ -293,6 +377,69 @@ fn register_after_command_shortcuts(app: &AppHandle, config: &AppConfig) -> Resu
         .registered
         .lock()
         .map_err(|_| "Nao foi possivel atualizar os atalhos do After.".to_string())? = requested;
+
+    Ok(())
+}
+
+fn suspend_after_command_shortcuts(app: &AppHandle) -> Result<(), String> {
+    let shortcut_state = app.state::<AfterShortcutState>();
+    {
+        let mut suspended = shortcut_state
+            .suspended
+            .lock()
+            .map_err(|_| "Nao foi possivel suspender os atalhos do After.".to_string())?;
+        if *suspended {
+            return Ok(());
+        }
+
+        let registered = shortcut_state
+            .registered
+            .lock()
+            .map_err(|_| "Nao foi possivel suspender os atalhos do After.".to_string())?
+            .clone();
+        for item in &registered {
+            let _ = app.global_shortcut().unregister(item.shortcut);
+        }
+
+        *suspended = true;
+    }
+
+    Ok(())
+}
+
+fn resume_after_command_shortcuts(app: &AppHandle) -> Result<(), String> {
+    let shortcut_state = app.state::<AfterShortcutState>();
+    {
+        let suspended = shortcut_state
+            .suspended
+            .lock()
+            .map_err(|_| "Nao foi possivel restaurar os atalhos do After.".to_string())?;
+        if !*suspended {
+            return Ok(());
+        }
+    }
+
+    let registered = shortcut_state
+        .registered
+        .lock()
+        .map_err(|_| "Nao foi possivel restaurar os atalhos do After.".to_string())?
+        .clone();
+
+    let mut registered_now: Vec<RegisteredAfterShortcut> = Vec::new();
+    for item in &registered {
+        if let Err(err) = app.global_shortcut().register(item.shortcut) {
+            for registered_item in &registered_now {
+                let _ = app.global_shortcut().unregister(registered_item.shortcut);
+            }
+            return Err(err.to_string());
+        }
+        registered_now.push(*item);
+    }
+
+    *shortcut_state
+        .suspended
+        .lock()
+        .map_err(|_| "Nao foi possivel restaurar os atalhos do After.".to_string())? = false;
 
     Ok(())
 }
@@ -323,6 +470,11 @@ fn configured_after_shortcuts(config: &AppConfig) -> Result<Vec<RegisteredAfterS
             "Reset Markers",
             AegpBridgeAction::AdjustMarkersToTail,
             config.adjust_markers_shortcut.as_str(),
+        ),
+        (
+            "Render",
+            AegpBridgeAction::Render,
+            config.render_shortcut.as_str(),
         ),
     ];
     let mut shortcuts = Vec::new();
@@ -462,6 +614,7 @@ const CEP_LICENSE_RECEIPT_FILE_NAME: &str = "cep-license-receipt.json";
 const SECURE_AUTH_SERVICE: &str = "Arizona App";
 const SECURE_AUTH_ACCOUNT: &str = "daily-session";
 const SECURE_AUTH_TARGET: &str = "daily-session.Arizona App";
+const APP_WINDOW_STATE_FILE_NAME: &str = "window-state.json";
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -469,6 +622,13 @@ struct AppInfo {
     version: String,
     author_name: String,
     author_url: String,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppWindowState {
+    x: i32,
+    y: i32,
 }
 
 #[tauri::command]
@@ -637,6 +797,7 @@ fn send_aegp_bridge_action_command(
         AegpBridgeAction::AdjustMarkersToTail => {
             aegp_bridge::send_adjust_markers_to_tail(&command_auth)
         }
+        AegpBridgeAction::Render => aegp_bridge::send_render(&command_auth),
     };
 
     match result {
@@ -886,12 +1047,144 @@ fn now_iso() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
+fn app_window_state_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_local_data_dir()
+        .map_err(|err| err.to_string())?
+        .join(APP_WINDOW_STATE_FILE_NAME))
+}
+
+fn read_app_window_state(app: &AppHandle) -> Result<Option<AppWindowState>, String> {
+    let path = app_window_state_path(app)?;
+    if !path.is_file() {
+        return Ok(None);
+    }
+
+    let text = fs::read_to_string(&path)
+        .map_err(|err| format!("Não foi possível ler {}: {err}", path.display()))?;
+    serde_json::from_str(&text)
+        .map(Some)
+        .map_err(|err| format!("Estado de janela inválido em {}: {err}", path.display()))
+}
+
+fn restore_app_window_position(app: &AppHandle) {
+    let Some(window) = app.get_webview_window(APP_WINDOW_LABEL) else {
+        return;
+    };
+
+    match read_app_window_state(app) {
+        Ok(Some(state)) => {
+            let position = PhysicalPosition::new(state.x, state.y);
+            if webview_window_position_is_visible(&window, position) {
+                if window.set_position(position).is_err() {
+                    let _ = window.center();
+                }
+            } else {
+                let _ = window.center();
+            }
+        }
+        Ok(None) => {}
+        Err(err) => {
+            eprintln!("{err}");
+            let _ = window.center();
+        }
+    }
+}
+
+fn save_current_app_window_position(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(APP_WINDOW_LABEL) {
+        save_app_webview_window_position(&window);
+    }
+}
+
+fn save_app_window_position(window: &Window) {
+    if window.is_minimized().unwrap_or(false) {
+        return;
+    }
+
+    let Ok(position) = window.outer_position() else {
+        return;
+    };
+    let state = AppWindowState {
+        x: position.x,
+        y: position.y,
+    };
+
+    let app = window.app_handle();
+    write_app_window_state(app, &state);
+}
+
+fn save_app_webview_window_position(window: &WebviewWindow) {
+    if window.is_minimized().unwrap_or(false) {
+        return;
+    }
+
+    let Ok(position) = window.outer_position() else {
+        return;
+    };
+    let state = AppWindowState {
+        x: position.x,
+        y: position.y,
+    };
+
+    let app = window.app_handle();
+    write_app_window_state(app, &state);
+}
+
+fn write_app_window_state(app: &AppHandle, state: &AppWindowState) {
+    let Ok(path) = app_window_state_path(app) else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Ok(text) = serde_json::to_string_pretty(state) {
+        let _ = fs::write(path, text);
+    }
+}
+
+fn webview_window_position_is_visible(
+    window: &WebviewWindow,
+    position: PhysicalPosition<i32>,
+) -> bool {
+    position_is_visible_for_window(
+        window.outer_size().unwrap_or_else(|_| PhysicalSize::new(440, 232)),
+        position,
+        window.available_monitors(),
+    )
+}
+
+fn position_is_visible_for_window(
+    size: PhysicalSize<u32>,
+    position: PhysicalPosition<i32>,
+    monitors: tauri::Result<Vec<tauri::Monitor>>,
+) -> bool {
+    let center_x = position.x + (size.width as i32 / 2);
+    let center_y = position.y + (size.height as i32 / 2);
+    let Ok(monitors) = monitors else {
+        return false;
+    };
+
+    monitors.iter().any(|monitor| {
+        let monitor_position = monitor.position();
+        let monitor_size = monitor.size();
+        let left = monitor_position.x;
+        let top = monitor_position.y;
+        let right = left + monitor_size.width as i32;
+        let bottom = top + monitor_size.height as i32;
+
+        center_x >= left && center_x < right && center_y >= top && center_y < bottom
+    })
+}
+
 // O recibo CEP NAO e apagado ao sair: ele ja expira sozinho (exp diario) e
 // apaga-lo aqui bloqueava a extensao no meio do trabalho sempre que o app
 // fosse fechado. A remocao explicita acontece apenas no logout
 // (clear_secure_auth).
 #[tauri::command]
 fn exit_app(app: AppHandle) -> Result<(), String> {
+    save_current_app_window_position(&app);
     app.exit(0);
     Ok(())
 }
@@ -1068,6 +1361,13 @@ fn show_secondary_window(
     app: AppHandle,
     state: SecondaryWindowState,
 ) -> Result<ActionResponse, String> {
+    let active_view = state.view.clone();
+    if active_view == "duplicate" {
+        suspend_after_command_shortcuts(&app)?;
+    } else {
+        resume_after_command_shortcuts(&app)?;
+    }
+
     let window_title = secondary_window_state_title(&state);
     let state_json = serde_json::to_string(&state).map_err(|err| err.to_string())?;
     let window = app
@@ -1092,6 +1392,7 @@ fn show_secondary_window(
     window.unminimize().map_err(|err| err.to_string())?;
     window.show().map_err(|err| err.to_string())?;
     window.set_focus().map_err(|err| err.to_string())?;
+    set_secondary_active_view(&app, Some(&active_view));
 
     if let Some(app_window) = app.get_webview_window(APP_WINDOW_LABEL) {
         let _ = app_window.set_enabled(false);
@@ -1104,6 +1405,10 @@ fn show_secondary_window(
 fn close_secondary_window(app: AppHandle) -> Result<ActionResponse, String> {
     if let Some(window) = app.get_webview_window(SECONDARY_WINDOW_LABEL) {
         let _ = window.hide();
+    }
+    set_secondary_active_view(&app, None);
+    if let Err(err) = resume_after_command_shortcuts(&app) {
+        eprintln!("Nao foi possivel restaurar atalhos do After: {err}");
     }
 
     if let Some(app_window) = app.get_webview_window(APP_WINDOW_LABEL) {
@@ -1263,7 +1568,7 @@ fn normalize_secondary_view(view: &str) -> Result<&'static str, String> {
 
 fn secondary_window_title(view: &str) -> &'static str {
     match view {
-        "duplicate" => "Produtos idênticos",
+        "duplicate" => "Cópia de produtos idênticos",
         "history" => "Histórico",
         "places" => "Praças CRF",
         "media" => "Mídia",
@@ -1306,6 +1611,30 @@ fn list_identical_mp4_items(
     jobao_cod: String,
 ) -> Result<Vec<arizona::DuplicateMp4Item>, String> {
     arizona_from_app(&app)?.list_identical_mp4_items(&jobao_cod)
+}
+
+#[tauri::command]
+fn export_identical_mp4_names_json(
+    app: AppHandle,
+    jobao_cod: String,
+) -> Result<arizona::DuplicateMp4NamesJsonExport, String> {
+    arizona_from_app(&app)?.export_identical_mp4_names_json(&jobao_cod)
+}
+
+#[tauri::command]
+fn update_identical_mp4_names_json(
+    app: AppHandle,
+    jobao_cod: String,
+) -> Result<arizona::DuplicateMp4NamesJsonExport, String> {
+    arizona_from_app(&app)?.update_identical_mp4_names_json(&jobao_cod)
+}
+
+#[tauri::command]
+fn import_identical_mp4_names_json(
+    app: AppHandle,
+    jobao_cod: String,
+) -> Result<arizona::DuplicateMp4NamesJsonImport, String> {
+    arizona_from_app(&app)?.import_identical_mp4_names_json(&jobao_cod)
 }
 
 #[tauri::command]
@@ -1600,4 +1929,70 @@ fn is_media_path(path: &Path) -> bool {
             )
         })
         .unwrap_or(false)
+}
+
+#[cfg(windows)]
+mod single_instance {
+    use std::{
+        ffi::{c_void, OsStr},
+        os::windows::ffi::OsStrExt,
+        ptr,
+    };
+
+    type Handle = *mut c_void;
+    const ERROR_ALREADY_EXISTS: u32 = 183;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CreateMutexW(
+            lp_mutex_attributes: *mut c_void,
+            b_initial_owner: i32,
+            lp_name: *const u16,
+        ) -> Handle;
+        fn GetLastError() -> u32;
+        fn CloseHandle(h_object: Handle) -> i32;
+    }
+
+    pub struct Guard(Handle);
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = CloseHandle(self.0);
+            }
+        }
+    }
+
+    pub fn acquire() -> Result<Guard, String> {
+        let name = wide_null("Local\\com.pc.arizona-app.single-instance");
+        let handle = unsafe { CreateMutexW(ptr::null_mut(), 1, name.as_ptr()) };
+        if handle.is_null() {
+            return Err("Não foi possível iniciar o controle de instância única.".to_string());
+        }
+
+        if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+            unsafe {
+                let _ = CloseHandle(handle);
+            }
+            return Err("Arizona App já está aberto.".to_string());
+        }
+
+        Ok(Guard(handle))
+    }
+
+    fn wide_null(value: &str) -> Vec<u16> {
+        OsStr::new(value)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
+    }
+}
+
+#[cfg(not(windows))]
+mod single_instance {
+    pub struct Guard;
+
+    pub fn acquire() -> Result<Guard, String> {
+        Ok(Guard)
+    }
 }

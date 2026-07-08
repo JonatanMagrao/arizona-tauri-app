@@ -12,7 +12,10 @@ import {
   replaceProjectWavFootage,
   openProjectAudioDialogAndReplace,
 } from "../services/audioService";
-import { adjustTimelineMarkersToTail } from "../services/markerService";
+import {
+  adjustTimelineMarkersToTail,
+  openTimelineCompPreview,
+} from "../services/markerService";
 import { queueActiveCompRenderOutputs } from "../services/renderService";
 import { isNodeAvailable, scanRoteiroDirectory } from "../utils/roteiroFiles";
 import { scanAudioDirectory } from "../utils/audioFiles";
@@ -228,6 +231,10 @@ export const useRoteiro = () => {
         currentData.audioContext.projectName,
         currentData.audioContext.roteiroRegions
       );
+      const previewResult = await openTimelineCompPreview();
+      if (!previewResult.ok) {
+        showToast(previewResult.message, "warning");
+      }
       await load();
     } catch (caught) {
       const message = getMessage(caught);

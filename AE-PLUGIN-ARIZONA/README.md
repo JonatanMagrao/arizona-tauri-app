@@ -48,6 +48,7 @@ move_layers_forward
 move_jump_marker
 select_jump_marker_layer
 adjust_markers_to_tail
+render
 ```
 
 `show_alert` is kept as a diagnostic command. The production test command is
@@ -60,6 +61,7 @@ Ctrl+Numpad3 -> move_layers_forward
 Ctrl+Numpad2 -> move_jump_marker
 Ctrl+Numpad0 -> select_jump_marker_layer
 Ctrl+NumpadDecimal -> adjust_markers_to_tail
+Ctrl+NumpadEnter -> render
 ```
 
 `select_jump_marker_layer` selects the topmost visible, unlocked layer that is
@@ -72,6 +74,9 @@ frame, clamping it to at least 27 frames after each layer's in point.
 `adjust_markers_to_tail` mirrors the CEP panel's "Ajuste Marker" action for the
 `Miolo` comp: it moves comp markers 2 through 6 to the tail, moves matching layer
 groups with them, returns to offer 1, and selects offer 1 layers.
+
+`render` mirrors the CEP panel's render action: it queues the `EXPORT` comp as
+MOV and the `EXPORT_MP4` comp as MP4, using the `MP4` output module template.
 
 `move_layers_to_markers` is still accepted by the plugin as a compatibility alias
 for `move_layers_forward`.
@@ -92,6 +97,8 @@ src/ArizonaBridgeTest_PiPL.r
 src/BridgeContext.h
 src/actions/MoveLayersToMarkers.cpp
 src/actions/MoveLayersToMarkers.h
+src/actions/RenderQueueAction.cpp
+src/actions/RenderQueueAction.h
 src/actions/ShowAlert.cpp
 src/actions/ShowAlert.h
 ```

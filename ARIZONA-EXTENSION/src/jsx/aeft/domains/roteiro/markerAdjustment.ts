@@ -8,6 +8,12 @@ export interface TimelineMarkerActionResult {
   movedCompMarker: boolean;
 }
 
+export interface OpenTimelineCompPreviewResult {
+  ok: boolean;
+  message: string;
+  compName: string;
+}
+
 interface LabelMarkerMap {
   [label: number]: number;
 }
@@ -71,6 +77,24 @@ const getTimelineComp = (openInViewer: boolean = false): CompItem | null => {
   }
 
   return comp;
+};
+
+export const openTimelineCompPreview = (): OpenTimelineCompPreviewResult => {
+  const comp = getTimelineComp(true);
+
+  if (comp === null) {
+    return {
+      ok: false,
+      message: 'Precomp "Miolo" nao encontrada.',
+      compName: "",
+    };
+  }
+
+  return {
+    ok: true,
+    message: 'Precomp "Miolo" aberta.',
+    compName: comp.name,
+  };
 };
 
 const getMarkerIndexForLayer = (layer: Layer): number => {

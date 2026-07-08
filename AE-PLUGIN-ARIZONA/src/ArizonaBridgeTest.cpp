@@ -4,6 +4,7 @@
 #include "BridgeSecurity.h"
 #include "BridgeContext.h"
 #include "actions/MoveLayersToMarkers.h"
+#include "actions/RenderQueueAction.h"
 #include "actions/ShowAlert.h"
 
 #include <atomic>
@@ -88,6 +89,11 @@ static void HandleQueuedCommand(const BridgeCommandEnvelope& queued_command)
 
     if (command == "adjust_markers_to_tail") {
         RunAdjustTimelineMarkersToTail(context);
+        return;
+    }
+
+    if (command == "render") {
+        RunQueueRenderOutputs(context);
     }
 }
 

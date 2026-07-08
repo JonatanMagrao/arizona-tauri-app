@@ -19,6 +19,7 @@ function JobPanel({
   openJobao,
   openJobinho,
   abrirAE,
+  isOpeningAE,
   openOut,
   outOption,
   setOutOption,
@@ -45,6 +46,7 @@ function JobPanel({
     // Para a combinação de teclas Ctrl + Enter
     if (e.key === "Enter" && e.shiftKey && jobaoCod.trim() && jobinhoCod.trim()) {
       e.preventDefault();
+      if (isOpeningAE) return;
       abrirAE();
       // alert("abrir ae")
     }
@@ -161,9 +163,9 @@ function JobPanel({
           tabIndex="-1"
           className="btn btn-secondary"
           onClick={abrirAE}
-          disabled={!jobaoCod.trim() || !jobinhoCod.trim()}
+          disabled={!jobaoCod.trim() || !jobinhoCod.trim() || isOpeningAE}
           aria-label="Abrir AE"
-          title="Abrir AE (Shift + Enter)"
+          title={isOpeningAE ? "Abrindo AE..." : "Abrir AE (Shift + Enter)"}
         >
           <img src={aeIcon} alt="" aria-hidden="true" />
         </button>

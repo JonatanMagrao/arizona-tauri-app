@@ -33,6 +33,7 @@ interface OffersPanelProps {
   productImages: LocalImage[];
   requestedOfferLayerIndex?: number;
   onLoadProductPreview: (image: LocalImage) => Promise<void>;
+  onBeforeOfferNavigation?: () => Promise<boolean>;
   onRequestedOfferLayerIndexHandled?: () => void;
   onStatus: (message: string) => void;
 }
@@ -1607,6 +1608,7 @@ export const OffersPanel = ({
   productImages,
   requestedOfferLayerIndex,
   onLoadProductPreview,
+  onBeforeOfferNavigation,
   onRequestedOfferLayerIndexHandled,
   onStatus,
 }: OffersPanelProps) => {
@@ -1654,6 +1656,16 @@ export const OffersPanel = ({
     void undo();
   };
 
+  const runOfferNavigation = (action: () => Promise<void>) => {
+    void (async () => {
+      if (onBeforeOfferNavigation && !(await onBeforeOfferNavigation())) {
+        return;
+      }
+
+      await action();
+    })();
+  };
+
   return (
     <section
       className="offers-panel"
@@ -1682,12 +1694,14 @@ export const OffersPanel = ({
                 onClick={() => {
                   window.clearTimeout(offerClickTimer);
                   offerClickTimer = window.setTimeout(() => {
-                    void selectOffer(offer.layerIndex);
+                    runOfferNavigation(() => selectOffer(offer.layerIndex));
                   }, 180);
                 }}
                 onDoubleClick={() => {
                   window.clearTimeout(offerClickTimer);
-                  void openOfferPrecomp(offer.layerIndex);
+                  runOfferNavigation(() =>
+                    openOfferPrecomp(offer.layerIndex)
+                  );
                 }}
               >
                 <span className="offer-tab-color" aria-hidden="true" />

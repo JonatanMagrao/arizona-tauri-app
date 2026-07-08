@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { initBolt } from "../lib/utils/bolt";
 import { OffersPanel } from "./domains/ofertas/components/OffersPanel";
@@ -64,8 +64,9 @@ interface LicensedAppProps {
 }
 
 const LicensedApp = ({ bgColor }: LicensedAppProps) => {
-  const projectKey = useProjectIdentity();
+  const { projectKey, refreshProjectIdentity } = useProjectIdentity();
   const projectViewKey = projectKey || "no-project";
+  const projectKeyRef = useRef(projectKey);
   const [activeView, setActiveView] = useState<ActiveView>("offers");
   const [requestedOfferLayerIndex, setRequestedOfferLayerIndex] = useState<
     number | undefined
@@ -85,6 +86,10 @@ const LicensedApp = ({ bgColor }: LicensedAppProps) => {
   );
 
   const appStyle = { backgroundColor: bgColor } as CSSProperties;
+
+  useEffect(() => {
+    projectKeyRef.current = projectKey;
+  }, [projectKey]);
 
   useEffect(() => {
     void scanProjectProductsDirectory();
@@ -128,7 +133,24 @@ const LicensedApp = ({ bgColor }: LicensedAppProps) => {
     }
   };
 
-  const openOfferFromRoteiro = (offerLayerIndex: number) => {
+  const selectActiveView = useCallback(
+    async (view: ActiveView) => {
+      await refreshProjectIdentity();
+      setActiveView(view);
+    },
+    [refreshProjectIdentity]
+  );
+
+  const keepCurrentProjectForAction = useCallback(async () => {
+    const currentProjectKey = projectKeyRef.current;
+    const nextProjectKey = await refreshProjectIdentity();
+
+    return nextProjectKey === currentProjectKey;
+  }, [refreshProjectIdentity]);
+
+  const openOfferFromRoteiro = async (offerLayerIndex: number) => {
+    if (!(await keepCurrentProjectForAction())) return;
+
     setRequestedOfferLayerIndex(offerLayerIndex);
     setActiveView("offers");
   };
@@ -149,7 +171,7 @@ const LicensedApp = ({ bgColor }: LicensedAppProps) => {
             role="tab"
             aria-selected={activeView === "offers"}
             className={activeView === "offers" ? "is-active" : ""}
-            onClick={() => setActiveView("offers")}
+            onClick={() => void selectActiveView("offers")}
           >
             Ofertas
           </button>
@@ -158,7 +180,7 @@ const LicensedApp = ({ bgColor }: LicensedAppProps) => {
             role="tab"
             aria-selected={activeView === "roteiro"}
             className={activeView === "roteiro" ? "is-active" : ""}
-            onClick={() => setActiveView("roteiro")}
+            onClick={() => void selectActiveView("roteiro")}
           >
             Roteiro
           </button>
@@ -167,7 +189,7 @@ const LicensedApp = ({ bgColor }: LicensedAppProps) => {
             role="tab"
             aria-selected={activeView === "render"}
             className={activeView === "render" ? "is-active" : ""}
-            onClick={() => setActiveView("render")}
+            onClick={() => void selectActiveView("render")}
           >
             Render
           </button>
@@ -207,6 +229,7 @@ const LicensedApp = ({ bgColor }: LicensedAppProps) => {
               productImages={images}
               requestedOfferLayerIndex={requestedOfferLayerIndex}
               onLoadProductPreview={loadImagePreview}
+              onBeforeOfferNavigation={keepCurrentProjectForAction}
               onRequestedOfferLayerIndexHandled={() =>
                 setRequestedOfferLayerIndex(undefined)
               }

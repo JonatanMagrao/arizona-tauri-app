@@ -110,6 +110,7 @@
     <ClInclude Include="..\..\src\BridgeSecurity.h" />
     <ClInclude Include="..\..\src\BridgeContext.h" />
     <ClInclude Include="..\..\src\actions\MoveLayersToMarkers.h" />
+    <ClInclude Include="..\..\src\actions\RenderQueueAction.h" />
     <ClInclude Include="..\..\src\actions\ShowAlert.h" />
   </ItemGroup>
 
@@ -135,6 +136,7 @@ cl /D "MSWindows" /EP "$(IntDir)ArizonaBridgeTest_PiPL.rrc" &gt; "$(ProjectDir)A
     <ClCompile Include="..\..\src\BridgeProtocol.cpp" />
     <ClCompile Include="..\..\src\BridgeSecurity.cpp" />
     <ClCompile Include="..\..\src\actions\MoveLayersToMarkers.cpp" />
+    <ClCompile Include="..\..\src\actions\RenderQueueAction.cpp" />
     <ClCompile Include="..\..\src\actions\ShowAlert.cpp" />
   </ItemGroup>
 

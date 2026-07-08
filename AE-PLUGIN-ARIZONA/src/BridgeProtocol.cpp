@@ -1027,7 +1027,8 @@ bool IsAllowedCommand(const std::string& command)
         || command == "move_layers_to_markers"
         || command == "move_jump_marker"
         || command == "select_jump_marker_layer"
-        || command == "adjust_markers_to_tail";
+        || command == "adjust_markers_to_tail"
+        || command == "render";
 }
 
 bool ValidateCommandArgs(

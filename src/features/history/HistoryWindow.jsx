@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import AppDropdown from "../../components/AppDropdown";
 import { commandNames, invokeAction, invokeCommand } from "../../services/tauriCommands";
 import { formatDuration } from "../../utils/formatters";
@@ -15,6 +15,8 @@ const HISTORY_TYPES = Object.freeze({
   COPIES: "copies",
   PRODUCT_IMPORTS: "productImports",
 });
+
+const AE_OPEN_COOLDOWN_MS = 8000;
 
 const HISTORY_META = Object.freeze({
   [HISTORY_TYPES.PROJECTS]: {
@@ -54,6 +56,8 @@ function HistoryWindow({ onClose }) {
   const [message, setMessage] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [dateSort, setDateSort] = useState("desc");
+  const aeOpenCooldownTimerRef = useRef(null);
+  const isOpeningAERef = useRef(false);
 
   const isProjectsType = activeType === HISTORY_TYPES.PROJECTS;
   const isCopiesType = activeType === HISTORY_TYPES.COPIES;
@@ -93,6 +97,14 @@ function HistoryWindow({ onClose }) {
 
   useEffect(() => {
     loadHistory();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (aeOpenCooldownTimerRef.current) {
+        clearTimeout(aeOpenCooldownTimerRef.current);
+      }
+    };
   }, []);
 
   const runAction = async (fnName, args, refresh = false) => {
@@ -139,9 +151,29 @@ function HistoryWindow({ onClose }) {
     runAction(commandNames.historyOpenJobaoFolder, { id: entry.id });
   };
 
+  const openAfterProject = async (entry) => {
+    if (isOpeningAERef.current) return;
+
+    isOpeningAERef.current = true;
+
+    if (aeOpenCooldownTimerRef.current) {
+      clearTimeout(aeOpenCooldownTimerRef.current);
+      aeOpenCooldownTimerRef.current = null;
+    }
+
+    try {
+      await runAction(commandNames.historyOpenAfterProject, { id: entry.id }, true);
+    } finally {
+      aeOpenCooldownTimerRef.current = setTimeout(() => {
+        isOpeningAERef.current = false;
+        aeOpenCooldownTimerRef.current = null;
+      }, AE_OPEN_COOLDOWN_MS);
+    }
+  };
+
   const handleAfterClick = (event, entry) => {
     if (event.shiftKey) {
-      runAction(commandNames.historyOpenAfterProject, { id: entry.id }, true);
+      void openAfterProject(entry);
       return;
     }
 

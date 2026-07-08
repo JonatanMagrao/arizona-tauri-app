@@ -33,6 +33,7 @@ const TOOLS_POPOVER_GAP_PX = 10;
 const TOOLS_POPOVER_MARGIN_PX = 6;
 const AEGP_SHORTCUT_NOTICE_THROTTLE_MS = 30000;
 const AEGP_BRIDGE_TOKEN_REFRESH_MARGIN_MS = 15000;
+const AE_OPEN_COOLDOWN_MS = 8000;
 
 const MAIN_CTA_PHRASES = Object.freeze([
   "Por que fazer isso na mão?",
@@ -146,6 +147,7 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
   const [copyJobaoCod, setCopyJobaoCod] = useState("");
   const [outOption, setOutOption] = useState("mp4");
   const [isOpeningOut, setIsOpeningOut] = useState(false);
+  const [isOpeningAE, setIsOpeningAE] = useState(false);
   const [appConfig, setAppConfig] = useState(DEFAULT_SETTINGS);
   const [isImporting, setIsImporting] = useState(false);
   const [isToolsOpen, setIsToolsOpen] = useState(false);
@@ -159,6 +161,8 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
   const toolsButtonRef = useRef(null);
   const toolsPopoverRef = useRef(null);
   const toolsCloseTimerRef = useRef(null);
+  const aeOpenCooldownTimerRef = useRef(null);
+  const isOpeningAERef = useRef(false);
   const lastAegpShortcutNoticeRef = useRef({ key: "", shownAt: 0 });
   const authSessionRef = useRef(authSession);
   const authRefreshInFlightRef = useRef(false);
@@ -453,6 +457,14 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
     return undefined;
   }, [isToolsOpen]);
 
+  useEffect(() => {
+    return () => {
+      if (aeOpenCooldownTimerRef.current) {
+        clearTimeout(aeOpenCooldownTimerRef.current);
+      }
+    };
+  }, []);
+
   const run = async (fnName, args, fallbackMsg) => {
     const result = await invokeAction(fnName, args, fallbackMsg);
     if (!result.ok) {
@@ -535,13 +547,31 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
   const openJobao = async () => run(commandNames.openJobao, { jobaoCod }, `Não foi possível abrir o Jobão "${jobaoCod}".`);
   const openJobinho = async () => run(commandNames.openJobinho, { jobaoCod, jobinhoCod }, `Não foi possível abrir o Jobinho "${jobinhoCod}".`);
   const abrirAE = async () => {
-    const res = await run(commandNames.abrirAe, { jobaoCod, jobinhoCod }, `Não foi possível abrir o projeto ${jobinhoCod} no After Effects.`);
-    if (res?.ok) {
-      projectTitleRef.current = {
-        key: `${appConfig.drive || ""}::${jobaoCod.trim()}::${jobinhoCod.trim()}`,
-        title: res.message || "",
-      };
-      await setProjectWindowTitle(res.message);
+    if (isOpeningAERef.current) return;
+
+    isOpeningAERef.current = true;
+    setIsOpeningAE(true);
+
+    if (aeOpenCooldownTimerRef.current) {
+      clearTimeout(aeOpenCooldownTimerRef.current);
+      aeOpenCooldownTimerRef.current = null;
+    }
+
+    try {
+      const res = await run(commandNames.abrirAe, { jobaoCod, jobinhoCod }, `Não foi possível abrir o projeto ${jobinhoCod} no After Effects.`);
+      if (res?.ok) {
+        projectTitleRef.current = {
+          key: `${appConfig.drive || ""}::${jobaoCod.trim()}::${jobinhoCod.trim()}`,
+          title: res.message || "",
+        };
+        await setProjectWindowTitle(res.message);
+      }
+    } finally {
+      aeOpenCooldownTimerRef.current = setTimeout(() => {
+        isOpeningAERef.current = false;
+        aeOpenCooldownTimerRef.current = null;
+        setIsOpeningAE(false);
+      }, AE_OPEN_COOLDOWN_MS);
     }
   };
   const openVideo = async (jobao, jobinho, mediaType) => run(commandNames.openVideo, { jobaoCod: jobao, jobinhoCod: jobinho, mediaType }, `Não foi possível abrir o vídeo do projeto "${jobinho}"`);
@@ -818,6 +848,7 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
               openJobao={openJobao}
               openJobinho={openJobinho}
               abrirAE={abrirAE}
+              isOpeningAE={isOpeningAE}
               openOut={openOut}
               outOption={outOption}
               setOutOption={setOutOption}

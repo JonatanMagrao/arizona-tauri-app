@@ -1,34 +1,42 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { loadProjectIdentity } from "../services/projectIdentity";
-
-const PROJECT_IDENTITY_POLL_MS = 1500;
 
 export const useProjectIdentity = () => {
   const [projectKey, setProjectKey] = useState("");
+  const refreshPromiseRef = useRef<Promise<string> | null>(null);
 
   const refreshProjectIdentity = useCallback(async () => {
-    if (!window.cep) return;
+    if (!window.cep) return "";
+    if (refreshPromiseRef.current) return refreshPromiseRef.current;
 
-    try {
-      const identity = await loadProjectIdentity();
-      setProjectKey((current) =>
-        current === identity.projectKey ? current : identity.projectKey
-      );
-    } catch {
-      setProjectKey("");
-    }
+    const refreshPromise = loadProjectIdentity()
+      .then((identity) => {
+        const nextProjectKey = identity.projectKey || "";
+        setProjectKey((current) =>
+          current === nextProjectKey ? current : nextProjectKey
+        );
+        return nextProjectKey;
+      })
+      .catch(() => {
+        setProjectKey("");
+        return "";
+      })
+      .finally(() => {
+        refreshPromiseRef.current = null;
+      });
+
+    refreshPromiseRef.current = refreshPromise;
+    return refreshPromise;
   }, []);
 
   useEffect(() => {
     if (!window.cep) return;
 
     void refreshProjectIdentity();
-    const intervalId = window.setInterval(() => {
-      void refreshProjectIdentity();
-    }, PROJECT_IDENTITY_POLL_MS);
-
-    return () => window.clearInterval(intervalId);
   }, [refreshProjectIdentity]);
 
-  return projectKey;
+  return {
+    projectKey,
+    refreshProjectIdentity,
+  };
 };

@@ -53,6 +53,10 @@ pub fn send_adjust_markers_to_tail(auth: &BridgeCommandAuth) -> Result<String, S
     send_command("adjust_markers_to_tail", serde_json::Value::Null, auth)
 }
 
+pub fn send_render(auth: &BridgeCommandAuth) -> Result<String, String> {
+    send_command("render", serde_json::Value::Null, auth)
+}
+
 fn send_command(
     command: &str,
     args: serde_json::Value,

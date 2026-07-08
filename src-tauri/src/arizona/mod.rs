@@ -14,7 +14,10 @@ mod shell;
 
 pub(crate) use self::shell::{open_explorer, open_start_file, reveal_in_explorer};
 pub use self::{
-    duplicate_mp4::{DuplicateMp4Copy, DuplicateMp4Item},
+    duplicate_mp4::{
+        DuplicateMp4Copy, DuplicateMp4Item, DuplicateMp4NamesJsonExport,
+        DuplicateMp4NamesJsonImport,
+    },
     models::{MediaFile, OpenedProject},
     product_import::ProductImportReport,
     response::ActionResponse,

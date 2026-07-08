@@ -5,6 +5,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   moveJumpMarkerShortcut: "Ctrl+Numpad2",
   selectJumpMarkerLayerShortcut: "Ctrl+Numpad0",
   adjustMarkersShortcut: "Ctrl+NumpadDecimal",
+  renderShortcut: "Ctrl+NumpadEnter",
   drive: "I:\\Drives compartilhados\\Phx CRF Copa",
   produtos: "PRODUTOS",
   produtosYear: "",
@@ -21,6 +22,7 @@ export function normalizeSettings(config) {
     moveJumpMarkerShortcut: String(next.moveJumpMarkerShortcut ?? "").trim(),
     selectJumpMarkerLayerShortcut: String(next.selectJumpMarkerLayerShortcut ?? "").trim(),
     adjustMarkersShortcut: String(next.adjustMarkersShortcut ?? "").trim(),
+    renderShortcut: String(next.renderShortcut ?? "").trim(),
     produtosYear: normalizeProductsYear(next.produtosYear),
     produtosPath: String(next.produtosPath ?? "").trim(),
   };
@@ -49,6 +51,7 @@ export function isSettingsReady(config) {
       && String(config?.moveJumpMarkerShortcut ?? "").trim()
       && String(config?.selectJumpMarkerLayerShortcut ?? "").trim()
       && String(config?.adjustMarkersShortcut ?? "").trim()
+      && String(config?.renderShortcut ?? "").trim()
       && String(config?.produtos ?? "").trim()
       && !isIncompleteDriveEntrypoint(config?.drive)
       && (year === "" || /^\d{4}$/.test(year))

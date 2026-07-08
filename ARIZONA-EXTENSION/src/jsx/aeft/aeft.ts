@@ -55,8 +55,12 @@ export type {
 } from "./domains/ofertas/ofertas";
 export {
   adjustTimelineMarkersToTail,
+  openTimelineCompPreview,
 } from "./domains/roteiro/markerAdjustment";
-export type { TimelineMarkerActionResult } from "./domains/roteiro/markerAdjustment";
+export type {
+  OpenTimelineCompPreviewResult,
+  TimelineMarkerActionResult,
+} from "./domains/roteiro/markerAdjustment";
 
 export const helloWorld = () => {
   alert("Hello from After Effects!");

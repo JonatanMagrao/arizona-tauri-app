@@ -17,6 +17,8 @@ pub struct AppConfig {
     pub select_jump_marker_layer_shortcut: String,
     #[serde(default = "default_adjust_markers_shortcut")]
     pub adjust_markers_shortcut: String,
+    #[serde(default = "default_render_shortcut")]
+    pub render_shortcut: String,
     #[serde(default = "default_drive")]
     pub drive: String,
     #[serde(default = "default_produtos")]
@@ -36,6 +38,7 @@ impl Default for AppConfig {
             move_jump_marker_shortcut: default_move_jump_marker_shortcut(),
             select_jump_marker_layer_shortcut: default_select_jump_marker_layer_shortcut(),
             adjust_markers_shortcut: default_adjust_markers_shortcut(),
+            render_shortcut: default_render_shortcut(),
             drive: default_drive(),
             produtos: default_produtos(),
             produtos_year: default_produtos_year(),
@@ -95,6 +98,7 @@ fn sanitize_config(config: AppConfig) -> AppConfig {
             .trim()
             .to_string(),
         adjust_markers_shortcut: config.adjust_markers_shortcut.trim().to_string(),
+        render_shortcut: config.render_shortcut.trim().to_string(),
         drive: config.drive.trim().to_string(),
         produtos: config.produtos.trim().to_string(),
         produtos_year: sanitize_produtos_year(&config.produtos_year),
@@ -112,6 +116,7 @@ pub fn validate_config(config: AppConfig) -> Result<AppConfig, String> {
         || config.move_jump_marker_shortcut.is_empty()
         || config.select_jump_marker_layer_shortcut.is_empty()
         || config.adjust_markers_shortcut.is_empty()
+        || config.render_shortcut.is_empty()
     {
         return Err("Informe todos os atalhos Bridge.".to_string());
     }
@@ -156,6 +161,10 @@ fn default_select_jump_marker_layer_shortcut() -> String {
 
 fn default_adjust_markers_shortcut() -> String {
     "Ctrl+NumpadDecimal".to_string()
+}
+
+fn default_render_shortcut() -> String {
+    "Ctrl+NumpadEnter".to_string()
 }
 
 fn default_drive() -> String {

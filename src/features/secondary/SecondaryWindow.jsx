@@ -58,6 +58,11 @@ const BRIDGE_SHORTCUT_ACTIONS = Object.freeze([
     label: "Reset Markers",
     placeholder: "Ctrl+NumpadDecimal",
   },
+  {
+    field: "renderShortcut",
+    label: "Render",
+    placeholder: "Ctrl+NumpadEnter",
+  },
 ]);
 
 const SETTINGS_TABS = Object.freeze({
@@ -71,6 +76,7 @@ const TEXT_SETTINGS_SAVE_DELAY_MS = 1500;
 function SecondaryWindow() {
   const { toast, showToast, hideToast } = useAutoHideToast();
   const [secondaryState, setSecondaryState] = useState(getInitialSecondaryState);
+  const [duplicateOpenSequence, setDuplicateOpenSequence] = useState(0);
   const title = useMemo(() => secondaryWindowTitle(secondaryState), [secondaryState]);
 
   const handleAdminAccessRestricted = async () => {
@@ -90,7 +96,11 @@ function SecondaryWindow() {
 
   useEffect(() => {
     const handleStateChange = (event) => {
-      setSecondaryState(normalizeSecondaryState(event.detail));
+      const nextState = normalizeSecondaryState(event.detail);
+      if (nextState.view === "duplicate") {
+        setDuplicateOpenSequence((sequence) => sequence + 1);
+      }
+      setSecondaryState(nextState);
     };
     let unlistenClose = null;
 
@@ -134,7 +144,13 @@ function SecondaryWindow() {
       <SecondaryTitlebar title={title} view={secondaryState.view} onClose={closeWindow} />
 
       <div className="secondary-window__content">
-        {renderSecondaryView(secondaryState, closeWindow, showToast, handleAdminAccessRestricted)}
+        {renderSecondaryView(
+          secondaryState,
+          closeWindow,
+          showToast,
+          handleAdminAccessRestricted,
+          duplicateOpenSequence
+        )}
       </div>
 
       {toast.open && (
@@ -154,6 +170,8 @@ function SecondaryWindow() {
 function SecondaryTitlebar({ title, view, onClose }) {
   const [isMaximized, setIsMaximized] = useState(false);
   const isSettingsTitlebar = view === "settings";
+  const isDuplicateTitlebar = view === "duplicate";
+  const useSingleTitle = isSettingsTitlebar || isDuplicateTitlebar;
 
   useEffect(() => {
     let unlistenResize = null;
@@ -198,14 +216,14 @@ function SecondaryTitlebar({ title, view, onClose }) {
         onMouseDown={startWindowDrag}
       >
         <img className="secondary-titlebar__logo" src={appLogo} alt="" aria-hidden="true" />
-        <span>{isSettingsTitlebar ? title : "Arizona App"}</span>
+        <span>{useSingleTitle ? title : "Arizona App"}</span>
       </div>
       <div
         className="secondary-titlebar__drag"
         data-tauri-drag-region
         onMouseDown={startWindowDrag}
       >
-        {!isSettingsTitlebar && <span>{title}</span>}
+        {!useSingleTitle && <span>{title}</span>}
       </div>
       <div className="secondary-titlebar__controls">
         <button
@@ -231,18 +249,20 @@ function SecondaryTitlebar({ title, view, onClose }) {
   );
 }
 
-function renderSecondaryView(state, closeWindow, showToast, onAdminAccessRestricted) {
+function renderSecondaryView(state, closeWindow, showToast, onAdminAccessRestricted, duplicateOpenSequence) {
   if (state.view === "duplicate") {
     return (
-      <DuplicateIdenticalModal
-        key={`duplicate-${state.jobaoCod}`}
-        initialJobaoCod={state.jobaoCod}
-        onClose={closeWindow}
-        showError={(message) => showToast(message, "error")}
-        showSuccess={(message) => showToast(message, "success")}
-        standalone
-        closeOnSuccess={false}
-      />
+      <div className="duplicate-window">
+        <DuplicateIdenticalModal
+          key={`duplicate-${state.jobaoCod}-${duplicateOpenSequence}`}
+          initialJobaoCod={state.jobaoCod}
+          onClose={closeWindow}
+          showError={(message) => showToast(message, "error")}
+          showSuccess={(message) => showToast(message, "success")}
+          standalone
+          closeOnSuccess={false}
+        />
+      </div>
     );
   }
 
@@ -1289,7 +1309,7 @@ function secondaryWindowTitle(state) {
     return `Jobão ${state.productReport.jobaoCod}`;
   }
 
-  if (state.view === "duplicate") return "Produtos idênticos";
+  if (state.view === "duplicate") return "Cópia de produtos idênticos";
   if (state.view === "history") return "Histórico";
   if (state.view === "places") return "Praças CRF";
   if (state.view === "products") return "Produtos importados";

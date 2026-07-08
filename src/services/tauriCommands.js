@@ -10,6 +10,7 @@ export const commandNames = Object.freeze({
   clearSecureAuth: "clear_secure_auth",
   completeLogin: "complete_login",
   duplicateIdenticalMp4: "duplicate_identical_mp4",
+  exportIdenticalMp4NamesJson: "export_identical_mp4_names_json",
   exitApp: "exit_app",
   historyClear: "history_clear",
   historyCopyClear: "history_copy_clear",
@@ -28,6 +29,7 @@ export const commandNames = Object.freeze({
   historyRevealAfterProject: "history_reveal_after_project",
   historyRevealMedia: "history_reveal_media",
   importProducts: "import_products",
+  importIdenticalMp4NamesJson: "import_identical_mp4_names_json",
   listIdenticalMp4Items: "list_identical_mp4_items",
   loadAppConfig: "load_app_config",
   loadSecureAuth: "load_secure_auth",
@@ -52,6 +54,7 @@ export const commandNames = Object.freeze({
   restrictAdminSession: "restrict_admin_session",
   saveAppConfig: "save_app_config",
   saveSecureAuth: "save_secure_auth",
+  updateIdenticalMp4NamesJson: "update_identical_mp4_names_json",
   updateAuthSession: "update_auth_session",
 });
 
