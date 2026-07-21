@@ -62,6 +62,23 @@
     ],
     "icon": [
       "icons/arizona_icon.ico"
-    ]
+    ],
+    "resources": {
+      "../INSTALLER/scripts": "installer/scripts",
+      "../INSTALLER/payload": "installer/payload"
+    },
+    "windows": {
+      "allowDowngrades": false,
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "perMachine",
+        "compression": "lzma",
+        "startMenuFolder": "Arizona",
+        "installerHooks": "../INSTALLER/nsis/hooks.nsh"
+      }
+    }
   }
 }

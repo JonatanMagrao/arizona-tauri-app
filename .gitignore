@@ -64,3 +64,8 @@ AE-PLUGIN-ARIZONA/**/Debug/
 AE-PLUGIN-ARIZONA/**/Release/
 AE-PLUGIN-ARIZONA/**/x64/
 AE-PLUGIN-ARIZONA/**/*.vcxproj.user
+
+# Generated official installer payload
+INSTALLER/payload/*
+!INSTALLER/payload/.gitkeep
+INSTALLER/logs/

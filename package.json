@@ -15,7 +15,14 @@
     "cep:dev": "npm --prefix ARIZONA-EXTENSION run dev",
     "cep:build": "npm --prefix ARIZONA-EXTENSION run build",
     "dev:all": "concurrently -k -n tauri,cep -c cyan,magenta \"npm run tauri:dev:bridge\" \"npm run cep:dev\"",
-    "license:check": "node ADMIN/scripts/check-license-parity.mjs"
+    "license:check": "node ADMIN/scripts/check-license-parity.mjs",
+    "release:check": "npm run license:check && powershell -NoProfile -ExecutionPolicy Bypass -File INSTALLER/scripts/verify-release.ps1",
+    "release:cep": "npm --prefix ARIZONA-EXTENSION run build",
+    "release:tauri": "npm run tauri:build",
+    "release:aex": "powershell -NoProfile -ExecutionPolicy Bypass -File INSTALLER/scripts/build-aex-release.ps1",
+    "release:collect": "powershell -NoProfile -ExecutionPolicy Bypass -File INSTALLER/scripts/collect-artifacts.ps1",
+    "release:installer": "npm run release:collect && npm run tauri:build",
+    "release:all": "powershell -NoProfile -ExecutionPolicy Bypass -File INSTALLER/scripts/build-release.ps1"
   },
   "dependencies": {
     "@tauri-apps/api": "2.8.0",
