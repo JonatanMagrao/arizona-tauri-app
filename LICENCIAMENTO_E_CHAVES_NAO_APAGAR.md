@@ -1,192 +1,225 @@
-# LICENCIAMENTO E CHAVES - NAO APAGAR
+# LICENCIAMENTO E CHAVES — NÃO APAGAR
 
 Este arquivo documenta a arquitetura de licenciamento do Arizona App.
 
-NAO APAGUE este arquivo.
-NAO APAGUE, regenere, sobrescreva ou troque chaves de licenca sem uma rotacao planejada.
-NAO rode scripts de geracao de chaves como parte de build, teste, debug ou deploy comum.
+NÃO APAGUE este arquivo. NÃO apague, regenere, sobrescreva ou troque chaves de
+licença sem uma rotação planejada. Não rode scripts de geração de chaves como
+parte de build, teste, debug ou deploy comum.
 
-As chaves descritas aqui funcionam como certificados de infraestrutura. Se uma chave privada do backend nao combinar com uma chave publica confiada pela extensao CEP ou pelo plugin AEX, o usuario valido fica bloqueado mesmo com licenca ativa.
+## Diagnóstico rápido
 
-## Diagnostico rapido
-
-Antes de mexer em qualquer coisa, rode na raiz do arizona-tauri-app:
+Na raiz:
 
 ```text
 npm run license:check
 ```
 
-Esse comando confere a paridade entre: env local, manifesto de chaves, PEM versionado, fonte da extensao, extensao instalada no Adobe CEP e o recibo atual em disco (que e assinado pelo Supabase remoto, entao tambem denuncia secrets remotos fora de sincronia). Ele diz exatamente qual lado esta divergente e o que fazer.
+O comando confere a chave privada local de licença, o manifesto público, o PEM,
+o módulo gerado da extensão, a extensão CEP instalada, o recibo atual e o
+executor JSX embutido no Tauri. O recibo é assinado pelo Supabase remoto e
+também denuncia secrets remotos fora de sincronia.
 
-## Resumo critico
+## Arquitetura atual
 
-Existem dois fluxos independentes de licenciamento:
+Existem dois comportamentos independentes:
 
-1. Extensao CEP (codigo em `ARIZONA-EXTENSION/` na raiz deste repo)
-   - Usa o `cepLicenseReceipt`.
-   - O backend assina um recibo de licenca (JWS ES256).
-   - O Tauri salva esse recibo em disco.
-   - A extensao CEP le esse arquivo e valida a assinatura contra a LISTA de chaves publicas confiaveis embutidas nela no build.
+1. **Extensão CEP**
+   - Usa `cepLicenseReceipt`.
+   - O backend assina um recibo JWS ES256.
+   - O Tauri salva o recibo em disco.
+   - A extensão lê o arquivo e valida a assinatura contra a lista de chaves
+     públicas embutida no build.
 
-2. Plugin AEX / atalhos globais do After Effects
-   - Usa o `bridgeToken`.
-   - O backend assina um token curto para comandos do bridge.
-   - O Tauri envia esse token para o plugin AEX pelo named pipe do Windows.
-   - O plugin AEX valida a assinatura com outra chave publica embutida nele.
+2. **Atalhos do After Effects**
+   - Não usam plugin AEX, named pipe nem `bridgeToken`.
+   - O Tauri exige sua própria sessão autenticada.
+   - O motor de ações fica em
+     `src-tauri/src/after_effects/arizona_actions.jsx` e é embutido no binário
+     com `include_str!`.
+   - Ao executar um atalho, o Tauri materializa o JSX nos dados locais do app e
+     chama `AfterFX.exe -r <acao.jsx>`.
 
-Esses fluxos nao sao a mesma coisa. Um pode estar funcionando enquanto o outro esta bloqueado.
+O backend pode continuar retornando `bridgeToken` temporariamente para clientes
+antigos. O Tauri atual ignora esse campo. Não remova secrets/chaves legadas do
+AEX durante a migração sem uma decisão explícita de compatibilidade.
 
-## Fonte unica da verdade das chaves da extensao CEP
+## Fonte única da verdade das chaves da extensão CEP
 
 ```text
 ADMIN/supabase/license-trusted-keys.json
 ```
 
-Esse manifesto (apenas chaves PUBLICAS, versionado no git) lista todas as chaves que a extensao aceita, por `kid`. A extensao NUNCA e editada na mao para trocar chave:
+Esse manifesto contém apenas chaves públicas e é versionado. A extensão nunca é
+editada manualmente para trocar chave:
 
-- `ARIZONA-EXTENSION/scripts/generate-license-trusted-keys.mjs` le o manifesto e gera `src/js/main/services/licenseTrustedKeys.generated.ts`;
-- esse gerador roda automaticamente antes de `dev`, `watch`, `build`, `zxp` e `zip` (hooks `pre*` no package.json da extensao);
-- o build FALHA se o manifesto estiver ausente, invalido ou divergente do PEM correspondente.
+- `ARIZONA-EXTENSION/scripts/generate-license-trusted-keys.mjs` lê o manifesto
+  e gera `src/js/main/services/licenseTrustedKeys.generated.ts`;
+- o gerador roda antes de `dev`, `watch`, `build`, `zxp` e `zip`;
+- o build falha se manifesto, módulo gerado e PEM divergirem.
 
-Como a extensao aceita uma lista de chaves, a rotacao e gradual: adicione a chave nova ao manifesto SEM remover a antiga, distribua a extensao, troque os secrets do backend e so entao remova a antiga.
+A rotação é gradual: adicione a chave nova sem remover a antiga, distribua a
+extensão, troque os secrets do backend e só então remova a antiga.
 
-## Arquivos e segredos que nao podem ser apagados
+## Arquivos e segredos que não podem ser apagados
 
 ### Backend / Supabase
 
-Arquivo local privado, gitignored:
+Arquivo privado local e gitignored:
 
 ```text
 ADMIN/supabase/functions/.env.production.local
 ```
 
-Contem os segredos usados pela Edge Function `validate-license`:
+Segredos ativos da licença CEP:
 
 ```text
 LICENSE_TOKEN_KEY_ID
 LICENSE_TOKEN_PRIVATE_KEY_PKCS8_B64
+```
+
+Segredos legados do bridge, preservados durante a migração:
+
+```text
 AEX_BRIDGE_TOKEN_KEY_ID
 AEX_BRIDGE_TOKEN_PRIVATE_KEY_PKCS8_B64
 ```
 
-Esses valores precisam bater com as chaves publicas confiadas pelos clientes. Os keygens agora se recusam a sobrescrever esse arquivo sem `--force`, e com `--force` salvam backup datado (`.env.production.local.bak.<data>`) antes de escrever. Guarde esses backups: sao a unica copia da chave privada anterior.
-
-### Chaves publicas versionadas
+### Chaves públicas versionadas
 
 ```text
 ADMIN/supabase/license-trusted-keys.json
 ADMIN/supabase/license-token-public-key.v1.pem
-ADMIN/supabase/aex-bridge-token-public-key.v1.json
+ADMIN/supabase/aex-bridge-token-public-key.v1.json   (legado; não apagar)
 ```
 
-### Instalacao local do CEP
+Os keygens se recusam a sobrescrever o env sem `--force` e criam backup datado
+antes de escrever. Esses backups podem ser a única cópia da chave anterior.
 
-No Windows, a extensao instalada e uma junction:
+## Instalação local do CEP
+
+Produção:
 
 ```text
 C:\Users\<usuario>\AppData\Roaming\Adobe\CEP\extensions\com.arizona-carrefour.cep
-  -> <repo>\ARIZONA-EXTENSION\dist\cep
 ```
 
-A junction e criada/atualizada pelo build da extensao (vite-cep-plugin, `symlink: "local"`). A extensao nao deve apontar para um `localhost` errado em producao; o painel empacotado carrega os assets locais da propria extensao.
+O instalador copia a pasta compilada para o perfil do usuário. Em
+desenvolvimento, o build da extensão pode criar uma junction desse caminho para
+`ARIZONA-EXTENSION\dist\cep`. A desinstalação remove apenas a junction, nunca o
+conteúdo do alvo.
 
-## Fluxo da extensao CEP
+## Fluxo da extensão CEP
 
-1. O usuario valida a licenca no Arizona App.
-2. O Tauri chama a Edge Function `validate-license`.
-3. A funcao gera um `cepLicenseReceipt` assinado com `LICENSE_TOKEN_PRIVATE_KEY_PKCS8_B64` e `kid = LICENSE_TOKEN_KEY_ID`.
-4. O Tauri salva o recibo em:
+1. O usuário valida a licença no Arizona App.
+2. O Tauri chama `validate-license`.
+3. A função gera `cepLicenseReceipt` com
+   `LICENSE_TOKEN_PRIVATE_KEY_PKCS8_B64` e `kid=LICENSE_TOKEN_KEY_ID`.
+4. O Tauri salva:
 
 ```text
 C:\Users\<usuario>\AppData\Local\com.pc.arizona-app\cep-license-receipt.json
 ```
 
-5. A extensao CEP rele esse arquivo a cada 5 segundos e valida:
-   - `kid` presente na lista de chaves confiaveis;
+5. A extensão relê o arquivo a cada 5 segundos e valida:
+   - `kid` na lista confiável;
    - assinatura ES256;
    - `iss=arizona-app`, `aud=arizona-license`;
-   - `iat`, `nbf` (com tolerancia de 120s para relogio local) e `exp`;
+   - `iat`, `nbf` e `exp`;
    - feature `ae_panel`.
 
-O Arizona App renova o recibo automaticamente enquanto estiver aberto (revalidacao a cada 30s). O recibo expira sozinho (login diario, 03:00 UTC). Fechar o Arizona App NAO apaga o recibo — a extensao continua funcionando ate o `exp`. O recibo so e apagado no logout explicito.
-
-Se a validacao falhar, o painel CEP bloqueia mostrando o motivo entre parenteses:
-
-```text
-Plugin bloqueado. Valide a licenca novamente no Arizona App. (receipt_kid_unknown)
-```
-
-Motivos comuns de bloqueio:
+O app renova o recibo automaticamente enquanto está aberto. Fechar o app não
+apaga o recibo; logout explícito apaga. Motivos comuns de bloqueio:
 
 ```text
-receipt_missing            nao existe cep-license-receipt.json (valide no Arizona App)
-receipt_kid_unknown        backend assinou com chave que a extensao nao conhece (rode license:check)
-receipt_signature_invalid  chave divergente entre backend e extensao (rode license:check)
-receipt_expired            recibo venceu (login diario; valide no Arizona App)
-feature_missing            recibo sem a feature ae_panel
+receipt_missing
+receipt_kid_unknown
+receipt_signature_invalid
+receipt_expired
+feature_missing
 ```
 
-### Build de diagnostico da extensao
+O ciclo de autenticação diária é separado do refresh token do Supabase. Cada
+licença possui `daily_auth_reset_hour`, configurável no painel Admin como
+“Renovação diária”, em `America/Sao_Paulo`. O padrão é `04:00`; horários
+anteriores ao corte ainda pertencem ao ciclo do dia anterior. A Edge Function
+`validate-license` limita o recibo CEP e a sessão local ao próximo corte.
 
-O arquivo `cep-license-debug.json` (ao lado do recibo) so e gravado por builds de diagnostico:
+Build de diagnóstico:
 
 ```text
 cd ARIZONA-EXTENSION
 npm run build:debug
 ```
 
-Builds normais (`npm run build`, `npm run zxp`) nao gravam diagnostico.
+Somente esse build grava `cep-license-debug.json`.
 
-## Fluxo do plugin AEX / atalhos globais
+## Fluxo dos atalhos via ExtendScript embutido
 
-1. O usuario valida a licenca no Arizona App.
-2. O Tauri chama a Edge Function `validate-license`.
-3. A funcao gera um `bridgeToken` assinado com `AEX_BRIDGE_TOKEN_PRIVATE_KEY_PKCS8_B64`.
-4. O Tauri mantem o token no estado da sessao e o renova automaticamente.
-5. Ao executar um atalho global, o Tauri envia um comando para o named pipe:
+1. O Tauri registra os seis atalhos configuráveis.
+2. No disparo, valida que a sessão local está autenticada.
+3. Resolve a versão configurada do After Effects; se ela não existir, usa a
+   versão instalada mais recente.
+4. Gera os lançadores em:
 
 ```text
-\\.\pipe\arizona-aegp-bridge
+%LOCALAPPDATA%\com.pc.arizona-app\after-effects-scripts\
 ```
 
-6. O payload inclui `protocolVersion=arizona.aex.v1`, `command`, `issuedAt`, `expiresAt` e `bridgeToken`.
-7. O plugin AEX valida protocolo, tempo, assinatura ES256, `kid`, `iss=arizona-app`, `aud=arizona-aex-bridge` e a feature `ae_bridge`.
+5. Executa:
 
-Se o token for recusado dentro do AEX, o Tauri pode nao receber resposta de erro (o bridge escreve no pipe sem canal de retorno). O sintoma pode ser: o atalho nao faz nada.
+```text
+AfterFX.exe -r <acao.jsx>
+```
 
-### Estado atual do plugin AEX (2026-07-02)
+As ações preservadas são:
 
-O codigo do plugin esta em `AE-PLUGIN-ARIZONA/` neste repo. A chave publica entra por defines de COMPILACAO (`ARIZONA_AEX_JWT_ES256_PUBLIC_X/Y`, `ARIZONA_AEX_JWT_KID`), via `sample/Win/build.ps1`.
+```text
+move_layers_backward
+move_layers_forward
+move_jump_marker
+select_jump_marker_layer
+adjust_markers_to_tail
+render
+```
 
-O `.aex` atualmente instalado no After Effects e uma **build de desenvolvimento**: nao tem chave embutida e aceita apenas o dev-token (`npm run tauri:dev:bridge`). Com token real de producao ele recusa tudo silenciosamente. O `license:check` (secao 7) avisa sobre isso.
+Nenhum arquivo é instalado em `Support Files\Plug-ins` ou `Support Files\Scripts`.
+O instalador novo remove com segurança o arquivo legado exato
+`Plug-ins\Arizona\ArizonaBridgeTest.aex` durante upgrade/desinstalação e só
+remove a pasta `Arizona` se ela ficar vazia.
 
-Para gerar a build de producao do AEX:
+## Chaves legadas do AEX
 
-1. Pegue kid/X/Y com `cd ADMIN && node scripts/generate-aex-bridge-token-key.mjs --help` — ou simplesmente do `aex-bridge-token-public-key.v1.json`.
-2. Rode `sample/Win/build.ps1` com `ARIZONA_AEX_JWT_KID`, `ARIZONA_AEX_JWT_ES256_PUBLIC_X/Y` e `ARIZONA_TAURI_CERT_SHA256` (thumbprint do certificado que assina o executavel do Tauri — a build Release exige cert pinning; sem exe assinado, o plugin de producao recusa o cliente).
-3. Reinstale o `.aex` no After Effects e teste os atalhos.
+`AE-PLUGIN-ARIZONA/` e `aex-bridge-token-public-key.v1.json` são arquivos
+históricos. Eles não entram no build ou instalador atuais. Não os “limpe” por
+conveniência: clientes antigos ou rollback podem depender deles enquanto a
+migração não for encerrada formalmente.
 
-## Por que dev/build pode quebrar licenca
+Não rode:
 
-Build e modo dev nao quebram a licenca por si so. O que quebra e mudar a identidade criptografica sem atualizar todos os lados. Historico real: em 2026-07-02 a extensao bloqueou porque os secrets remotos passaram a usar uma chave nova (kid `v1`) enquanto a extensao instalada so confiava na chave antiga — e a chave privada antiga tinha sido sobrescrita pelo keygen. As protecoes atuais (manifesto + gerador no build + guard de sobrescrita + license:check) existem para impedir a repeticao disso.
+```text
+npm run bridge:keygen:env
+```
 
-Quebra quando:
+a menos que o usuário peça explicitamente uma rotação do sistema legado.
 
-- a chave privada do Supabase muda sem a extensao ganhar a chave publica nova no manifesto;
-- um `.env.production.local` incorreto e enviado para os secrets remotos;
-- uma extensao/plugin antigo continua instalado depois de rotacionar chaves;
-- a extensao CEP instalada aponta para um `localhost` errado.
+## Por que build pode quebrar licença
+
+Build comum não quebra licença. O que quebra é mudar a identidade criptográfica
+sem atualizar todos os consumidores. Exemplos:
+
+- chave privada do Supabase muda antes de a extensão confiar na pública nova;
+- env incorreto é enviado para os secrets remotos;
+- extensão antiga continua instalada depois de rotação;
+- extensão instalada aponta para bundle/local server incorreto.
 
 ## Comandos perigosos
 
-Nao rode sem uma rotacao planejada:
+Não rode sem rotação planejada:
 
 ```text
 npm run license:keygen:env   (ADMIN/)
-npm run bridge:keygen:env    (ADMIN/)
+npm run bridge:keygen:env    (ADMIN/, legado)
 ```
-
-Ambos agora se recusam a sobrescrever chave existente sem `--force` e fazem backup datado com `--force`. Ainda assim: gerar chave nova sem reconstruir e reinstalar todos os consumidores causa bloqueio.
 
 Tenha cuidado extremo com:
 
@@ -194,59 +227,25 @@ Tenha cuidado extremo com:
 npx supabase secrets set --env-file supabase\functions\.env.production.local
 ```
 
-Antes de enviar secrets, rode `npm run license:check` e confirme que tudo esta em paridade. Atencao: a Edge Function pode continuar servindo a chave antiga ate a instancia ser reciclada — a troca de secrets nao tem efeito imediato.
+Antes de enviar secrets, rode `npm run license:check`.
 
-## Comandos normalmente seguros
+## Rotação correta da chave CEP
 
-```text
-npm run build                      (raiz ou ARIZONA-EXTENSION)
-npm run tauri:dev:bridge           (raiz; habilita token dev do bridge AEX)
-npx supabase functions deploy validate-license --project-ref nizchnscqkixawqxrwzd --use-api --no-verify-jwt
-```
+1. Decidir explicitamente a rotação.
+2. Em `ADMIN`, rodar `npm run license:keygen:env -- --force`.
+3. O keygen faz backup, adiciona a chave nova ao manifesto sem remover a antiga
+   e grava o PEM.
+4. Em `ARIZONA-EXTENSION`, rodar `npm run build`.
+5. Distribuir a extensão nova.
+6. Enviar secrets e redeployar `validate-license`.
+7. Rodar `npm run license:check` até tudo passar.
+8. Remover a chave antiga apenas quando todas as máquinas aceitarem a nova.
 
-## Rotacao correta de chaves (CEP)
-
-1. Decidir explicitamente que a chave sera rotacionada.
-2. `cd ADMIN && npm run license:keygen:env -- --force` — gera par novo com kid unico, faz backup do env, adiciona a chave nova ao manifesto SEM remover a antiga e grava o PEM.
-3. `cd ARIZONA-EXTENSION && npm run build` — a extensao passa a confiar na chave antiga E na nova.
-4. Reinstalar/distribuir a extensao em todas as maquinas.
-5. `npx supabase secrets set --env-file supabase\functions\.env.production.local` e redeploy da `validate-license`.
-6. `npm run license:check` na raiz ate tudo passar.
-7. Quando todas as maquinas tiverem a extensao nova, remover a chave antiga do manifesto e rebuildar.
-
-Para o AEX: `npm run bridge:keygen:env -- --force`, recompilar o plugin com a chave publica nova, reinstalar no After Effects, enviar secrets e testar os atalhos.
-
-Nunca rotacione apenas um lado.
-
-## Bloqueios esperados
-
-O Arizona App pode bloquear sessao quando: login diario expira; limite de dispositivos; usuario revogado; organizacao inativa; relogio local suspeito; licenca expirada; backend sem os tokens esperados.
-
-A extensao CEP bloqueia independentemente quando: nao existe recibo; recibo expirado; assinatura/kid nao confere com o manifesto embutido; feature ausente; recibo apagado no logout.
-
-O AEX pode bloquear ou ignorar atalhos quando: `bridgeToken` ausente/expirado; assinatura/kid nao bate; plugin compilado com outra chave publica; versao antiga do plugin instalada.
-
-## Desenvolvimento local
-
-Tauri com AEX em dev:
-
-```text
-npm run tauri:dev:bridge
-```
-
-Extensao CEP em dev (`cd ARIZONA-EXTENSION && npm run dev`): confirme que a extensao instalada aponta para o servidor/pasta corretos. Fora do CEP (navegador), a extensao roda destravada em modo `browser_dev`.
-
-## Checklist antes de mexer em licenciamento
+## Checklist
 
 - Li este arquivo.
-- Rodei `npm run license:check` e entendi o estado atual.
-- Sei qual fluxo estou mexendo: CEP, AEX ou ambos.
-- Nao vou rodar keygen sem rotacao planejada (e sei que ele exige --force para sobrescrever).
-- Confirmei qual extensao CEP esta instalada no Adobe CEP (junction -> ARIZONA-EXTENSION/dist/cep).
-- Confirmei qual plugin AEX esta instalado no After Effects.
-
-## Regra final
-
-Licenciamento nao e parte descartavel do projeto. Nao limpe, nao "organize", nao regenere e nao substitua estes arquivos por conveniencia.
-
-Se algo parecer duplicado ou velho, investigue antes. Neste sistema, um arquivo aparentemente simples pode ser a unica coisa mantendo usuarios validos desbloqueados.
+- Rodei `npm run license:check`.
+- Confirmei a extensão CEP instalada.
+- Não vou rodar keygen sem rotação planejada.
+- Sei que os atalhos atuais usam JSX embutido, não AEX.
+- Não vou apagar chaves legadas enquanto a compatibilidade não for encerrada.

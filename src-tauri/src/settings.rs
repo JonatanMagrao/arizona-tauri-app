@@ -140,7 +140,7 @@ pub fn validate_config(config: AppConfig) -> Result<AppConfig, String> {
 }
 
 fn default_ae_version() -> String {
-    "2024".to_string()
+    "2026".to_string()
 }
 
 fn default_move_layers_backward_shortcut() -> String {

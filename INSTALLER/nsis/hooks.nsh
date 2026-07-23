@@ -1,37 +1,117 @@
-!define ARIZONA_PROTOCOL "arizona"
 !define ARIZONA_EXE "arizona-app.exe"
 !define ARIZONA_PS "$WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
-!define ARIZONA_INSTALLER_ROOT "$INSTDIR\resources\installer"
-!define ARIZONA_PAYLOAD_ROOT "$INSTDIR\resources\installer\payload"
-!define ARIZONA_SCRIPT_ROOT "$INSTDIR\resources\installer\scripts"
+; Tauri resource targets are relative to $INSTDIR. The mappings in
+; tauri.conf.json therefore produce $INSTDIR\installer\{payload,scripts}.
+!define ARIZONA_INSTALLER_ROOT "$INSTDIR\installer"
+!define ARIZONA_PAYLOAD_ROOT "$INSTDIR\installer\payload"
+!define ARIZONA_SCRIPT_ROOT "$INSTDIR\installer\scripts"
+!define ARIZONA_STATE_PATH "$INSTDIR\installer\installed-assets.json"
 
 !macro NSIS_HOOK_POSTINSTALL
-  DetailPrint "Configuring Arizona Windows integrations..."
-  SetRegView 64
-  WriteRegStr HKLM "Software\Classes\${ARIZONA_PROTOCOL}" "" "URL:Arizona Protocol"
-  WriteRegStr HKLM "Software\Classes\${ARIZONA_PROTOCOL}" "URL Protocol" ""
-  WriteRegStr HKLM "Software\Classes\${ARIZONA_PROTOCOL}\DefaultIcon" "" "$INSTDIR\${ARIZONA_EXE},0"
-  WriteRegStr HKLM "Software\Classes\${ARIZONA_PROTOCOL}\shell\open\command" "" '"$INSTDIR\${ARIZONA_EXE}" "%1"'
+arizona_install_adobe_retry:
+  DetailPrint "Installing and validating the Arizona CEP extension..."
+  nsExec::ExecToStack /TIMEOUT=120000 '"${ARIZONA_PS}" -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "${ARIZONA_SCRIPT_ROOT}\install-adobe-assets.ps1" -InstallDir "$INSTDIR" -StatePath "${ARIZONA_STATE_PATH}" -PayloadRoot "${ARIZONA_PAYLOAD_ROOT}"'
+  Pop $0
+  Pop $1
 
-  DetailPrint "Installing Arizona Adobe assets..."
-  ExecWait '"${ARIZONA_PS}" -NoProfile -ExecutionPolicy Bypass -File "${ARIZONA_SCRIPT_ROOT}\install-adobe-assets.ps1" -InstallDir "$INSTDIR" -PayloadRoot "${ARIZONA_PAYLOAD_ROOT}"' $0
-  ${If} $0 != 0
-    MessageBox MB_ICONEXCLAMATION "Arizona App was installed, but Adobe assets could not be installed. Close After Effects and run the installer again, or check the installer log."
+  ${If} $0 = 20
+    MessageBox MB_ICONEXCLAMATION|MB_RETRYCANCEL "Close After Effects, then choose Retry. Arizona found an old AEX plugin that must be removed during this upgrade." /SD IDCANCEL IDRETRY arizona_install_adobe_retry
+    Goto arizona_install_adobe_abort
+  ${ElseIf} $0 != 0
+    MessageBox MB_ICONSTOP|MB_RETRYCANCEL "Arizona could not install or validate its CEP extension. Choose Retry, or Cancel to stop this installation. See the Arizona Installer log for details." /SD IDCANCEL IDRETRY arizona_install_adobe_retry
+    Goto arizona_install_adobe_abort
+  ${EndIf}
+  Goto arizona_install_adobe_done
+
+arizona_install_adobe_abort:
+  SetErrorLevel 2
+  Abort "Arizona installation stopped before completing its CEP extension."
+
+arizona_install_adobe_done:
+  ; Remove the retired deep-link left by older Arizona installers, but only
+  ; when it still points to this installation.
+  SetRegView 64
+  ReadRegStr $2 HKLM "Software\Classes\arizona\shell\open\command" ""
+  ${If} $2 == '"$INSTDIR\${ARIZONA_EXE}" "%1"'
+    DeleteRegKey HKLM "Software\Classes\arizona"
   ${EndIf}
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
-  DetailPrint "Removing Arizona Windows integrations..."
-  SetRegView 64
-  DeleteRegKey HKLM "Software\Classes\${ARIZONA_PROTOCOL}"
+  ; Tauri's hook runs before its built-in process check. Check here as well so
+  ; cancelling because Arizona is open cannot happen after Adobe assets moved.
+  !insertmacro CheckIfAppIsRunning "${ARIZONA_EXE}" "${PRODUCTNAME}"
+
+arizona_uninstall_preflight_retry:
+  DetailPrint "Checking whether Arizona CEP and legacy assets can be removed..."
+  nsExec::ExecToStack /TIMEOUT=120000 '"${ARIZONA_PS}" -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "${ARIZONA_SCRIPT_ROOT}\uninstall-adobe-assets.ps1" -InstallDir "$INSTDIR" -StatePath "${ARIZONA_STATE_PATH}" -PreflightOnly'
+  Pop $R5
+  Pop $R6
+
+  ${If} $R5 = 20
+    MessageBox MB_ICONEXCLAMATION|MB_RETRYCANCEL "Close After Effects, then choose Retry. An old Arizona AEX plugin must be removed before uninstall can continue." /SD IDCANCEL IDRETRY arizona_uninstall_preflight_retry
+    Goto arizona_uninstall_adobe_abort
+  ${ElseIf} $R5 != 0
+    MessageBox MB_ICONSTOP|MB_RETRYCANCEL "Arizona could not validate Adobe asset removal. Choose Retry, or Cancel to keep the app installed." /SD IDCANCEL IDRETRY arizona_uninstall_preflight_retry
+    Goto arizona_uninstall_adobe_abort
+  ${EndIf}
 
   StrCpy $R0 ""
-  MessageBox MB_YESNO "Remove Arizona user data, session, logs and settings from this Windows user?" IDNO +2
-  StrCpy $R0 "-RemoveUserData"
-
-  DetailPrint "Removing Arizona Adobe assets..."
-  ExecWait '"${ARIZONA_PS}" -NoProfile -ExecutionPolicy Bypass -File "${ARIZONA_SCRIPT_ROOT}\uninstall-adobe-assets.ps1" -InstallDir "$INSTDIR" $R0' $R1
-  ${If} $R1 != 0
-    MessageBox MB_ICONEXCLAMATION "Adobe assets could not be fully removed. Close After Effects and run uninstall again, or check the installer log."
+  ${If} $DeleteAppDataCheckboxState = 1
+  ${AndIf} $UpdateMode <> 1
+    StrCpy $R0 "-RemoveUserData"
   ${EndIf}
+
+  ${If} $UpdateMode <> 1
+    DetailPrint "Releasing the Arizona device and active sessions..."
+    nsExec::ExecToStack /TIMEOUT=30000 '"$INSTDIR\${ARIZONA_EXE}" --release-device-for-uninstall'
+    Pop $R3
+    Pop $R7
+    ${If} $R3 = 0
+      DetailPrint "Arizona device released."
+    ${ElseIf} $R3 = 21
+      DetailPrint "No secure Arizona session was present; continuing uninstall."
+    ${Else}
+      ; Device release is best effort. A network or backend failure must never
+      ; leave the desktop app, CEP extension, or local credentials installed.
+      DetailPrint "Online device release was unavailable (exit $R3); continuing local uninstall."
+    ${EndIf}
+
+    DetailPrint "Removing the Arizona session from Windows Credential Manager..."
+    nsExec::ExecToStack /TIMEOUT=30000 '"$INSTDIR\${ARIZONA_EXE}" --clear-local-auth-for-uninstall'
+    Pop $R4
+    Pop $R7
+    ${If} $R4 != 0
+      ; Keep uninstall non-blocking even if Credential Manager is temporarily
+      ; unavailable. Reinstall/login can safely replace a stale credential.
+      DetailPrint "Secure session cleanup returned exit $R4; continuing uninstall."
+    ${EndIf}
+  ${EndIf}
+
+arizona_uninstall_adobe_retry:
+  DetailPrint "Removing and validating Arizona CEP and legacy assets..."
+  nsExec::ExecToStack /TIMEOUT=120000 '"${ARIZONA_PS}" -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "${ARIZONA_SCRIPT_ROOT}\uninstall-adobe-assets.ps1" -InstallDir "$INSTDIR" -StatePath "${ARIZONA_STATE_PATH}" $R0'
+  Pop $R1
+  Pop $R6
+
+  ${If} $R1 = 20
+    MessageBox MB_ICONEXCLAMATION|MB_RETRYCANCEL "Close After Effects, then choose Retry. Uninstall will not leave an old Arizona AEX plugin behind." /SD IDCANCEL IDRETRY arizona_uninstall_adobe_retry
+    Goto arizona_uninstall_adobe_abort
+  ${ElseIf} $R1 != 0
+    MessageBox MB_ICONSTOP|MB_RETRYCANCEL "Arizona could not completely remove its Adobe assets. Choose Retry, or Cancel to keep the app installed and inspect the Arizona Installer log." /SD IDCANCEL IDRETRY arizona_uninstall_adobe_retry
+    Goto arizona_uninstall_adobe_abort
+  ${EndIf}
+
+  SetRegView 64
+  ReadRegStr $R2 HKLM "Software\Classes\arizona\shell\open\command" ""
+  ${If} $R2 == '"$INSTDIR\${ARIZONA_EXE}" "%1"'
+    DeleteRegKey HKLM "Software\Classes\arizona"
+  ${EndIf}
+  Goto arizona_uninstall_adobe_done
+
+arizona_uninstall_adobe_abort:
+  SetErrorLevel 2
+  Abort "Arizona uninstall stopped before removing the desktop app."
+
+arizona_uninstall_adobe_done:
 !macroend

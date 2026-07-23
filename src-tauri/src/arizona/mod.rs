@@ -40,10 +40,7 @@ pub struct Arizona {
 impl Arizona {
     pub fn new(config: AppConfig) -> Self {
         let carrefour_path = entrypoint_path_from_drive(&config.drive);
-        let after_fx = PathBuf::from(format!(
-            "C:/Program Files/Adobe/Adobe After Effects {}/Support Files/AfterFX.exe",
-            config.ae_version
-        ));
+        let after_fx = crate::after_effects::resolve_executable(&config.ae_version);
         let product_folder_path = product_folder_path(&config.produtos_path);
         let meses = build_month_labels(&carrefour_path, 2, &config.produtos_year);
 

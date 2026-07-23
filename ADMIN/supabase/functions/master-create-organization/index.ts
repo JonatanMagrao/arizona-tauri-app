@@ -16,6 +16,7 @@ type CreateOrganizationBody = {
   seatsAllowed?: unknown;
   licenseExpiresOn?: unknown;
   licenseIsIndefinite?: unknown;
+  dailyAuthResetHour?: unknown;
   users?: unknown;
   managers?: unknown;
   adminName?: unknown;
@@ -136,10 +137,18 @@ Deno.serve(async (req) => {
     const allowedEmailDomain = ARIZONA_ALLOWED_EMAIL_DOMAIN;
     const licenseIsIndefinite = body.licenseIsIndefinite === true;
     const licenseExpiresOn = licenseIsIndefinite ? null : cleanDateInput(body.licenseExpiresOn);
+    const dailyAuthResetHour = Number(body.dailyAuthResetHour ?? 4);
     const users = cleanLicenseUsers(body);
 
     if (!Number.isInteger(seatsAllowed) || seatsAllowed < 1) {
       return errorResponse("invalid_seats", "seatsAllowed must be at least 1.", 400);
+    }
+    if (!Number.isInteger(dailyAuthResetHour) || dailyAuthResetHour < 0 || dailyAuthResetHour > 23) {
+      return errorResponse(
+        "invalid_daily_auth_reset_hour",
+        "dailyAuthResetHour must be an integer between 0 and 23.",
+        400,
+      );
     }
     if (users.length > seatsAllowed) {
       return errorResponse("too_many_users", "Users cannot exceed seats.", 409);
@@ -168,7 +177,7 @@ Deno.serve(async (req) => {
     const { data: existingOrganization, error: existingOrganizationError } = await admin
       .schema("licensing")
       .from("organizations")
-      .select("id,name,seats_allowed,allowed_email_domain,license_expires_on,status")
+      .select("id,name,seats_allowed,allowed_email_domain,license_expires_on,daily_auth_reset_hour,status")
       .eq("slug", slug)
       .maybeSingle();
 
@@ -218,10 +227,11 @@ Deno.serve(async (req) => {
         seats_allowed: seatsAllowed,
         allowed_email_domain: allowedEmailDomain,
         license_expires_on: licenseExpiresOn,
+        daily_auth_reset_hour: dailyAuthResetHour,
         status: "active",
         created_by_master_id: master.id,
       }, { onConflict: "slug" })
-      .select("id,name,slug,seats_allowed,allowed_email_domain,license_expires_on,status")
+      .select("id,name,slug,seats_allowed,allowed_email_domain,license_expires_on,daily_auth_reset_hour,status")
       .single();
 
     if (orgError) {
@@ -356,6 +366,7 @@ Deno.serve(async (req) => {
         seatsAllowed: Number(existingOrganization.seats_allowed || 0),
         allowedEmailDomain: existingOrganization.allowed_email_domain,
         licenseExpiresOn: existingOrganization.license_expires_on,
+        dailyAuthResetHour: Number(existingOrganization.daily_auth_reset_hour ?? 4),
         status: existingOrganization.status,
       }
       : null;
@@ -365,6 +376,7 @@ Deno.serve(async (req) => {
       seatsAllowed,
       allowedEmailDomain,
       licenseExpiresOn,
+      dailyAuthResetHour,
       status: organization.status,
     };
     const auditRows: Record<string, unknown>[] = [

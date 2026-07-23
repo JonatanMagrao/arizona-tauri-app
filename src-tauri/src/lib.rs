@@ -1,14 +1,16 @@
-mod aegp_bridge;
+mod after_effects;
 mod arizona;
 mod cep_bridge;
 mod history;
 mod license;
 mod media;
 mod settings;
+mod uninstall;
 
+use after_effects::AfterEffectsAction;
 use arizona::{ActionResponse, Arizona, MediaFile, ProductImportReport};
 use cep_bridge::CepBridgeState;
-use chrono::{DateTime, Duration, SecondsFormat, Utc};
+use chrono::{SecondsFormat, Utc};
 use license::{LicenseInput, LicenseStatus};
 use settings::AppConfig;
 use std::fs;
@@ -19,6 +21,14 @@ use tauri::{
     WindowEvent,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+
+pub fn release_device_for_uninstall_cli() -> i32 {
+    uninstall::release_device_for_uninstall_cli()
+}
+
+pub fn clear_local_auth_for_uninstall_cli() -> i32 {
+    uninstall::clear_local_auth_for_uninstall_cli()
+}
 
 #[derive(Default)]
 struct AuthState {
@@ -39,46 +49,7 @@ struct SecondaryWindowRuntimeState {
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct RegisteredAfterShortcut {
     shortcut: Shortcut,
-    action: AegpBridgeAction,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum AegpBridgeAction {
-    MoveLayersBackward,
-    MoveLayersForward,
-    MoveJumpMarker,
-    SelectJumpMarkerLayer,
-    AdjustMarkersToTail,
-    Render,
-}
-
-impl AegpBridgeAction {
-    fn key(self) -> &'static str {
-        match self {
-            AegpBridgeAction::MoveLayersBackward => "moveLayersBackward",
-            AegpBridgeAction::MoveLayersForward => "moveLayersForward",
-            AegpBridgeAction::MoveJumpMarker => "moveJumpMarker",
-            AegpBridgeAction::SelectJumpMarkerLayer => "selectJumpMarkerLayer",
-            AegpBridgeAction::AdjustMarkersToTail => "adjustMarkersToTail",
-            AegpBridgeAction::Render => "render",
-        }
-    }
-}
-
-fn aegp_bridge_action_from_key(value: &str) -> Option<AegpBridgeAction> {
-    match value.trim() {
-        "moveLayersBackward" | "move_layers_backward" => Some(AegpBridgeAction::MoveLayersBackward),
-        "moveLayersForward" | "move_layers_forward" => Some(AegpBridgeAction::MoveLayersForward),
-        "moveJumpMarker" | "move_jump_marker" => Some(AegpBridgeAction::MoveJumpMarker),
-        "selectJumpMarkerLayer" | "select_jump_marker_layer" => {
-            Some(AegpBridgeAction::SelectJumpMarkerLayer)
-        }
-        "adjustMarkersToTail" | "adjust_markers_to_tail" => {
-            Some(AegpBridgeAction::AdjustMarkersToTail)
-        }
-        "render" | "queueRender" | "queue_render" => Some(AegpBridgeAction::Render),
-        _ => None,
-    }
+    action: AfterEffectsAction,
 }
 
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
@@ -86,8 +57,6 @@ fn aegp_bridge_action_from_key(value: &str) -> Option<AegpBridgeAction> {
 struct AuthSession {
     access_token: Option<String>,
     refresh_token: Option<String>,
-    bridge_token: Option<String>,
-    bridge_token_expires_at: Option<String>,
     cep_license_receipt: Option<String>,
     email: String,
     member_id: Option<String>,
@@ -100,7 +69,7 @@ struct AuthSession {
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-struct AegpBridgeNotice {
+struct AfterEffectsNotice {
     level: &'static str,
     code: &'static str,
     message: String,
@@ -182,12 +151,11 @@ pub fn run() {
                             return;
                         }
 
-                        let bridge = app.state::<CepBridgeState>();
                         let auth = app.state::<AuthState>();
-                        let response = send_aegp_bridge_action_command(&bridge, &auth, action);
+                        let response = run_after_effects_action(app, &auth, action);
                         if !response.is_ok() {
                             if let Some(message) = response.message() {
-                                notify_aegp_bridge_shortcut_error(app, message, Some(action));
+                                notify_after_effects_shortcut_error(app, message, Some(action));
                             }
                         }
                     }
@@ -223,9 +191,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             cep_bridge_status,
-            aegp_bridge_send_test_command,
-            aegp_bridge_move_layers_to_markers_command,
-            aegp_bridge_action_command,
+            after_effects_action_command,
+            list_installed_after_effects_versions,
+            set_after_shortcut_recording,
             complete_login,
             update_auth_session,
             restrict_admin_session,
@@ -285,8 +253,13 @@ pub fn run() {
 fn after_command_action_for_shortcut(
     app: &AppHandle,
     shortcut: &Shortcut,
-) -> Option<AegpBridgeAction> {
-    app.state::<AfterShortcutState>()
+) -> Option<AfterEffectsAction> {
+    let state = app.state::<AfterShortcutState>();
+    if state.suspended.lock().map(|value| *value).unwrap_or(true) {
+        return None;
+    }
+
+    state
         .registered
         .lock()
         .ok()
@@ -448,32 +421,32 @@ fn configured_after_shortcuts(config: &AppConfig) -> Result<Vec<RegisteredAfterS
     let specs = [
         (
             "Mover Layers atras",
-            AegpBridgeAction::MoveLayersBackward,
+            AfterEffectsAction::MoveLayersBackward,
             config.move_layers_backward_shortcut.as_str(),
         ),
         (
             "Mover Layers frente",
-            AegpBridgeAction::MoveLayersForward,
+            AfterEffectsAction::MoveLayersForward,
             config.move_layers_forward_shortcut.as_str(),
         ),
         (
             "Aplicar Jump",
-            AegpBridgeAction::MoveJumpMarker,
+            AfterEffectsAction::MoveJumpMarker,
             config.move_jump_marker_shortcut.as_str(),
         ),
         (
             "Selecionar Oferta",
-            AegpBridgeAction::SelectJumpMarkerLayer,
+            AfterEffectsAction::SelectJumpMarkerLayer,
             config.select_jump_marker_layer_shortcut.as_str(),
         ),
         (
             "Reset Markers",
-            AegpBridgeAction::AdjustMarkersToTail,
+            AfterEffectsAction::AdjustMarkersToTail,
             config.adjust_markers_shortcut.as_str(),
         ),
         (
             "Render",
-            AegpBridgeAction::Render,
+            AfterEffectsAction::Render,
             config.render_shortcut.as_str(),
         ),
     ];
@@ -500,20 +473,20 @@ fn parse_after_shortcut(label: &str, shortcut_text: &str) -> Result<Shortcut, St
         .map_err(|err| format!("Atalho invalido em {label} (\"{shortcut_text}\"): {err}"))
 }
 
-fn notify_aegp_bridge_shortcut_error(
+fn notify_after_effects_shortcut_error(
     app: &AppHandle,
     message: &str,
-    action: Option<AegpBridgeAction>,
+    action: Option<AfterEffectsAction>,
 ) {
-    eprintln!("Arizona AEGP shortcut failed: {message}");
+    eprintln!("Arizona After Effects shortcut failed: {message}");
 
-    let (code, user_message) = aegp_bridge_shortcut_notice(message);
-    let notice = AegpBridgeNotice {
+    let (code, user_message) = after_effects_shortcut_notice(message);
+    let notice = AfterEffectsNotice {
         level: "error",
         code,
         message: user_message.to_string(),
         detail: message.to_string(),
-        action: action.map(AegpBridgeAction::key),
+        action: action.map(AfterEffectsAction::key),
     };
 
     let Some(app_window) = app.get_webview_window(APP_WINDOW_LABEL) else {
@@ -524,24 +497,29 @@ fn notify_aegp_bridge_shortcut_error(
         return;
     };
     let script = format!(
-        "window.dispatchEvent(new CustomEvent('{AEGP_SHORTCUT_ERROR_EVENT}', {{ detail: {notice_json} }}));"
+        "window.dispatchEvent(new CustomEvent('{AFTER_EFFECTS_SHORTCUT_ERROR_EVENT}', {{ detail: {notice_json} }}));"
     );
     let _ = app_window.eval(&script);
 }
 
-fn aegp_bridge_shortcut_notice(message: &str) -> (&'static str, &'static str) {
+fn after_effects_shortcut_notice(message: &str) -> (&'static str, &'static str) {
     let normalized = message.to_ascii_lowercase();
-    if normalized.contains("token do bridge aex")
-        || normalized.contains("bridge_token")
-        || normalized.contains("licenca")
-        || normalized.contains("license")
-    {
-        return ("aex_bridge_license_required", AEGP_LICENSE_NOTICE_MESSAGE);
+    if normalized.contains("sessao") || normalized.contains("licenca") {
+        return (
+            "after_effects_license_required",
+            AFTER_EFFECTS_LICENSE_NOTICE_MESSAGE,
+        );
+    }
+    if normalized.contains("afterfx.exe") {
+        return (
+            "after_effects_not_found",
+            "Nao encontrei a versao configurada do After Effects.",
+        );
     }
 
     (
-        "aex_bridge_command_failed",
-        "Nao foi possivel falar com o plugin do After Effects.",
+        "after_effects_command_failed",
+        "Nao foi possivel executar o atalho no After Effects.",
     )
 }
 
@@ -607,8 +585,8 @@ const AUTHOR_URL: &str = "https://www.jonatanmagrao.com.br";
 const LOGIN_WINDOW_LABEL: &str = "main";
 const APP_WINDOW_LABEL: &str = "app";
 const SECONDARY_WINDOW_LABEL: &str = "secondary";
-const AEGP_SHORTCUT_ERROR_EVENT: &str = "arizona-aegp:shortcut-error";
-const AEGP_LICENSE_NOTICE_MESSAGE: &str =
+const AFTER_EFFECTS_SHORTCUT_ERROR_EVENT: &str = "arizona-after-effects:shortcut-error";
+const AFTER_EFFECTS_LICENSE_NOTICE_MESSAGE: &str =
     "Atalho do After bloqueado. Valide a licença novamente no Arizona App.";
 const CEP_LICENSE_RECEIPT_FILE_NAME: &str = "cep-license-receipt.json";
 const SECURE_AUTH_SERVICE: &str = "Arizona App";
@@ -723,144 +701,50 @@ fn cep_bridge_status(bridge: State<CepBridgeState>) -> Result<cep_bridge::Bridge
 }
 
 #[tauri::command]
-fn aegp_bridge_send_test_command(
-    bridge: State<CepBridgeState>,
-    auth: State<AuthState>,
-) -> Result<ActionResponse, String> {
-    Ok(send_aegp_bridge_test_command(&bridge, &auth))
-}
-
-#[tauri::command]
-fn aegp_bridge_move_layers_to_markers_command(
-    bridge: State<CepBridgeState>,
-    auth: State<AuthState>,
-) -> Result<ActionResponse, String> {
-    Ok(send_aegp_bridge_move_layers_to_markers_command(
-        &bridge, &auth,
-    ))
-}
-
-#[tauri::command]
-fn aegp_bridge_action_command(
-    bridge: State<CepBridgeState>,
+fn after_effects_action_command(
+    app: AppHandle,
     auth: State<AuthState>,
     action: String,
 ) -> Result<ActionResponse, String> {
-    let Some(action) = aegp_bridge_action_from_key(&action) else {
-        return Ok(ActionResponse::err("Acao do bridge AEX invalida."));
+    let Some(action) = after_effects::action_from_key(&action) else {
+        return Ok(ActionResponse::err("Acao do After Effects invalida."));
     };
 
-    Ok(send_aegp_bridge_action_command(&bridge, &auth, action))
+    Ok(run_after_effects_action(&app, &auth, action))
 }
 
-fn send_aegp_bridge_test_command(
-    _bridge: &CepBridgeState,
+#[tauri::command]
+fn list_installed_after_effects_versions() -> Vec<String> {
+    after_effects::installed_versions()
+}
+
+#[tauri::command]
+fn set_after_shortcut_recording(app: AppHandle, recording: bool) -> Result<(), String> {
+    if recording {
+        suspend_after_command_shortcuts(&app)
+    } else {
+        resume_after_command_shortcuts(&app)
+    }
+}
+
+fn run_after_effects_action(
+    app: &AppHandle,
     auth: &State<AuthState>,
+    action: AfterEffectsAction,
 ) -> ActionResponse {
-    let command_auth = match aegp_bridge_auth(auth) {
-        Ok(command_auth) => command_auth,
+    if let Err(err) = require_authenticated(auth) {
+        return ActionResponse::err(err);
+    }
+
+    let config = match settings::load_validated(app) {
+        Ok(config) => config,
         Err(err) => return ActionResponse::err(err),
     };
 
-    match aegp_bridge::send_show_alert("ponte feita", &command_auth) {
+    match after_effects::execute(app, &config, action) {
         Ok(command_id) => ActionResponse::ok_message(command_id),
         Err(err) => ActionResponse::err(err),
     }
-}
-
-fn send_aegp_bridge_move_layers_to_markers_command(
-    bridge: &CepBridgeState,
-    auth: &State<AuthState>,
-) -> ActionResponse {
-    send_aegp_bridge_action_command(bridge, auth, AegpBridgeAction::MoveLayersForward)
-}
-
-fn send_aegp_bridge_action_command(
-    _bridge: &CepBridgeState,
-    auth: &State<AuthState>,
-    action: AegpBridgeAction,
-) -> ActionResponse {
-    let command_auth = match aegp_bridge_auth(auth) {
-        Ok(command_auth) => command_auth,
-        Err(err) => return ActionResponse::err(err),
-    };
-
-    let result = match action {
-        AegpBridgeAction::MoveLayersBackward => {
-            aegp_bridge::send_move_layers_backward(&command_auth)
-        }
-        AegpBridgeAction::MoveLayersForward => aegp_bridge::send_move_layers_forward(&command_auth),
-        AegpBridgeAction::MoveJumpMarker => aegp_bridge::send_move_jump_marker(&command_auth),
-        AegpBridgeAction::SelectJumpMarkerLayer => {
-            aegp_bridge::send_select_jump_marker_layer(&command_auth)
-        }
-        AegpBridgeAction::AdjustMarkersToTail => {
-            aegp_bridge::send_adjust_markers_to_tail(&command_auth)
-        }
-        AegpBridgeAction::Render => aegp_bridge::send_render(&command_auth),
-    };
-
-    match result {
-        Ok(command_id) => ActionResponse::ok_message(command_id),
-        Err(err) => ActionResponse::err(err),
-    }
-}
-
-fn aegp_bridge_auth(auth: &State<AuthState>) -> Result<aegp_bridge::BridgeCommandAuth, String> {
-    #[cfg(debug_assertions)]
-    if allow_dev_aex_token() {
-        return aegp_bridge::BridgeCommandAuth::new("arizona-aex-dev-token");
-    }
-
-    let session = auth
-        .session
-        .lock()
-        .map_err(|_| "Nao foi possivel ler a sessao do bridge AEX.".to_string())?
-        .clone();
-
-    let bridge_token = session
-        .as_ref()
-        .and_then(|session| session.bridge_token.as_deref())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned);
-
-    if let Some(bridge_token) = bridge_token {
-        if bridge_token_is_expired(
-            session
-                .as_ref()
-                .and_then(|session| session.bridge_token_expires_at.as_deref()),
-        ) {
-            return Err("Token do bridge AEX expirado. Valide a licenca novamente.".to_string());
-        }
-
-        return aegp_bridge::BridgeCommandAuth::new(bridge_token);
-    }
-
-    Err("Token do bridge AEX ausente. Valide a licenca novamente.".to_string())
-}
-
-fn bridge_token_is_expired(expires_at: Option<&str>) -> bool {
-    let Some(expires_at) = expires_at.map(str::trim).filter(|value| !value.is_empty()) else {
-        return false;
-    };
-
-    DateTime::parse_from_rfc3339(expires_at)
-        .map(|expires_at| expires_at.with_timezone(&Utc) <= Utc::now() + Duration::seconds(5))
-        .unwrap_or(false)
-}
-
-#[cfg(debug_assertions)]
-fn allow_dev_aex_token() -> bool {
-    std::env::var("ARIZONA_ALLOW_DEV_AEX_TOKEN")
-        .map(|value| {
-            let value = value.trim();
-            value == "1"
-                || value.eq_ignore_ascii_case("true")
-                || value.eq_ignore_ascii_case("yes")
-                || value.eq_ignore_ascii_case("on")
-        })
-        .unwrap_or(false)
 }
 
 #[tauri::command]
@@ -1149,7 +1033,9 @@ fn webview_window_position_is_visible(
     position: PhysicalPosition<i32>,
 ) -> bool {
     position_is_visible_for_window(
-        window.outer_size().unwrap_or_else(|_| PhysicalSize::new(440, 232)),
+        window
+            .outer_size()
+            .unwrap_or_else(|_| PhysicalSize::new(440, 232)),
         position,
         window.available_monitors(),
     )
@@ -1378,20 +1264,22 @@ fn show_secondary_window(
     );
 
     let _ = window.eval(script);
-    window
-        .set_title(&window_title)
-        .map_err(|err| err.to_string())?;
+    if let Err(err) = window.set_title(&window_title) {
+        eprintln!("Nao foi possivel atualizar o titulo da janela secundaria: {err}");
+    }
     let _ = window.unmaximize();
-    window
-        .set_size(LogicalSize::new(
-            SECONDARY_WINDOW_WIDTH,
-            SECONDARY_WINDOW_HEIGHT,
-        ))
-        .map_err(|err| err.to_string())?;
+    if let Err(err) = window.set_size(LogicalSize::new(
+        SECONDARY_WINDOW_WIDTH,
+        SECONDARY_WINDOW_HEIGHT,
+    )) {
+        eprintln!("Nao foi possivel redimensionar a janela secundaria: {err}");
+    }
     let _ = window.center();
-    window.unminimize().map_err(|err| err.to_string())?;
-    window.show().map_err(|err| err.to_string())?;
-    window.set_focus().map_err(|err| err.to_string())?;
+    let _ = window.unminimize();
+    window
+        .show()
+        .map_err(|err| format!("Nao foi possivel exibir a janela secundaria: {err}"))?;
+    let _ = window.set_focus();
     set_secondary_active_view(&app, Some(&active_view));
 
     if let Some(app_window) = app.get_webview_window(APP_WINDOW_LABEL) {
@@ -1670,7 +1558,7 @@ fn open_video(
     media_type: String,
 ) -> Result<ActionResponse, String> {
     match arizona_from_app(&app)?.video_file(&jobao_cod, &jobinho_cod, &media_type) {
-        Ok(media) => show_media_window(app, media),
+        Ok(media) => show_media_window_with_native_fallback(app, media),
         Err(err) => Ok(ActionResponse::err(err)),
     }
 }
@@ -1682,7 +1570,7 @@ fn open_audio(
     jobinho_cod: String,
 ) -> Result<ActionResponse, String> {
     match arizona_from_app(&app)?.audio_file(&jobao_cod, &jobinho_cod) {
-        Ok(media) => show_media_window(app, media),
+        Ok(media) => show_media_window_with_native_fallback(app, media),
         Err(err) => Ok(ActionResponse::err(err)),
     }
 }
@@ -1862,6 +1750,29 @@ fn arizona_from_app(app: &AppHandle) -> Result<Arizona, String> {
 fn show_media_window(app: AppHandle, media: MediaFile) -> Result<ActionResponse, String> {
     let MediaFile { path, kind, title } = media;
     show_media_path_with_title(app, path, &kind, title)
+}
+
+fn show_media_window_with_native_fallback(
+    app: AppHandle,
+    media: MediaFile,
+) -> Result<ActionResponse, String> {
+    let fallback_path = media.path.clone();
+    match show_media_window(app, media) {
+        Ok(response) => Ok(response),
+        Err(window_error) => {
+            eprintln!(
+                "Janela interna de midia indisponivel; abrindo {} no sistema: {window_error}",
+                fallback_path.display()
+            );
+            Ok(match arizona::open_start_file(&fallback_path) {
+                Ok(()) => ActionResponse::ok(),
+                Err(open_error) => ActionResponse::err(format!(
+                    "A midia existe em {}, mas nao foi possivel abrir a janela interna ({window_error}) nem o visualizador do sistema ({open_error}).",
+                    fallback_path.display()
+                )),
+            })
+        }
+    }
 }
 
 fn show_product_import_report(

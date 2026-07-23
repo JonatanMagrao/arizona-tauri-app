@@ -2,6 +2,9 @@ param(
   [string]$InstallDir = "",
   [string]$CepExtensionsRoot = "",
   [string]$LogRoot = "",
+  [string]$StatePath = "",
+  [string[]]$AdobeRoots = @(),
+  [switch]$PreflightOnly,
   [switch]$RemoveUserData
 )
 
@@ -9,31 +12,111 @@ param(
 
 $logRoot = Get-InstallerLogRoot $LogRoot
 
+trap {
+  Write-InstallerLog "ERROR removing Adobe assets: $($_.Exception.Message)" $logRoot
+  Write-Error $_
+  exit 1
+}
+
+if ([string]::IsNullOrWhiteSpace($StatePath) -and ![string]::IsNullOrWhiteSpace($InstallDir)) {
+  $StatePath = Join-Path $InstallDir "installer\installed-assets.json"
+}
+
+$state = $null
+if (![string]::IsNullOrWhiteSpace($StatePath) -and (Test-Path -LiteralPath $StatePath -PathType Leaf)) {
+  try {
+    $state = Get-Content -LiteralPath $StatePath -Raw | ConvertFrom-Json
+    if ([int]$state.schemaVersion -notin @(1, 2)) {
+      throw "Unsupported installed asset state schema: $($state.schemaVersion)"
+    }
+    Write-InstallerLog "Loaded installed Adobe asset paths from $StatePath" $logRoot
+  } catch {
+    Write-InstallerLog "Installed asset state could not be read; using safe legacy discovery. $($_.Exception.Message)" $logRoot
+    $state = $null
+  }
+}
+
+$legacyAexTargets = @()
+if ($null -ne $state -and [int]$state.schemaVersion -eq 1 -and $null -ne $state.aex) {
+  foreach ($entry in @($state.aex)) {
+    if (![string]::IsNullOrWhiteSpace([string]$entry.path)) {
+      $legacyAexTargets += [string]$entry.path
+    }
+  }
+}
+
+if ($AdobeRoots.Count -gt 0) {
+  $afterInstallationsJson = & "$PSScriptRoot\detect-after-effects.ps1" -Json -AdobeRoots $AdobeRoots -IncludeArizonaPluginOnly
+} else {
+  $afterInstallationsJson = & "$PSScriptRoot\detect-after-effects.ps1" -Json -IncludeArizonaPluginOnly
+}
+$afterInstallations = $afterInstallationsJson | ConvertFrom-Json
+foreach ($installation in @($afterInstallations)) {
+  if ($null -ne $installation -and ![string]::IsNullOrWhiteSpace([string]$installation.pluginPath)) {
+    $legacyAexTargets += [string]$installation.pluginPath
+  }
+}
+$legacyAexTargets = @($legacyAexTargets | Sort-Object -Unique)
+$presentLegacyAexTargets = @($legacyAexTargets | Where-Object { $null -ne (Get-PathItem $_) })
+
+if ($presentLegacyAexTargets.Count -gt 0 -and (Test-AfterEffectsRunning)) {
+  Write-InstallerLog "After Effects is running and a legacy Arizona AEX cannot be removed yet." $logRoot
+  exit 20
+}
+
+if ($PreflightOnly) {
+  exit 0
+}
+
 if ([string]::IsNullOrWhiteSpace($CepExtensionsRoot)) {
   if (![string]::IsNullOrWhiteSpace($env:APPDATA)) {
     $CepExtensionsRoot = Join-Path $env:APPDATA "Adobe\CEP\extensions"
   }
 }
 
-Write-InstallerLog "Removing Adobe assets installed by Arizona." $logRoot
+Write-InstallerLog "Removing Arizona CEP extension and any legacy AEX plugin." $logRoot
 
-if (![string]::IsNullOrWhiteSpace($CepExtensionsRoot)) {
-  $cepDestination = Join-Path $CepExtensionsRoot "com.arizona-carrefour.cep"
-  Remove-PathSafe -Path $cepDestination -AllowedParent $CepExtensionsRoot -Label "CEP extension"
-  Write-InstallerLog "Removed CEP extension from $cepDestination" $logRoot
+$cepTargets = @()
+if ($null -ne $state -and $null -ne $state.cep -and ![string]::IsNullOrWhiteSpace([string]$state.cep.path)) {
+  $cepTargets += [string]$state.cep.path
+} elseif (![string]::IsNullOrWhiteSpace($CepExtensionsRoot)) {
+  $cepTargets += (Join-Path $CepExtensionsRoot "com.arizona-carrefour.cep")
 }
 
-$afterProcess = Get-Process -Name "AfterFX" -ErrorAction SilentlyContinue
-if ($afterProcess) {
-  throw "Close After Effects before removing the Arizona AEX plugin."
+foreach ($cepDestination in @($cepTargets | Sort-Object -Unique)) {
+  $validatedCepRoot = Assert-ArizonaCepPath $cepDestination
+  $cepWasPresent = $null -ne (Get-PathItem $cepDestination)
+  Remove-PathSafe -Path $cepDestination -AllowedParent $validatedCepRoot -Label "Arizona CEP extension"
+  if ($cepWasPresent) {
+    Write-InstallerLog "Removed CEP extension from $cepDestination" $logRoot
+  } else {
+    Write-InstallerLog "CEP extension was already absent from $cepDestination" $logRoot
+  }
 }
 
-$afterInstallations = @(& "$PSScriptRoot\detect-after-effects.ps1" -Json | ConvertFrom-Json)
-foreach ($installation in $afterInstallations) {
-  $pluginDir = [string]$installation.pluginDir
-  $pluginPath = [string]$installation.pluginPath
-  Remove-PathSafe -Path $pluginPath -AllowedParent $pluginDir -Label "AEX plugin"
-  Write-InstallerLog "Removed AEX plugin from $pluginPath" $logRoot
+foreach ($pluginPath in $legacyAexTargets) {
+  $pluginDir = Assert-ArizonaAexPath $pluginPath
+  $pluginsRoot = Split-Path -Parent $pluginDir
+  $aexWasPresent = $null -ne (Get-PathItem $pluginPath)
+  Remove-PathSafe -Path $pluginPath -AllowedParent $pluginDir -Label "legacy Arizona AEX plugin"
+  if ($aexWasPresent) {
+    Write-InstallerLog "Removed legacy AEX plugin from $pluginPath" $logRoot
+  }
+
+  if (Remove-DirectoryIfEmptySafe -Path $pluginDir -AllowedParent $pluginsRoot -Label "legacy Arizona AEX directory") {
+    Write-InstallerLog "Removed empty legacy Arizona plugin directory from $pluginDir" $logRoot
+  } elseif ($null -ne (Get-PathItem $pluginDir)) {
+    Write-InstallerLog "Preserved non-empty legacy Arizona plugin directory at $pluginDir" $logRoot
+  }
+}
+
+if (![string]::IsNullOrWhiteSpace($StatePath)) {
+  if ((Split-Path -Leaf $StatePath) -ne "installed-assets.json") {
+    throw "Unexpected installed asset state filename: $StatePath"
+  }
+
+  $stateParent = Split-Path -Parent (Get-FullPath $StatePath)
+  Remove-PathSafe -Path $StatePath -AllowedParent $stateParent -Label "installed asset state"
 }
 
 if ($RemoveUserData) {
@@ -50,3 +133,5 @@ if ($RemoveUserData) {
 } else {
   Write-InstallerLog "User data was preserved." $logRoot
 }
+
+exit 0

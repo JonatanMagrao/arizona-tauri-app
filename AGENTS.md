@@ -1,72 +1,85 @@
 # AGENTS.md — Mapa do repositório e fronteiras
 
-Este repositório contém QUATRO projetos separados. Eles conversam entre si por
-contratos bem definidos (arquivos assinados, named pipe, HTTP), mas **não se
-misturam**: código de um projeto nunca importa código de outro.
+Este repositório contém TRÊS projetos ativos e um arquivo legado. Eles conversam
+por contratos bem definidos, mas código de um projeto nunca importa código de
+outro.
 
-## Os quatro projetos
+## Projetos ativos
 
 | Projeto | Pasta | O que é | Doc principal |
 |---|---|---|---|
-| **Tauri (Arizona App)** | raiz (`src/`, `src-tauri/`) | App desktop usado pelos usuários finais. Autoridade local de sessão/licença. | `README.md` |
+| **Tauri (Arizona App)** | raiz (`src/`, `src-tauri/`) | App desktop, autoridade local de sessão/licença e executor dos atalhos do After via ExtendScript embutido. | `README.md` |
 | **Extensão CEP** | `ARIZONA-EXTENSION/` | Painel React dentro do After Effects (ofertas, roteiro, render). | `ARIZONA-EXTENSION/README.md` |
-| **Plugin AEX** | `AE-PLUGIN-ARIZONA/` | Plugin nativo C++ do After Effects que executa os atalhos globais. | `AE-PLUGIN-ARIZONA/README.md` |
-| **Admin** | `ADMIN/` | Painel web de gestão de licenças + Supabase (migrations, Edge Functions, chaves). | `ADMIN/README.md` |
+| **Admin** | `ADMIN/` | Gestão de licenças + Supabase (migrations, Edge Functions e chaves). | `ADMIN/README.md` |
 
-## Como eles conversam (e é SÓ assim que conversam)
+`AE-PLUGIN-ARIZONA/` preserva o código-fonte do antigo plugin AEX apenas como
+histórico. Ele não faz parte do runtime, do build oficial nem do instalador.
+
+## Como os projetos conversam
 
 ```text
 ADMIN/Supabase (Edge Function validate-license)
-    |                          |
-    | sessão + cepLicenseReceipt (JWS)         bridgeToken (JWS)
-    v                          v
+    |
+    | sessão + cepLicenseReceipt (JWS)
+    v
 Tauri (raiz) ── grava ──> cep-license-receipt.json ── lê ──> Extensão CEP
     |
-    └── named pipe \\.\pipe\arizona-aegp-bridge ──> Plugin AEX
+    └── materializa JSX embutido em AppData
+          └── AfterFX.exe -r <acao.jsx> ──> After Effects
 ```
 
-- **Tauri → Extensão CEP**: apenas pelo arquivo `cep-license-receipt.json` em
-  `%LOCALAPPDATA%\com.pc.arizona-app\`. A extensão NÃO recebe comandos do Tauri,
-  não abre socket com ele e não executa `evalScript` a pedido dele.
-- **Tauri → Plugin AEX**: apenas pelo named pipe, com `bridgeToken` assinado.
-- **Extensão e Plugin nunca falam entre si.**
-- **Todos validam assinatura com chave pública embutida**; nenhum segredo sai
-  do backend (`ADMIN/supabase/functions/.env.production.local`, gitignored).
+- **Tauri → Extensão CEP**: apenas pelo arquivo
+  `cep-license-receipt.json` em `%LOCALAPPDATA%\com.pc.arizona-app\`.
+- **Tauri → After Effects**: os atalhos exigem sessão autenticada no Tauri. O
+  Tauri embute `src-tauri/src/after_effects/arizona_actions.jsx`, materializa
+  lançadores em `%LOCALAPPDATA%\com.pc.arizona-app\after-effects-scripts\` e
+  chama `AfterFX.exe -r`. Não existe named pipe e nenhum AEX é instalado.
+- **Extensão CEP não recebe comandos do Tauri** e não executa `evalScript` a
+  pedido dele.
+- A extensão continua validando a assinatura do recibo com chave pública
+  embutida; nenhum segredo sai do backend.
 
 ## Regras de fronteira para agentes
 
-1. **Não importe código entre projetos.** A extensão não enxerga nada do Tauri;
-   o Tauri não enxerga nada da extensão; etc. Se dois projetos precisam do mesmo
-   dado, ele passa pelo contrato (arquivo assinado, pipe ou HTTP), nunca por
-   import.
+1. **Não importe código entre projetos.** Se dois projetos precisam do mesmo
+   dado, ele passa pelo contrato documentado, nunca por import de runtime.
 2. **Exceção única e sancionada**: o build da extensão lê o manifesto público
-   `ADMIN/supabase/license-trusted-keys.json` (via
-   `ARIZONA-EXTENSION/scripts/generate-license-trusted-keys.mjs`) para embutir
-   as chaves públicas de licença. É leitura de build-time de dado público
-   versionado — não é acoplamento de runtime. Não crie outras exceções.
-3. **Cada projeto tem seu próprio package.json/lockfile/node_modules** (raiz,
-   `ARIZONA-EXTENSION/`, `ADMIN/`). Rode os comandos npm dentro da pasta certa.
-4. Trabalhando em um projeto, siga os AGENTS.md internos dele quando existirem
-   (ex.: `ARIZONA-EXTENSION/src/js/main/AGENTS.md`,
-   `ARIZONA-EXTENSION/src/jsx/aeft/AGENTS.md`).
+   `ADMIN/supabase/license-trusted-keys.json` via
+   `ARIZONA-EXTENSION/scripts/generate-license-trusted-keys.mjs`.
+3. A lógica JSX dos atalhos pertence ao Tauri. Não importe o bundle da extensão
+   nem fonte de `AE-PLUGIN-ARIZONA/`; mantenha a implementação embutida
+   autocontida.
+4. Cada projeto tem seu próprio package.json/lockfile/node_modules (raiz,
+   `ARIZONA-EXTENSION/`, `ADMIN/`). Rode os comandos npm na pasta certa.
+5. Trabalhando em um projeto, siga os AGENTS.md internos dele quando existirem.
 
 ## Licenciamento — leia antes de mexer
 
 Antes de alterar autenticação, licenciamento, Supabase secrets, validação da
-extensão CEP, validação do bridge AEX, chaves públicas/privadas ou geração de
-tokens, leia `LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md`.
+extensão CEP, chaves públicas/privadas ou geração de tokens, leia
+`LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md`.
 
-- NÃO delete, regenere, sobrescreva ou faça upload de chaves de licença sem uma
-  rotação planejada pedida explicitamente pelo usuário.
-- Diagnóstico de paridade das chaves: `npm run license:check` (na raiz).
+- NÃO delete, regenere, sobrescreva ou faça upload de chaves sem uma rotação
+  planejada pedida explicitamente pelo usuário.
+- Diagnóstico de paridade: `npm run license:check` na raiz.
+- As chaves antigas do bridge AEX permanecem arquivadas para compatibilidade de
+  backend durante a migração. O app atual não usa `bridgeToken`.
+
+## Instalador
+
+- O payload oficial contém o app Tauri e a extensão CEP. Não contém `.aex`.
+- Instalação não cria `Plug-ins\Arizona` em nenhuma versão do After Effects.
+- Upgrade e desinstalação procuram apenas o arquivo legado exato
+  `Plug-ins\Arizona\ArizonaBridgeTest.aex`, removem-no com segurança e só apagam
+  a pasta `Arizona` quando ela fica vazia.
+- A extensão instalada é uma pasta direta em
+  `%APPDATA%\Adobe\CEP\extensions\com.arizona-carrefour.cep`; em desenvolvimento
+  ela pode ser uma junction para `ARIZONA-EXTENSION\dist\cep`.
 
 ## Notas operacionais
 
-- Após rodar checks/builds Rust com target temporário, remova pastas geradas
-  como `src-tauri/target-codex/` antes de finalizar a tarefa.
-- Se locks de arquivo do Windows impedirem a limpeza, mencione a pasta restante
-  claramente na resposta final; não deixe como ruído de Git sem explicação.
-- A extensão instalada no Adobe CEP é uma junction para
-  `ARIZONA-EXTENSION\dist\cep`; o build recria/aponta a junction sozinho.
-- O usuário costuma ter `tauri dev` e watch da extensão rodando — espere locks
-  de build e rebuilds automáticos.
+- Após checks/builds Rust com target temporário, remova pastas geradas como
+  `src-tauri/target-codex/` antes de finalizar.
+- Se locks do Windows impedirem a limpeza, mencione a pasta restante claramente.
+- O usuário costuma ter `tauri dev` e watch da extensão rodando; espere locks de
+  build e rebuilds automáticos.

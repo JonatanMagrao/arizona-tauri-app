@@ -412,9 +412,7 @@ fn parse_mp4_names_json(contents: &str) -> Result<Vec<String>, String> {
             .get("files")
             .or_else(|| map.get("names"))
             .and_then(Value::as_array)
-            .ok_or_else(|| {
-                "JSON de nomes MP4 deve conter uma lista em \"files\".".to_string()
-            })?,
+            .ok_or_else(|| "JSON de nomes MP4 deve conter uma lista em \"files\".".to_string())?,
         _ => {
             return Err("JSON de nomes MP4 deve conter uma lista em \"files\".".to_string());
         }

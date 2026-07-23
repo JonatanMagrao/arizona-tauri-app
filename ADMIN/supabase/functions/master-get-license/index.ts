@@ -54,7 +54,7 @@ Deno.serve(async (req) => {
     const { data: organization, error: organizationError } = await admin
       .schema("licensing")
       .from("organizations")
-      .select("id,name,slug,seats_allowed,allowed_email_domain,license_expires_on,status,created_at,updated_at")
+      .select("id,name,slug,seats_allowed,allowed_email_domain,license_expires_on,daily_auth_reset_hour,status,created_at,updated_at")
       .eq("slug", ARIZONA_ORGANIZATION_SLUG)
       .maybeSingle();
 

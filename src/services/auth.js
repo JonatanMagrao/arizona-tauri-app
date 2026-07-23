@@ -141,8 +141,6 @@ export function authToSession(auth) {
   return {
     accessToken: auth?.accessToken || "",
     refreshToken: auth?.refreshToken || "",
-    bridgeToken: auth?.bridgeToken || "",
-    bridgeTokenExpiresAt: auth?.bridgeTokenExpiresAt || "",
     cepLicenseReceipt: auth?.cepLicenseReceipt || "",
     email: auth?.email || "",
     memberId: auth?.memberId || "",
@@ -260,25 +258,8 @@ async function validateLicense(accessToken, appVersion, context = {}) {
 }
 
 function authFromSession(session, license, fallbackEmail) {
-  const bridge = license?.bridge || license?.aexBridge || license?.aex_bridge || {};
   const member = license?.member || license?.appMember || license?.app_member || {};
   const organization = license?.organization || license?.org || {};
-  const bridgeToken = String(
-    license?.bridgeToken
-      || license?.aexBridgeToken
-      || license?.aex_bridge_token
-      || bridge?.token
-      || "",
-  ).trim();
-  const bridgeTokenExpiresAt = String(
-    license?.bridgeTokenExpiresAt
-      || license?.aexBridgeTokenExpiresAt
-      || license?.aex_bridge_token_expires_at
-      || bridge?.expiresAt
-      || bridge?.expires_at
-      || timestampToIso(bridge?.exp)
-      || "",
-  ).trim();
   const cepLicenseReceipt = String(
     license?.cepLicenseReceipt
       || license?.cep_license_receipt
@@ -297,8 +278,6 @@ function authFromSession(session, license, fallbackEmail) {
   return {
     accessToken: session.accessToken,
     refreshToken: session.refreshToken,
-    bridgeToken,
-    bridgeTokenExpiresAt,
     cepLicenseReceipt,
     expiresAt,
     email: firstText(member?.email, license?.email, session.email, fallbackEmail),

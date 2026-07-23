@@ -22,11 +22,27 @@ function Write-InstallerLog {
   )
 
   $resolvedLogRoot = Get-InstallerLogRoot $LogRoot
-  New-Item -ItemType Directory -Force -Path $resolvedLogRoot | Out-Null
-  $logFile = Join-Path $resolvedLogRoot "installer.log"
   $line = "{0} {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Message
-  Add-Content -LiteralPath $logFile -Value $line -Encoding UTF8
+  try {
+    New-Item -ItemType Directory -Force -Path $resolvedLogRoot | Out-Null
+    $logFile = Join-Path $resolvedLogRoot "installer.log"
+    Add-Content -LiteralPath $logFile -Value $line -Encoding UTF8
+  } catch {
+    $fallbackLogRoot = Join-Path $env:TEMP "Arizona Installer\logs"
+    if ($resolvedLogRoot -ne $fallbackLogRoot) {
+      try {
+        New-Item -ItemType Directory -Force -Path $fallbackLogRoot | Out-Null
+        Add-Content -LiteralPath (Join-Path $fallbackLogRoot "installer.log") -Value $line -Encoding UTF8
+      } catch {
+        # Logging must never make install/release validation fail.
+      }
+    }
+  }
   Write-Host $Message
+}
+
+function Test-AfterEffectsRunning {
+  return $null -ne (Get-Process -Name "AfterFX" -ErrorAction SilentlyContinue | Select-Object -First 1)
 }
 
 function Get-FullPath {
@@ -111,7 +127,15 @@ function New-BackupPath {
   $name = Split-Path -Leaf $OriginalPath
   $targetRoot = Join-Path $BackupRoot $stamp
   New-Item -ItemType Directory -Force -Path $targetRoot | Out-Null
-  return (Join-Path $targetRoot $name)
+  $backupPath = Join-Path $targetRoot $name
+  if ($null -ne (Get-PathItem $backupPath)) {
+    $baseName = [System.IO.Path]::GetFileNameWithoutExtension($name)
+    $extension = [System.IO.Path]::GetExtension($name)
+    $uniqueName = "{0}-{1}{2}" -f $baseName, [guid]::NewGuid().ToString("N"), $extension
+    $backupPath = Join-Path $targetRoot $uniqueName
+  }
+
+  return $backupPath
 }
 
 function Move-ToBackup {
@@ -145,6 +169,103 @@ function Copy-DirectoryContents {
   }
 }
 
+function Write-JsonFileAtomic {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [Parameter(Mandatory = $true)]$Value
+  )
+
+  $fullPath = Get-FullPath $Path
+  $parent = Split-Path -Parent $fullPath
+  New-Item -ItemType Directory -Force -Path $parent | Out-Null
+
+  $temporaryPath = "$fullPath.tmp"
+  try {
+    $Value |
+      ConvertTo-Json -Depth 8 |
+      Set-Content -LiteralPath $temporaryPath -Encoding UTF8
+    Move-Item -LiteralPath $temporaryPath -Destination $fullPath -Force
+  } finally {
+    if (Test-Path -LiteralPath $temporaryPath) {
+      Remove-Item -LiteralPath $temporaryPath -Force
+    }
+  }
+}
+
+function Get-PathItem {
+  param([Parameter(Mandatory = $true)][string]$Path)
+
+  return Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+}
+
+function Assert-ArizonaCepPath {
+  param([Parameter(Mandatory = $true)][string]$Path)
+
+  $fullPath = Get-FullPath $Path
+  if ((Split-Path -Leaf $fullPath) -ne "com.arizona-carrefour.cep") {
+    throw "CEP path does not have the Arizona extension id: $fullPath"
+  }
+
+  $extensionsRoot = Split-Path -Parent $fullPath
+  $cepRoot = Split-Path -Parent $extensionsRoot
+  $adobeRoot = Split-Path -Parent $cepRoot
+  if ((Split-Path -Leaf $extensionsRoot) -ne "extensions" -or
+      (Split-Path -Leaf $cepRoot) -ne "CEP" -or
+      (Split-Path -Leaf $adobeRoot) -ne "Adobe") {
+    throw "CEP path is outside an Adobe CEP extensions directory: $fullPath"
+  }
+
+  return $extensionsRoot
+}
+
+function Assert-ArizonaAexPath {
+  param([Parameter(Mandatory = $true)][string]$Path)
+
+  $fullPath = Get-FullPath $Path
+  if ((Split-Path -Leaf $fullPath) -ne "ArizonaBridgeTest.aex") {
+    throw "AEX path does not have the Arizona plugin filename: $fullPath"
+  }
+
+  $arizonaPluginRoot = Split-Path -Parent $fullPath
+  $pluginsRoot = Split-Path -Parent $arizonaPluginRoot
+  if ((Split-Path -Leaf $arizonaPluginRoot) -ne "Arizona" -or
+      (Split-Path -Leaf $pluginsRoot) -ne "Plug-ins") {
+    throw "AEX path is outside an Arizona After Effects plugin directory: $fullPath"
+  }
+
+  return $arizonaPluginRoot
+}
+
+function Remove-DirectoryIfEmptySafe {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [Parameter(Mandatory = $true)][string]$AllowedParent,
+    [string]$Label = "directory"
+  )
+
+  $item = Get-PathItem $Path
+  if ($null -eq $item) {
+    return $false
+  }
+
+  Assert-PathInside -Path $item.FullName -Parent $AllowedParent -Label $Label
+  if (!$item.PSIsContainer) {
+    throw "$Label is not a directory: $($item.FullName)"
+  }
+
+  $children = @(Get-ChildItem -LiteralPath $item.FullName -Force -ErrorAction Stop)
+  if ($children.Count -ne 0) {
+    return $false
+  }
+
+  [System.IO.Directory]::Delete($item.FullName, $false)
+  if ($null -ne (Get-PathItem $item.FullName)) {
+    throw "$Label still exists after removal: $($item.FullName)"
+  }
+
+  return $true
+}
+
 function Remove-PathSafe {
   param(
     [Parameter(Mandatory = $true)][string]$Path,
@@ -152,10 +273,22 @@ function Remove-PathSafe {
     [string]$Label = "path"
   )
 
-  if (!(Test-Path -LiteralPath $Path)) {
+  $item = Get-PathItem $Path
+  if ($null -eq $item) {
     return
   }
 
-  Assert-PathInside -Path $Path -Parent $AllowedParent -Label $Label
-  Remove-Item -LiteralPath $Path -Recurse -Force
+  Assert-PathInside -Path $item.FullName -Parent $AllowedParent -Label $Label
+
+  $isReparsePoint = ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+  if ($isReparsePoint -and $item.PSIsContainer) {
+    # Never recurse through a CEP development junction: unlink only the junction itself.
+    [System.IO.Directory]::Delete($item.FullName, $false)
+  } else {
+    Remove-Item -LiteralPath $item.FullName -Recurse -Force
+  }
+
+  if ($null -ne (Get-PathItem $item.FullName)) {
+    throw "$Label still exists after removal: $($item.FullName)"
+  }
 }

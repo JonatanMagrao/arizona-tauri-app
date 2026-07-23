@@ -1,5 +1,4 @@
 param(
-  [switch]$SkipAex,
   [switch]$SkipInstallerBuild
 )
 
@@ -23,13 +22,6 @@ function Invoke-RepoCommand {
 
 Invoke-RepoCommand @("npm", "run", "license:check")
 Invoke-RepoCommand @("npm", "run", "release:cep")
-
-if (!$SkipAex) {
-  & "$PSScriptRoot\build-aex-release.ps1" -RepoRoot $repoRoot
-  if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE
-  }
-}
 
 & "$PSScriptRoot\collect-artifacts.ps1" -RepoRoot $repoRoot
 if ($LASTEXITCODE -ne 0) {

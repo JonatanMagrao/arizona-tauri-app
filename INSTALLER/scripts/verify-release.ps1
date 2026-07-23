@@ -9,13 +9,62 @@ $repoRoot = Get-FullPath (Join-Path $PSScriptRoot "..\..")
 $tauriConfigPath = Join-Path $repoRoot "src-tauri\tauri.conf.json"
 $hooksPath = Join-Path $repoRoot "INSTALLER\nsis\hooks.nsh"
 $payloadRoot = Join-Path $repoRoot "INSTALLER\payload"
+$embeddedScriptPath = Join-Path $repoRoot "src-tauri\src\after_effects\arizona_actions.jsx"
+$afterEffectsModulePath = Join-Path $repoRoot "src-tauri\src\after_effects.rs"
 
 if (!(Test-Path -LiteralPath $tauriConfigPath -PathType Leaf)) {
   throw "Tauri config not found: $tauriConfigPath"
 }
-
 if (!(Test-Path -LiteralPath $hooksPath -PathType Leaf)) {
   throw "NSIS hooks file not found: $hooksPath"
+}
+if (!(Test-Path -LiteralPath $embeddedScriptPath -PathType Leaf)) {
+  throw "Embedded After Effects JSX not found: $embeddedScriptPath"
+}
+if (!(Test-Path -LiteralPath $afterEffectsModulePath -PathType Leaf)) {
+  throw "Tauri After Effects runner not found: $afterEffectsModulePath"
+}
+if (Test-Path -LiteralPath (Join-Path $repoRoot "src-tauri\src\aegp_bridge.rs")) {
+  throw "The retired AEX named-pipe bridge must not be part of the Tauri source."
+}
+
+$afterEffectsModule = Get-Content -LiteralPath $afterEffectsModulePath -Raw
+if (!$afterEffectsModule.Contains('include_str!("after_effects/arizona_actions.jsx")') -or
+    !$afterEffectsModule.Contains('.arg("-r")')) {
+  throw "The Tauri After Effects runner must embed the JSX and execute it with AfterFX -r."
+}
+
+$hooks = Get-Content -LiteralPath $hooksPath -Raw
+foreach ($requiredHookText in @(
+  "NSIS_HOOK_POSTINSTALL",
+  "NSIS_HOOK_PREUNINSTALL",
+  '!define ARIZONA_INSTALLER_ROOT "$INSTDIR\installer"',
+  '!define ARIZONA_PAYLOAD_ROOT "$INSTDIR\installer\payload"',
+  '!define ARIZONA_SCRIPT_ROOT "$INSTDIR\installer\scripts"',
+  "--release-device-for-uninstall",
+  "--clear-local-auth-for-uninstall",
+  "nsExec::ExecToStack",
+  "-WindowStyle Hidden",
+  "Online device release was unavailable",
+  'DeleteRegKey HKLM "Software\Classes\arizona"',
+  "-PreflightOnly",
+  "uninstall-adobe-assets.ps1",
+  "arizona_uninstall_adobe_abort"
+)) {
+  if (!$hooks.Contains($requiredHookText)) {
+    throw "NSIS hooks are missing required install/uninstall guard: $requiredHookText"
+  }
+}
+
+if ($hooks.Contains("ExecWait") -or
+    $hooks.Contains("MB_ABORTRETRYIGNORE") -or
+    $hooks.Contains("arizona_release_device_retry")) {
+  throw "NSIS hooks must run helpers invisibly and must not block uninstall on online device release."
+}
+if ($hooks.Contains("ARIZONA_PROTOCOL") -or
+    $hooks.Contains("WriteRegStr") -or
+    $hooks.Contains("URL Protocol")) {
+  throw "The retired arizona:// deep-link protocol must not be registered by NSIS."
 }
 
 $tauriConfig = Get-Content -LiteralPath $tauriConfigPath -Raw | ConvertFrom-Json
@@ -23,11 +72,9 @@ $nsis = $tauriConfig.bundle.windows.nsis
 if (!$nsis -or $nsis.installerHooks -ne "../INSTALLER/nsis/hooks.nsh") {
   throw "tauri.conf.json does not point to INSTALLER/nsis/hooks.nsh"
 }
-
 if ($tauriConfig.bundle.windows.nsis.installMode -ne "perMachine") {
-  throw "NSIS installMode must be perMachine for AEX installation in Program Files."
+  throw "NSIS installMode must remain perMachine for the official desktop installation."
 }
-
 if ($tauriConfig.bundle.windows.allowDowngrades -ne $false) {
   throw "bundle.windows.allowDowngrades must be false for official releases."
 }
@@ -47,17 +94,47 @@ if (!($resourceNames -contains "../INSTALLER/payload")) {
 
 if ($RequirePayload) {
   $cepPayload = Join-Path $payloadRoot "cep\com.arizona-carrefour.cep"
-  $aexPayload = Join-Path $payloadRoot "aex\ArizonaBridgeTest.aex"
   $manifestPath = Join-Path $payloadRoot "release-manifest.json"
+  $aexPayload = Join-Path $payloadRoot "aex"
 
   if (!(Test-Path -LiteralPath $cepPayload -PathType Container)) {
     throw "CEP payload missing: $cepPayload"
   }
-  if (!(Test-Path -LiteralPath $aexPayload -PathType Leaf)) {
-    throw "AEX payload missing: $aexPayload"
-  }
   if (!(Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
     throw "Release manifest missing: $manifestPath"
+  }
+  if (Test-Path -LiteralPath $aexPayload) {
+    throw "AEX payload directory must not exist in the plugin-free installer: $aexPayload"
+  }
+  $unexpectedPlugins = @(Get-ChildItem -LiteralPath $payloadRoot -Recurse -File -Filter "*.aex" -ErrorAction SilentlyContinue)
+  if ($unexpectedPlugins.Count -gt 0) {
+    throw "The plugin-free installer payload contains an unexpected .aex file."
+  }
+
+  $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+  $packageJson = Get-Content -LiteralPath (Join-Path $repoRoot "package.json") -Raw | ConvertFrom-Json
+  $actualCepFingerprint = Get-DirectoryFingerprint $cepPayload
+
+  if ([int]$manifest.schemaVersion -ne 2) {
+    throw "Unsupported release manifest schema: $($manifest.schemaVersion)"
+  }
+  if ([string]$manifest.appPackageVersion -ne [string]$packageJson.version) {
+    throw "Release manifest appPackageVersion does not match package.json."
+  }
+  if ([string]$manifest.tauriVersion -ne [string]$tauriConfig.version) {
+    throw "Release manifest tauriVersion does not match tauri.conf.json."
+  }
+  if ([string]$manifest.cepExtensionId -ne "com.arizona-carrefour.cep") {
+    throw "Release manifest has an unexpected CEP extension identity."
+  }
+  if ([string]$manifest.cepFingerprint -ne $actualCepFingerprint) {
+    throw "CEP payload fingerprint does not match release manifest."
+  }
+  if ($null -eq $manifest.PSObject.Properties["includesAfterEffectsPlugin"]) {
+    throw "Release manifest must explicitly declare includesAfterEffectsPlugin=false."
+  }
+  if ([bool]$manifest.includesAfterEffectsPlugin) {
+    throw "Release manifest must explicitly declare that no After Effects plugin is included."
   }
 }
 

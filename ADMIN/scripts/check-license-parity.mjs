@@ -1,4 +1,4 @@
-// Health check de paridade do licenciamento (CEP + AEX).
+// Health check de paridade do licenciamento da extensao CEP.
 //
 // Confere se todos os lados usam as mesmas chaves:
 // - env local (chave privada) x manifesto de chaves confiaveis
@@ -6,7 +6,7 @@
 // - manifesto x modulo gerado da extensao (fonte)
 // - manifesto x extensao INSTALADA no Adobe CEP (bundle compilado)
 // - recibo atual em disco (kid conhecido? assinatura confere? expirado?)
-// - env local do bridge AEX x JSON publico versionado
+// - executor de atalhos JSX embutido no Tauri e ausencia de AEX legado instalado
 //
 // O recibo em disco e assinado pelo Supabase remoto, entao ele tambem serve
 // de proxy para detectar secrets remotos fora de sincronia.
@@ -210,70 +210,57 @@ if (!existsSync(receiptPath)) {
   }
 }
 
-console.log("== 6. Bridge AEX ==");
-const aexPrivate = readEnv("AEX_BRIDGE_TOKEN_PRIVATE_KEY_PKCS8_B64");
-const aexKid = readEnv("AEX_BRIDGE_TOKEN_KEY_ID") || "v1";
-if (!aexPrivate) {
-  warn("sem chave privada do bridge AEX no env local (ok se esta maquina nao gerencia secrets).");
+console.log("== 6. Atalhos do After Effects via JSX embutido ==");
+const afterEffectsRunnerPath = resolve(repoRoot, "src-tauri/src/after_effects.rs");
+const embeddedJsxPath = resolve(
+  repoRoot,
+  "src-tauri/src/after_effects/arizona_actions.jsx",
+);
+const retiredBridgePath = resolve(repoRoot, "src-tauri/src/aegp_bridge.rs");
+
+if (!existsSync(afterEffectsRunnerPath) || !existsSync(embeddedJsxPath)) {
+  fail("executor JSX do Tauri ausente ou incompleto.");
 } else {
-  const aexPublic = publicXYFromPrivateB64(aexPrivate);
-  const aexJsonFiles = readdirSync(supabaseDir).filter(
-    (name) => name.startsWith("aex-bridge-token-public-key.") && name.endsWith(".json"),
-  );
-  const matched = aexJsonFiles.some((name) => {
-    const data = JSON.parse(readFileSync(join(supabaseDir, name), "utf8"));
-    return (
-      data.kid === aexKid &&
-      String(data.x).toLowerCase() === aexPublic.x &&
-      String(data.y).toLowerCase() === aexPublic.y
-    );
-  });
-  if (matched) {
-    pass(`env do bridge AEX (kid ${aexKid}) bate com o JSON publico versionado.`);
+  const runner = readFileSync(afterEffectsRunnerPath, "utf8");
+  const script = readFileSync(embeddedJsxPath, "utf8");
+  if (
+    runner.includes('include_str!("after_effects/arizona_actions.jsx")') &&
+    runner.includes('.arg("-r")') &&
+    script.includes("__ARIZONA_ACTION__")
+  ) {
+    pass("Tauri embute o JSX e executa os atalhos com AfterFX -r.");
   } else {
-    fail(`env do bridge AEX (kid ${aexKid}) NAO bate com nenhum aex-bridge-token-public-key.*.json.`);
+    fail("executor JSX do Tauri nao contem o contrato esperado.");
   }
 }
 
-console.log("== 7. Plugin AEX compilado ==");
-// O binario .aex embute a chave publica como string hex (defines de build).
-// Uma build sem chave e com o marcador de dev-token so funciona com
-// `npm run tauri:dev:bridge`; com token real de producao ela recusa tudo.
-const aexBinaries = [
-  resolve(repoRoot, "AE-PLUGIN-ARIZONA/plugin/ArizonaBridgeTest.aex"),
-  ...(() => {
-    const adobeDir = "C:\\Program Files\\Adobe";
-    if (!existsSync(adobeDir)) return [];
-    return readdirSync(adobeDir)
+if (existsSync(retiredBridgePath)) {
+  fail("aegp_bridge.rs ainda existe; o named pipe AEX deveria estar aposentado.");
+}
+
+const adobeDir = "C:\\Program Files\\Adobe";
+const installedLegacyAex = existsSync(adobeDir)
+  ? readdirSync(adobeDir)
       .filter((name) => name.startsWith("Adobe After Effects"))
-      .map((name) => join(adobeDir, name, "Support Files", "Plug-ins", "Arizona", "ArizonaBridgeTest.aex"))
-      .filter((path) => existsSync(path));
-  })(),
-];
-if (aexBinaries.filter(existsSync).length === 0) {
-  warn("nenhum ArizonaBridgeTest.aex encontrado (repo ou After Effects).");
-}
-for (const binaryPath of aexBinaries) {
-  if (!existsSync(binaryPath)) continue;
-  const binaryText = readFileSync(binaryPath, "latin1");
-  const isDevBuild = binaryText.includes("arizona-aex-dev-token");
-  const hasEnvKey =
-    aexPrivate &&
-    (() => {
-      const pub = publicXYFromPrivateB64(aexPrivate);
-      return (
-        binaryText.toLowerCase().includes(pub.x) &&
-        binaryText.toLowerCase().includes(pub.y)
-      );
-    })();
+      .map((name) =>
+        join(
+          adobeDir,
+          name,
+          "Support Files",
+          "Plug-ins",
+          "Arizona",
+          "ArizonaBridgeTest.aex",
+        ),
+      )
+      .filter((path) => existsSync(path))
+  : [];
 
-  if (hasEnvKey) {
-    pass(`${binaryPath}: chave de producao embutida${isDevBuild ? " (mas aceita dev-token — nao distribua)" : ""}.`);
-  } else if (isDevBuild) {
-    warn(`${binaryPath}: build de DESENVOLVIMENTO (sem chave embutida; atalhos so funcionam com tauri:dev:bridge).`);
-  } else {
-    fail(`${binaryPath}: sem chave embutida e sem modo dev — recusa todos os tokens. Recompile com build.ps1 e as chaves do keygen.`);
-  }
+if (installedLegacyAex.length === 0) {
+  pass("nenhum AEX legado do Arizona instalado no After Effects.");
+} else {
+  warn(
+    `AEX legado ainda instalado: ${installedLegacyAex.join(", ")}. O proximo instalador remove esses arquivos com seguranca.`,
+  );
 }
 
 console.log("");

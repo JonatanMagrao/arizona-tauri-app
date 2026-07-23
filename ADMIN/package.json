@@ -7,6 +7,7 @@
     "dev": "vite --host 127.0.0.1 --port 1430",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1 --port 1431",
+    "test": "node --test --test-isolation=none tests/*.test.mjs",
     "license:check": "node scripts/check-license-parity.mjs",
     "license:keygen": "node scripts/generate-license-token-key.mjs",
     "license:keygen:env": "node scripts/generate-license-token-key.mjs --out-env-file supabase/functions/.env.production.local",

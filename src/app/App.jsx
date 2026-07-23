@@ -31,8 +31,7 @@ const TABS = { JOBS: "jobs", LINKS: "links", COPY: "copy" };
 const AUTH_REFRESH_INTERVAL_MS = 30000;
 const TOOLS_POPOVER_GAP_PX = 10;
 const TOOLS_POPOVER_MARGIN_PX = 6;
-const AEGP_SHORTCUT_NOTICE_THROTTLE_MS = 30000;
-const AEGP_BRIDGE_TOKEN_REFRESH_MARGIN_MS = 15000;
+const AFTER_EFFECTS_SHORTCUT_NOTICE_THROTTLE_MS = 30000;
 const AE_OPEN_COOLDOWN_MS = 8000;
 
 const MAIN_CTA_PHRASES = Object.freeze([
@@ -163,7 +162,7 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
   const toolsCloseTimerRef = useRef(null);
   const aeOpenCooldownTimerRef = useRef(null);
   const isOpeningAERef = useRef(false);
-  const lastAegpShortcutNoticeRef = useRef({ key: "", shownAt: 0 });
+  const lastAfterEffectsShortcutNoticeRef = useRef({ key: "", shownAt: 0 });
   const authSessionRef = useRef(authSession);
   const authRefreshInFlightRef = useRef(false);
   const authRefreshPromiseRef = useRef(null);
@@ -171,96 +170,30 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
 
   const showError = (msg) => showToast(msg, "error");
 
-  const syncRuntimeAuthSession = useCallback(async ({ force = false } = {}) => {
-    const currentSession = authSessionRef.current;
-    if (!currentSession?.accessToken) return null;
-
-    const bridgeExpiresAt = Date.parse(currentSession.bridgeTokenExpiresAt || "");
-    const hasFreshBridgeToken = Boolean(currentSession.bridgeToken)
-      && Number.isFinite(bridgeExpiresAt)
-      && bridgeExpiresAt - Date.now() > AEGP_BRIDGE_TOKEN_REFRESH_MARGIN_MS;
-
-    if (!force && hasFreshBridgeToken) {
-      await invokeCommand(commandNames.updateAuthSession, { session: currentSession });
-      return currentSession;
-    }
-
-    if (authRefreshInFlightRef.current && authRefreshPromiseRef.current) {
-      return authRefreshPromiseRef.current;
-    }
-    if (authRefreshInFlightRef.current) return null;
-
-    authRefreshInFlightRef.current = true;
-    authRefreshPromiseRef.current = (async () => {
-      const nextAuth = await validateActiveSession(currentSession, { appVersion: "" });
-      if (!nextAuth) return null;
-
-      const nextSession = authToSession(nextAuth);
-      await invokeCommand(commandNames.updateAuthSession, { session: nextSession });
-      onAuthSessionChange(nextSession);
-      authSessionRef.current = nextSession;
-      return nextSession;
-    })();
-
-    try {
-      return await authRefreshPromiseRef.current;
-    } finally {
-      authRefreshPromiseRef.current = null;
-      authRefreshInFlightRef.current = false;
-    }
-  }, [onAuthSessionChange]);
-
   useEffect(() => {
-    const handleAegpShortcutError = async (event) => {
-      const code = String(event?.detail?.code || "aex_bridge_command_failed");
+    const handleAfterEffectsShortcutError = (event) => {
+      const code = String(event?.detail?.code || "after_effects_command_failed");
       const message = String(
         event?.detail?.message || "Atalho do After bloqueado. Valide a licença novamente no Arizona App."
       );
-      const action = String(event?.detail?.action || "").trim();
-      const isLicenseNotice = code === "aex_bridge_license_required";
-      let refreshError = null;
-
-      if (isLicenseNotice) {
-        const refreshedSession = await syncRuntimeAuthSession({ force: true }).catch((error) => {
-          refreshError = error;
-          return null;
-        });
-
-        if (refreshedSession?.bridgeToken && action) {
-          const retryResult = await invokeAction(
-            commandNames.aegpBridgeActionCommand,
-            { action },
-            "Não foi possível executar o atalho do After."
-          );
-
-          if (retryResult.ok) return;
-
-          refreshError = new Error(retryResult.message || message);
-        } else if (refreshedSession?.bridgeToken) {
-          showToast("Licença do After revalidada.", "success");
-          return;
-        } else if (!refreshError) {
-          refreshError = new Error("Licença revalidada, mas o token do atalho do After não veio do servidor.");
-        }
-      }
 
       const noticeKey = `${code}:${message}`;
       const now = Date.now();
-      const lastNotice = lastAegpShortcutNoticeRef.current;
+      const lastNotice = lastAfterEffectsShortcutNoticeRef.current;
       if (
         lastNotice.key === noticeKey
-        && now - lastNotice.shownAt < AEGP_SHORTCUT_NOTICE_THROTTLE_MS
+        && now - lastNotice.shownAt < AFTER_EFFECTS_SHORTCUT_NOTICE_THROTTLE_MS
       ) {
         return;
       }
 
-      lastAegpShortcutNoticeRef.current = { key: noticeKey, shownAt: now };
-      showToast(refreshError ? authErrorMessage(refreshError) : message, "error");
+      lastAfterEffectsShortcutNoticeRef.current = { key: noticeKey, shownAt: now };
+      showToast(message, "error");
     };
 
-    window.addEventListener("arizona-aegp:shortcut-error", handleAegpShortcutError);
-    return () => window.removeEventListener("arizona-aegp:shortcut-error", handleAegpShortcutError);
-  }, [showToast, syncRuntimeAuthSession]);
+    window.addEventListener("arizona-after-effects:shortcut-error", handleAfterEffectsShortcutError);
+    return () => window.removeEventListener("arizona-after-effects:shortcut-error", handleAfterEffectsShortcutError);
+  }, [showToast]);
 
   useEffect(() => {
     authSessionRef.current = authSession;
@@ -911,8 +844,6 @@ function authSessionChanged(currentSession, nextSession) {
   return [
     "accessToken",
     "refreshToken",
-    "bridgeToken",
-    "bridgeTokenExpiresAt",
     "cepLicenseReceipt",
     "email",
     "memberId",

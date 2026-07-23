@@ -2,9 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 export const commandNames = Object.freeze({
   abrirAe: "abrir_ae",
-  aegpBridgeActionCommand: "aegp_bridge_action_command",
-  aegpBridgeMoveLayersToMarkersCommand: "aegp_bridge_move_layers_to_markers_command",
-  aegpBridgeSendTestCommand: "aegp_bridge_send_test_command",
+  afterEffectsActionCommand: "after_effects_action_command",
   appInfo: "app_info",
   cepBridgeStatus: "cep_bridge_status",
   clearSecureAuth: "clear_secure_auth",
@@ -31,6 +29,7 @@ export const commandNames = Object.freeze({
   importProducts: "import_products",
   importIdenticalMp4NamesJson: "import_identical_mp4_names_json",
   listIdenticalMp4Items: "list_identical_mp4_items",
+  listInstalledAfterEffectsVersions: "list_installed_after_effects_versions",
   loadAppConfig: "load_app_config",
   loadSecureAuth: "load_secure_auth",
   openBitrix: "open_bitrix",
@@ -54,6 +53,7 @@ export const commandNames = Object.freeze({
   restrictAdminSession: "restrict_admin_session",
   saveAppConfig: "save_app_config",
   saveSecureAuth: "save_secure_auth",
+  setAfterShortcutRecording: "set_after_shortcut_recording",
   updateIdenticalMp4NamesJson: "update_identical_mp4_names_json",
   updateAuthSession: "update_auth_session",
 });

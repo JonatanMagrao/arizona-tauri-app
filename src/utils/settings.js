@@ -1,5 +1,5 @@
 export const DEFAULT_SETTINGS = Object.freeze({
-  aeVersion: "2024",
+  aeVersion: "2026",
   moveLayersBackwardShortcut: "Ctrl+Numpad1",
   moveLayersForwardShortcut: "Ctrl+Numpad3",
   moveJumpMarkerShortcut: "Ctrl+Numpad2",

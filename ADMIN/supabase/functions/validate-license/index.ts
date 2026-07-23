@@ -11,6 +11,11 @@ import {
   requirePublishableKey,
 } from "../_shared/supabase.ts";
 import { resolveMaster, resolveMember } from "../_shared/actors.ts";
+import {
+  nextAuthDayStart,
+  normalizeDailyAuthResetHour,
+  serverAuthDay,
+} from "../_shared/auth-cycle.ts";
 import { signAexBridgeToken, signLicenseToken } from "../_shared/license-token.ts";
 
 type ValidateLicenseBody = {
@@ -26,7 +31,6 @@ type ValidateLicenseBody = {
 
 const MAX_CLOCK_BACKWARDS_SECONDS = 300;
 const MAX_CLOCK_SKEW_SECONDS = 300;
-const AUTH_TIME_ZONE = "America/Sao_Paulo";
 const ARIZONA_ORGANIZATION_SLUG = "arizona";
 const AEX_BRIDGE_TOKEN_TTL_SECONDS = 10 * 60;
 
@@ -44,55 +48,6 @@ function endOfLicenseDate(value: unknown): Date | null {
   if (typeof value !== "string" || !value.trim()) return null;
   const date = new Date(`${value.slice(0, 10)}T23:59:59.999Z`);
   return Number.isNaN(date.getTime()) ? null : date;
-}
-
-function zonedParts(value: Date) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: AUTH_TIME_ZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(value);
-  const byType = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-
-  return {
-    year: Number(byType.year),
-    month: Number(byType.month),
-    day: Number(byType.day),
-    hour: Number(byType.hour),
-    minute: Number(byType.minute),
-    second: Number(byType.second),
-  };
-}
-
-function serverAuthDay(value: Date): string {
-  const parts = zonedParts(value);
-  return [
-    String(parts.year).padStart(4, "0"),
-    String(parts.month).padStart(2, "0"),
-    String(parts.day).padStart(2, "0"),
-  ].join("-");
-}
-
-function zonedMidnight(year: number, month: number, day: number): Date {
-  let candidate = new Date(Date.UTC(year, month - 1, day, 3, 0, 0));
-  for (let index = 0; index < 3; index += 1) {
-    const parts = zonedParts(candidate);
-    const observed = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
-    const target = Date.UTC(year, month - 1, day, 0, 0, 0);
-    candidate = new Date(candidate.getTime() + target - observed);
-  }
-  return candidate;
-}
-
-function nextAuthDayStart(value: Date): Date {
-  const parts = zonedParts(value);
-  const nextDate = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + 1, 0, 0, 0));
-  return zonedMidnight(nextDate.getUTCFullYear(), nextDate.getUTCMonth() + 1, nextDate.getUTCDate());
 }
 
 Deno.serve(async (req) => {
@@ -157,7 +112,7 @@ Deno.serve(async (req) => {
     const { data: organization, error: organizationError } = await admin
       .schema("licensing")
       .from("organizations")
-      .select("id,name,status,seats_allowed,license_expires_on")
+      .select("id,name,status,seats_allowed,license_expires_on,daily_auth_reset_hour")
       .eq("id", member.organizationId)
       .maybeSingle();
 
@@ -167,7 +122,8 @@ Deno.serve(async (req) => {
     }
 
     const now = new Date();
-    const authDay = serverAuthDay(now);
+    const dailyAuthResetHour = normalizeDailyAuthResetHour(organization.daily_auth_reset_hour);
+    const authDay = serverAuthDay(now, dailyAuthResetHour);
     const authMethod = cleanString(body.authMethod, 24) === "resume" ? "resume" : "password";
     const licenseExpiresAt = endOfLicenseDate(organization.license_expires_on);
     if (licenseExpiresAt && licenseExpiresAt.getTime() < now.getTime()) {
@@ -254,11 +210,11 @@ Deno.serve(async (req) => {
       return errorResponse("daily_login_required", "Password login is required.", 401);
     }
 
-    if (serverAuthDay(passwordLoginAt) !== authDay) {
+    if (serverAuthDay(passwordLoginAt, dailyAuthResetHour) !== authDay) {
       return errorResponse("daily_login_required", "Password login is required.", 401);
     }
 
-    const sessionExpiresAt = nextAuthDayStart(now);
+    const sessionExpiresAt = nextAuthDayStart(now, dailyAuthResetHour);
     const expiresAt = licenseExpiresAt && licenseExpiresAt.getTime() < sessionExpiresAt.getTime()
       ? licenseExpiresAt
       : sessionExpiresAt;
@@ -346,6 +302,7 @@ Deno.serve(async (req) => {
         name: organization.name,
         seatsAllowed: organization.seats_allowed,
         licenseExpiresOn: organization.license_expires_on,
+        dailyAuthResetHour,
       },
       member: {
         id: member.id,

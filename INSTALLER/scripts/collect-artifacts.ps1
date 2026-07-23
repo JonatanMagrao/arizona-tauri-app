@@ -14,14 +14,8 @@ if ([string]::IsNullOrWhiteSpace($PayloadRoot)) {
 }
 
 $cepDist = Join-Path $RepoRoot "ARIZONA-EXTENSION\dist\cep"
-$aexFile = Join-Path $RepoRoot "AE-PLUGIN-ARIZONA\plugin\ArizonaBridgeTest.aex"
-
 if (!(Test-Path -LiteralPath $cepDist -PathType Container)) {
   throw "CEP build not found: $cepDist. Run npm run release:cep first."
-}
-
-if (!(Test-Path -LiteralPath $aexFile -PathType Leaf)) {
-  throw "AEX build not found: $aexFile. Run npm run release:aex first."
 }
 
 $payloadRootFull = Get-FullPath $PayloadRoot
@@ -37,27 +31,23 @@ foreach ($child in @("cep", "aex", "release-manifest.json")) {
 }
 
 $cepPayload = Join-Path $payloadRootFull "cep\com.arizona-carrefour.cep"
-$aexPayload = Join-Path $payloadRootFull "aex"
 New-Item -ItemType Directory -Force -Path $cepPayload | Out-Null
-New-Item -ItemType Directory -Force -Path $aexPayload | Out-Null
-
 Copy-DirectoryContents -Source $cepDist -Destination $cepPayload
-Copy-Item -LiteralPath $aexFile -Destination (Join-Path $aexPayload "ArizonaBridgeTest.aex") -Force
 
 $packageJson = Get-Content -LiteralPath (Join-Path $RepoRoot "package.json") -Raw | ConvertFrom-Json
 $tauriConfig = Get-Content -LiteralPath (Join-Path $RepoRoot "src-tauri\tauri.conf.json") -Raw | ConvertFrom-Json
-$bridgePublicKey = Get-Content -LiteralPath (Join-Path $RepoRoot "ADMIN\supabase\aex-bridge-token-public-key.v1.json") -Raw | ConvertFrom-Json
 
 $manifest = [pscustomobject]@{
+  schemaVersion = 2
   generatedAt = (Get-Date).ToUniversalTime().ToString("o")
   appPackageVersion = $packageJson.version
   tauriVersion = $tauriConfig.version
+  cepExtensionId = "com.arizona-carrefour.cep"
   cepFingerprint = Get-DirectoryFingerprint $cepPayload
-  aexSha256 = Get-FileSha256 (Join-Path $aexPayload "ArizonaBridgeTest.aex")
-  aexBridgeKeyId = $bridgePublicKey.kid
+  includesAfterEffectsPlugin = $false
   includesAdminApp = $false
 }
 
 $manifestPath = Join-Path $payloadRootFull "release-manifest.json"
-$manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
-Write-InstallerLog "Collected installer payload at $payloadRootFull"
+Write-JsonFileAtomic -Path $manifestPath -Value $manifest
+Write-InstallerLog "Collected CEP-only installer payload at $payloadRootFull"

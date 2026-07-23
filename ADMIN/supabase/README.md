@@ -78,7 +78,6 @@ SOMENTE no primeiro setup de um projeto novo (ou em rotacao planejada — leia
 ```powershell
 cd ADMIN
 npm run license:keygen:env
-npm run bridge:keygen:env
 ```
 
 Os scripts se recusam a sobrescrever chaves existentes sem `--force` e, com
@@ -90,22 +89,17 @@ Os scripts se recusam a sobrescrever chaves existentes sem `--force` e, com
 - grava o PEM publico versionado.
 
 O arquivo `supabase/functions/.env.production.local` e gitignored e guarda a
-chave privada da licenca e a chave privada do bridge AEX.
+chave privada da licenca. Ele ainda pode conter a chave privada do bridge AEX
+legado para compatibilidade temporaria com clientes antigos.
 
-O comando `bridge:keygen:env` tambem escreve
+O comando legado `bridge:keygen:env` escreve
 `supabase/aex-bridge-token-public-key.<kid>.json`, com os campos publicos `x` e
-`y` usados no build do AEX:
-
-```powershell
-$bridgeKey = Get-Content .\supabase\aex-bridge-token-public-key.v1.json | ConvertFrom-Json
-$env:ARIZONA_AEX_JWT_KID = $bridgeKey.kid
-$env:ARIZONA_AEX_JWT_ES256_PUBLIC_X = $bridgeKey.x
-$env:ARIZONA_AEX_JWT_ES256_PUBLIC_Y = $bridgeKey.y
-```
+`y`. O app atual nao usa plugin AEX nem `bridgeToken`; nao rode esse keygen e
+nao apague as chaves antigas sem encerrar formalmente a compatibilidade.
 
 As chaves publicas ficam versionadas; a privada nunca sai dos secrets da Edge
 Function. Depois de gerar/rotacionar chaves, rebuilde e reinstale a extensao
-CEP (e o plugin AEX, se for o caso) e confira com `npm run license:check`.
+CEP e confira com `npm run license:check`.
 
 ## 6. Configurar secrets das Edge Functions
 
@@ -122,6 +116,7 @@ O arquivo de producao local deve conter apenas os secrets de assinatura:
 ```dotenv
 LICENSE_TOKEN_KEY_ID=v1
 LICENSE_TOKEN_PRIVATE_KEY_PKCS8_B64=...
+# Legado opcional durante a migracao:
 AEX_BRIDGE_TOKEN_KEY_ID=v1
 AEX_BRIDGE_TOKEN_PRIVATE_KEY_PKCS8_B64=...
 ```
@@ -140,6 +135,14 @@ Use `--use-api` para empacotar pelo servico do Supabase:
 ```powershell
 cd ADMIN
 npx supabase functions deploy --project-ref <PROJECT_REF> --use-api --no-verify-jwt
+```
+
+O ciclo de desinstalacao do Tauri depende de `app-release-device`. Para publicar
+somente essa funcao, sem alterar secrets ou as demais functions:
+
+```powershell
+cd ADMIN
+npx supabase functions deploy app-release-device --project-ref <PROJECT_REF> --use-api --no-verify-jwt
 ```
 
 As functions validam a publishable key e o JWT do usuario dentro do proprio codigo.
@@ -200,3 +203,17 @@ Cada usuario pode ter apenas um device ativo. O device e registrado
 automaticamente no login/validacao do Tauri. Se o usuario for removido da
 licenca, devices e sessoes ativas sao revogados. Se apenas o device for liberado,
 o usuario continua cadastrado e pode ativar outra maquina.
+
+O painel master permite configurar a hora da renovacao diaria por licenca. O
+campo `licensing.organizations.daily_auth_reset_hour` usa
+`America/Sao_Paulo` e tem padrao `04:00`. Isso controla o corte da validacao
+diaria e do recibo CEP; nao altera a expiracao global do refresh token do
+Supabase. Antes de publicar as functions atualizadas, aplique a migration
+`20260723170000_add_daily_auth_reset_hour.sql`.
+
+Em toda desinstalacao real (mas nao durante update), o Tauri chama
+`app-release-device` com o JWT do proprio usuario. A function revoga apenas os
+devices e sessoes desse membro antes que o NSIS apague a credencial segura.
+Falha de rede ou function indisponivel e registrada como aviso, mas nao bloqueia
+a remocao local. O `install_id` e os demais dados locais so sao apagados quando
+a caixa correspondente do desinstalador estiver marcada.

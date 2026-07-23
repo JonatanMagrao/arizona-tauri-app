@@ -5,6 +5,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import AdminWindow from "../admin/AdminWindow";
 import DuplicateIdenticalModal from "../duplicates/DuplicateIdenticalModal";
 import HistoryWindow from "../history/HistoryWindow";
+import AppDropdown from "../../components/AppDropdown";
 import previewImg from "../../assets/hierarquia_pracas.jpg";
 import { useAutoHideToast } from "../../hooks/useAutoHideToast";
 import { commandNames, invokeAction, invokeCommand } from "../../services/tauriCommands";
@@ -32,7 +33,7 @@ const DEFAULT_SECONDARY_STATE = {
   sessionAuth: null,
 };
 
-const BRIDGE_SHORTCUT_ACTIONS = Object.freeze([
+const AFTER_EFFECTS_SHORTCUT_ACTIONS = Object.freeze([
   {
     field: "moveLayersBackwardShortcut",
     label: "Mover Layers Atrás",
@@ -323,6 +324,8 @@ function SettingsView({ auth, showError, showSuccess }) {
   const [savingShortcutField, setSavingShortcutField] = useState("");
   const [choosingField, setChoosingField] = useState("");
   const [recordingShortcutField, setRecordingShortcutField] = useState("");
+  const [installedAfterEffectsVersions, setInstalledAfterEffectsVersions] = useState([]);
+  const [isShortcutRecordingTransition, setIsShortcutRecordingTransition] = useState(false);
   const persistedSettingsRef = useRef(DEFAULT_SETTINGS);
   const autoSaveTimersRef = useRef({});
   const saveQueueRef = useRef(Promise.resolve());
@@ -330,10 +333,32 @@ function SettingsView({ auth, showError, showSuccess }) {
   useEffect(() => {
     let mounted = true;
 
-    invokeCommand(commandNames.loadAppConfig)
-      .then((config) => {
+    Promise.all([
+      invokeCommand(commandNames.loadAppConfig),
+      invokeCommand(commandNames.listInstalledAfterEffectsVersions),
+    ])
+      .then(async ([config, detectedVersions]) => {
         if (!mounted) return;
-        const normalized = normalizeSettings(config);
+        const versions = [...new Set(
+          (Array.isArray(detectedVersions) ? detectedVersions : [])
+            .map((version) => String(version || "").trim())
+            .filter((version) => /^\d{4}$/.test(version))
+        )].sort((left, right) => Number(right) - Number(left));
+        let normalized = normalizeSettings(config);
+
+        if (versions.length > 0 && !versions.includes(normalized.aeVersion)) {
+          normalized = normalizeSettings({
+            ...normalized,
+            aeVersion: versions[0],
+          });
+          normalized = normalizeSettings(
+            await invokeCommand(commandNames.saveAppConfig, { config: normalized })
+          );
+        }
+
+        if (!mounted) return;
+        persistedSettingsRef.current = normalized;
+        setInstalledAfterEffectsVersions(versions);
         setPersistedSettings(normalized);
         setSettingsDraft(normalized);
         setShortcutDraft(normalized);
@@ -460,32 +485,54 @@ function SettingsView({ auth, showError, showSuccess }) {
     });
   };
 
-  const cancelShortcutRecording = () => {
-    if (recordingShortcutField) {
+  const cancelShortcutRecording = async () => {
+    const field = recordingShortcutField;
+    if (field) {
       setShortcutDraft((config) => ({
         ...config,
-        [recordingShortcutField]: persistedSettings[recordingShortcutField] || "",
+        [field]: persistedSettingsRef.current[field] || "",
       }));
     }
     setRecordingShortcutField("");
+    setIsShortcutRecordingTransition(true);
+    try {
+      await invokeCommand(commandNames.setAfterShortcutRecording, { recording: false });
+    } catch (error) {
+      showError(String(error || "Nao foi possivel restaurar os atalhos do After."));
+    } finally {
+      setIsShortcutRecordingTransition(false);
+    }
   };
 
-  const startShortcutRecording = (field) => {
+  const startShortcutRecording = async (field) => {
+    if (isShortcutRecordingTransition) return;
+
     if (recordingShortcutField === field) {
-      cancelShortcutRecording();
+      await cancelShortcutRecording();
       return;
     }
 
-    setShortcutDraft((config) => ({
-      ...config,
-      [field]: persistedSettings[field] || config[field] || "",
-    }));
-    setRecordingShortcutField(field);
+    setIsShortcutRecordingTransition(true);
+    try {
+      await invokeCommand(commandNames.setAfterShortcutRecording, { recording: true });
+      setShortcutDraft((config) => ({
+        ...config,
+        [field]: persistedSettingsRef.current[field] || config[field] || "",
+      }));
+      setRecordingShortcutField(field);
+    } catch (error) {
+      showError(String(error || "Nao foi possivel suspender os atalhos do After."));
+    } finally {
+      setIsShortcutRecordingTransition(false);
+    }
   };
 
   const saveShortcut = async (field, shortcut) => {
-    const previousShortcut = persistedSettings[field] || shortcutDraft[field] || "";
-    const nextConfig = normalizeSettings({ ...persistedSettings, [field]: shortcut });
+    const previousShortcut = persistedSettingsRef.current[field] || shortcutDraft[field] || "";
+    const nextConfig = normalizeSettings({
+      ...persistedSettingsRef.current,
+      [field]: shortcut,
+    });
 
     setShortcutDraft((config) => ({ ...config, [field]: shortcut }));
     setRecordingShortcutField("");
@@ -496,6 +543,7 @@ function SettingsView({ auth, showError, showSuccess }) {
         config: nextConfig,
       });
       const normalized = normalizeSettings(saved);
+      persistedSettingsRef.current = normalized;
       setPersistedSettings(normalized);
       setShortcutDraft(normalized);
       showSuccess("Atalho salvo.");
@@ -503,6 +551,11 @@ function SettingsView({ auth, showError, showSuccess }) {
       setShortcutDraft((config) => ({ ...config, [field]: previousShortcut }));
       showError(String(error || "NÃ£o foi possÃ­vel salvar o atalho."));
     } finally {
+      try {
+        await invokeCommand(commandNames.setAfterShortcutRecording, { recording: false });
+      } catch (error) {
+        showError(String(error || "Nao foi possivel restaurar os atalhos do After."));
+      }
       setSavingShortcutField("");
     }
   };
@@ -510,11 +563,16 @@ function SettingsView({ auth, showError, showSuccess }) {
   useEffect(() => {
     if (!recordingShortcutField) return undefined;
 
+    const pressedKeys = new Set();
+    let pendingShortcut = "";
+
     const handleShortcutKeyDown = (event) => {
       event.preventDefault();
       event.stopPropagation();
+      pressedKeys.add(String(event.code || event.key || ""));
 
       if (event.key === "Escape") {
+        pendingShortcut = "";
         cancelShortcutRecording();
         return;
       }
@@ -522,11 +580,37 @@ function SettingsView({ auth, showError, showSuccess }) {
       const shortcut = shortcutFromKeyboardEvent(event);
       if (!shortcut) return;
 
+      pendingShortcut = shortcut;
+      setShortcutDraft((config) => ({
+        ...config,
+        [recordingShortcutField]: shortcut,
+      }));
+    };
+
+    const handleShortcutKeyUp = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      pressedKeys.delete(String(event.code || event.key || ""));
+
+      if (!pendingShortcut || pressedKeys.size > 0) return;
+      const shortcut = pendingShortcut;
+      pendingShortcut = "";
       saveShortcut(recordingShortcutField, shortcut);
     };
 
+    const handleWindowBlur = () => {
+      pendingShortcut = "";
+      cancelShortcutRecording();
+    };
+
     window.addEventListener("keydown", handleShortcutKeyDown, { capture: true });
-    return () => window.removeEventListener("keydown", handleShortcutKeyDown, { capture: true });
+    window.addEventListener("keyup", handleShortcutKeyUp, { capture: true });
+    window.addEventListener("blur", handleWindowBlur);
+    return () => {
+      window.removeEventListener("keydown", handleShortcutKeyDown, { capture: true });
+      window.removeEventListener("keyup", handleShortcutKeyUp, { capture: true });
+      window.removeEventListener("blur", handleWindowBlur);
+    };
   }, [recordingShortcutField]);
 
   const chooseFolder = async (field, title) => {
@@ -605,7 +689,11 @@ function SettingsView({ auth, showError, showSuccess }) {
     return () => window.removeEventListener("keydown", handleEscape);
   }, [isReleaseConfirmOpen, isReleasingDevice]);
 
-  const busy = isLoading || isReleasingDevice || Boolean(choosingField) || Boolean(savingShortcutField);
+  const busy = isLoading
+    || isReleasingDevice
+    || isShortcutRecordingTransition
+    || Boolean(choosingField)
+    || Boolean(savingShortcutField);
   const generalActionBusy = busy || isSaving;
   const shortcutsBusy = busy;
   const currentYear = String(new Date().getFullYear());
@@ -692,17 +780,22 @@ function SettingsView({ auth, showError, showSuccess }) {
 
           <label className="settings-field">
             <span>Vers&atilde;o After Effects</span>
-            <input
-              className="input settings-short-input"
-              type="text"
+            <AppDropdown
+              className="settings-version-dropdown"
               value={settingsDraft.aeVersion}
-              onChange={(event) => updateNumericSetting("aeVersion", event.target.value, "After Effects Versão salvo.")}
-              placeholder="2024"
-              autoComplete="off"
-              inputMode="numeric"
-              maxLength={4}
-              pattern="\d{4}"
-              disabled={isLoading || isReleasingDevice}
+              onChange={(version) => updateNumericSetting("aeVersion", version, "Versão do After Effects salva.")}
+              disabled={generalActionBusy || installedAfterEffectsVersions.length === 0}
+              options={installedAfterEffectsVersions.length > 0
+                ? installedAfterEffectsVersions.map((version) => ({
+                    value: version,
+                    label: version,
+                  }))
+                : [{
+                    value: settingsDraft.aeVersion,
+                    label: "Nenhuma versão encontrada",
+                    disabled: true,
+                  }]}
+              ariaLabel="Versão do After Effects"
             />
           </label>
 
@@ -739,9 +832,9 @@ function SettingsView({ auth, showError, showSuccess }) {
           )}
 
           {activeSettingsTab === SETTINGS_TABS.AFTER_SHORTCUTS && (
-          <section className="settings-bridge-shortcuts settings-tab-panel" aria-label="Atalhos After" role="tabpanel">
+          <section className="settings-after-shortcuts settings-tab-panel" aria-label="Atalhos After" role="tabpanel">
             <h2>Mover layers para markers</h2>
-            {BRIDGE_SHORTCUT_ACTIONS.map((action) => {
+            {AFTER_EFFECTS_SHORTCUT_ACTIONS.map((action) => {
               const isRecording = recordingShortcutField === action.field;
               const isSavingShortcut = savingShortcutField === action.field;
               return (

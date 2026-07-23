@@ -4,11 +4,16 @@ import { adminConfig } from "./config.js";
 const storageKey = `arizona-admin-session:${adminConfig.projectRef}`;
 const flashKey = `arizona-admin-flash:${adminConfig.projectRef}`;
 const arizonaDomain = "arizona.global";
+const dailyAuthResetHourOptions = Array.from({ length: 24 }, (_, hour) => ({
+  value: String(hour),
+  label: `${String(hour).padStart(2, "0")}:00`,
+}));
 
 function createDefaultLicenseDraft() {
   return {
     users: [createUser()],
     seatsAllowed: "1",
+    dailyAuthResetHour: "4",
     licenseExpiresOn: defaultExpiresOnBr(),
     licenseIsIndefinite: false,
   };
@@ -176,6 +181,7 @@ export default function AdminApp() {
     const payload = {
       users,
       seatsAllowed: Number(licenseDraft.seatsAllowed),
+      dailyAuthResetHour: Number(licenseDraft.dailyAuthResetHour),
       licenseExpiresOn,
       licenseIsIndefinite: Boolean(licenseDraft.licenseIsIndefinite),
     };
@@ -197,6 +203,15 @@ export default function AdminApp() {
 
     if (!Number.isInteger(payload.seatsAllowed) || payload.seatsAllowed < 1) {
       showToast("Seats precisa ser pelo menos 1.", "error");
+      return;
+    }
+
+    if (
+      !Number.isInteger(payload.dailyAuthResetHour)
+      || payload.dailyAuthResetHour < 0
+      || payload.dailyAuthResetHour > 23
+    ) {
+      showToast("Escolha um horario valido para a renovacao diaria.", "error");
       return;
     }
 
@@ -415,6 +430,7 @@ export default function AdminApp() {
     setLicenseDraft({
       users: resizeUsers(users.length ? users : [createUser()], seats),
       seatsAllowed: String(seats),
+      dailyAuthResetHour: String(data.organization?.daily_auth_reset_hour ?? 4),
       licenseExpiresOn: data.organization?.license_expires_on
         ? formatLicenseDate(data.organization.license_expires_on)
         : defaultExpiresOnBr(),
@@ -500,6 +516,19 @@ export default function AdminApp() {
                     value={licenseDraft.seatsAllowed}
                     onChange={(event) => updateSeatsAllowed(event.target.value)}
                   />
+                </label>
+                <label className="field field--reset-hour">
+                  <span>Renovacao diaria</span>
+                  <select
+                    value={licenseDraft.dailyAuthResetHour}
+                    onChange={(event) => updateLicenseDraft("dailyAuthResetHour", event.target.value)}
+                  >
+                    {dailyAuthResetHourOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
                 </label>
                 <label className="field field--date">
                   <span>Data limite</span>
@@ -892,6 +921,7 @@ function errorMessage(error) {
   if (code === "missing_admin_name") return "Informe o nome do usuario.";
   if (code === "invalid_admin_email") return "Informe um email de usuario valido.";
   if (code === "invalid_license_expires_on") return "Informe uma data limite valida.";
+  if (code === "invalid_daily_auth_reset_hour") return "Escolha um horario valido para a renovacao diaria.";
   if (code === "license_expired") return "Licenca expirada.";
   if (code === "device_limit_reached") return "Usuario ja possui uma maquina ativa. Libere o device antes de usar outra.";
   if (code === "device_not_active") return "Device bloqueado. Libere ou cadastre uma nova maquina.";

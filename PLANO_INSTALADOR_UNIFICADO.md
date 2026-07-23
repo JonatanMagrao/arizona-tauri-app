@@ -1,64 +1,60 @@
-﻿# Falta para o build oficial
+# Falta para o build oficial
 
-Este checklist substitui o plano inicial do instalador. A arquitetura e os scripts base ja estao em `INSTALLER/README.md`; este arquivo registra apenas o que ainda falta para gerar e validar o instalador oficial.
+## Já preparado
 
-## Ja preparado
+- Instalador NSIS do Tauri com hooks de instalação/desinstalação.
+- Payload schema 2 contendo apenas CEP, sem AEX.
+- Atalhos do After executados por ExtendScript embutido no Tauri.
+- Validação que rejeita qualquer `.aex` no payload.
+- Instalação CEP com fingerprint e estado persistido.
+- Upgrade/desinstalação que remove com segurança o AEX legado sem criar pastas
+  de plugin.
+- Teste de ciclo de vida com After Effects 2025/2026, arquivo alheio e junction.
+- Liberação de device em toda desinstalação real, sem bloquear a remoção
+  quando a rede estiver indisponível.
+- Execução invisível dos auxiliares por `nsExec`, sem janela de PowerShell.
 
-- `INSTALLER/` com scripts, payload ignorado pelo Git e hooks NSIS.
-- `src-tauri/tauri.conf.json` apontando para `INSTALLER/nsis/hooks.nsh`.
-- `package.json` com comandos `release:*`.
-- Hook NSIS para registrar/remover `arizona://`.
-- Scripts para detectar After Effects, instalar/remover CEP e AEX, coletar payload e validar o scaffold.
-- `npm run release:check` validando paridade de licenca e configuracao base.
+O instalador final inclui Tauri App, extensão CEP e integrações Windows. O Admin
+e o plugin AEX não entram no pacote.
 
-O instalador final inclui Tauri App, extensao CEP, plugin AEX e integracoes do Windows. O Admin nao entra no instalador.
-
-## Obrigatorio antes do release real
+## Obrigatório antes do release real
 
 - Definir/comprar o certificado real de code signing.
 - Configurar assinatura do `arizona-app.exe` e do instalador.
-- Gerar o AEX em `Release` com `ARIZONA_TAURI_CERT_SHA256`.
-- Confirmar que o AEX Release embute a chave publica de bridge correta.
-- Rodar `npm run release:collect` com CEP e AEX oficiais.
+- Rodar `npm run release:cep`.
+- Rodar `npm run release:collect`.
+- Confirmar que `INSTALLER/payload` não contém pasta `aex` nem arquivo `.aex`.
 - Gerar o instalador com `npm run release:installer` ou `npm run release:all`.
+- Fazer QA do CEP e dos seis atalhos JSX em máquina/VM limpa.
 
-## Deep Link
+## CEP e migração do AEX
 
-O NSIS ja fica preparado para registrar e remover `arizona://`.
+- Validar se a instalação CEP elevada resolve o perfil correto do usuário.
+- Testar upgrade com CEP antiga e junction de desenvolvimento.
+- Testar upgrade de máquina que ainda tenha `ArizonaBridgeTest.aex`.
+- Confirmar que nenhuma versão do After ganha `Plug-ins\Arizona`.
+- Confirmar que arquivo alheio dentro de uma pasta `Arizona` é preservado.
 
-Ainda falta implementar no Tauri o tratamento do argumento recebido pelo app, se o deep link precisar fazer algo alem de abrir o Arizona App.
+## QA mínimo
 
-## CEP e AEX
+- Máquina limpa sem After Effects.
+- After Effects 2025.
+- After Effects 2026.
+- Mais de uma versão instalada.
+- CEP antiga.
+- AEX legado instalado.
+- Sem permissão admin.
+- Upgrade da mesma versão e de versão anterior.
+- Uninstall preservando dados.
+- Uninstall removendo dados e liberando device.
 
-- Validar se a instalacao CEP via instalador elevado cai no usuario correto.
-- Confirmar se a distribuicao final da CEP sera pasta direta, ZIP ou ZXP.
-- Testar upgrade quando existir CEP antiga ou junction de desenvolvimento.
-- Testar instalacao do AEX em todas as versoes do After Effects instaladas.
-- Testar uninstall com After Effects aberto e fechado.
-
-## QA minimo
-
-- Maquina limpa sem After Effects.
-- Maquina com After Effects 2024.
-- Maquina com After Effects 2025.
-- Maquina com After Effects 2026.
-- Maquina com mais de uma versao do After.
-- Maquina com CEP/AEX antigo.
-- Maquina sem permissao admin.
-- Upgrade da mesma versao.
-- Upgrade de versao anterior.
-- Uninstall preservando dados do usuario.
-- Uninstall removendo dados do usuario.
-
-## Comandos uteis
+## Comandos
 
 ```powershell
 npm run release:check
+npm run installer:test
 npm run release:cep
-npm run release:aex
 npm run release:collect
 npm run release:installer
 npm run release:all
 ```
-
-`release:check` deve passar antes de qualquer tentativa de build oficial.

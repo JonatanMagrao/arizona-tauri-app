@@ -35,8 +35,8 @@ const config: CEP_Config = {
     },
   ],
   build: {
-    jsxBin: "off",
-    sourceMap: true,
+    jsxBin: "replace",
+    sourceMap: false,
   },
   zxp: {
     country: "US",
@@ -49,7 +49,7 @@ const config: CEP_Config = {
     ],
     allowSkipTSA: false,
     sourceMap: false,
-    jsxBin: "off",
+    jsxBin: "replace",
   },
   installModules: [],
   copyAssets: [],

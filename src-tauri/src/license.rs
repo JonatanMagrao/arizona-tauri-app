@@ -2,7 +2,6 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use serde::Serialize;
 
 pub const AE_PANEL_FEATURE: &str = "ae_panel";
-pub const AE_BRIDGE_FEATURE: &str = "ae_bridge";
 
 #[derive(Clone, Debug, Default)]
 pub struct LicenseInput {
@@ -73,7 +72,7 @@ impl LicenseStatus {
 
         let licensed = reason == "valid";
         let allowed_features = if licensed {
-            vec![AE_PANEL_FEATURE.to_string(), AE_BRIDGE_FEATURE.to_string()]
+            vec![AE_PANEL_FEATURE.to_string()]
         } else {
             Vec::new()
         };

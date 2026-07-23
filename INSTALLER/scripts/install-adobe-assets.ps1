@@ -3,7 +3,8 @@ param(
   [string]$InstallDir = "",
   [string]$CepExtensionsRoot = "",
   [string]$LogRoot = "",
-  [switch]$SkipAex
+  [string]$StatePath = "",
+  [string[]]$AdobeRoots = @()
 )
 
 . "$PSScriptRoot\common.ps1"
@@ -11,8 +12,103 @@ param(
 $logRoot = Get-InstallerLogRoot $LogRoot
 $payloadRootFull = Get-FullPath $PayloadRoot
 
+trap {
+  Write-InstallerLog "ERROR installing Adobe assets: $($_.Exception.Message)" $logRoot
+  Write-Error $_
+  exit 1
+}
+
 if (!(Test-Path -LiteralPath $payloadRootFull -PathType Container)) {
   throw "Installer payload not found: $payloadRootFull"
+}
+
+if ([string]::IsNullOrWhiteSpace($StatePath)) {
+  if ([string]::IsNullOrWhiteSpace($InstallDir)) {
+    throw "InstallDir or StatePath is required to persist installed asset paths."
+  }
+  $StatePath = Join-Path $InstallDir "installer\installed-assets.json"
+}
+$statePathFull = Get-FullPath $StatePath
+
+$manifestPath = Join-Path $payloadRootFull "release-manifest.json"
+if (!(Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+  throw "Installer release manifest not found: $manifestPath"
+}
+$manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+if ([int]$manifest.schemaVersion -ne 2 -or
+    [string]$manifest.cepExtensionId -ne "com.arizona-carrefour.cep" -or
+    $null -eq $manifest.PSObject.Properties["includesAfterEffectsPlugin"] -or
+    [bool]$manifest.includesAfterEffectsPlugin) {
+  throw "Installer release manifest must describe the plugin-free CEP payload."
+}
+
+if (![string]::IsNullOrWhiteSpace($InstallDir)) {
+  Assert-PathInside -Path $statePathFull -Parent $InstallDir -Label "installed asset state"
+}
+
+$cepSource = Join-Path $payloadRootFull "cep\com.arizona-carrefour.cep"
+if (!(Test-Path -LiteralPath $cepSource -PathType Container)) {
+  throw "CEP payload not found: $cepSource"
+}
+$cepSourceFingerprint = Get-DirectoryFingerprint $cepSource
+if ([string]::IsNullOrWhiteSpace($cepSourceFingerprint) -or
+    $cepSourceFingerprint -ne [string]$manifest.cepFingerprint) {
+  throw "CEP payload fingerprint does not match release-manifest.json."
+}
+
+if (Test-Path -LiteralPath (Join-Path $payloadRootFull "aex")) {
+  throw "The plugin-free installer must not contain an AEX payload directory."
+}
+
+$legacyAexTargets = @()
+if (Test-Path -LiteralPath $statePathFull -PathType Leaf) {
+  try {
+    $previousState = Get-Content -LiteralPath $statePathFull -Raw | ConvertFrom-Json
+    if ([int]$previousState.schemaVersion -eq 1 -and $null -ne $previousState.aex) {
+      foreach ($entry in @($previousState.aex)) {
+        if (![string]::IsNullOrWhiteSpace([string]$entry.path)) {
+          $legacyAexTargets += [string]$entry.path
+        }
+      }
+    }
+  } catch {
+    Write-InstallerLog "Previous install state could not be read; legacy AEX discovery will be used." $logRoot
+  }
+}
+
+if ($AdobeRoots.Count -gt 0) {
+  $afterInstallationsJson = & "$PSScriptRoot\detect-after-effects.ps1" -Json -AdobeRoots $AdobeRoots -IncludeArizonaPluginOnly
+} else {
+  $afterInstallationsJson = & "$PSScriptRoot\detect-after-effects.ps1" -Json -IncludeArizonaPluginOnly
+}
+$afterInstallations = $afterInstallationsJson | ConvertFrom-Json
+foreach ($installation in @($afterInstallations)) {
+  if ($null -ne $installation -and ![string]::IsNullOrWhiteSpace([string]$installation.pluginPath)) {
+    $legacyAexTargets += [string]$installation.pluginPath
+  }
+}
+$legacyAexTargets = @($legacyAexTargets | Sort-Object -Unique)
+$presentLegacyAexTargets = @($legacyAexTargets | Where-Object { $null -ne (Get-PathItem $_) })
+
+if ($presentLegacyAexTargets.Count -gt 0 -and (Test-AfterEffectsRunning)) {
+  Write-InstallerLog "After Effects is running and a legacy Arizona AEX must be removed before upgrade." $logRoot
+  exit 20
+}
+
+foreach ($pluginPath in $legacyAexTargets) {
+  $pluginDir = Assert-ArizonaAexPath $pluginPath
+  $pluginsRoot = Split-Path -Parent $pluginDir
+  $aexWasPresent = $null -ne (Get-PathItem $pluginPath)
+  Remove-PathSafe -Path $pluginPath -AllowedParent $pluginDir -Label "legacy Arizona AEX plugin"
+  if ($aexWasPresent) {
+    Write-InstallerLog "Removed legacy AEX plugin from $pluginPath" $logRoot
+  }
+
+  if (Remove-DirectoryIfEmptySafe -Path $pluginDir -AllowedParent $pluginsRoot -Label "legacy Arizona AEX directory") {
+    Write-InstallerLog "Removed empty legacy Arizona plugin directory from $pluginDir" $logRoot
+  } elseif ($null -ne (Get-PathItem $pluginDir)) {
+    Write-InstallerLog "Preserved non-empty legacy Arizona plugin directory at $pluginDir" $logRoot
+  }
 }
 
 if ([string]::IsNullOrWhiteSpace($CepExtensionsRoot)) {
@@ -22,77 +118,53 @@ if ([string]::IsNullOrWhiteSpace($CepExtensionsRoot)) {
   $CepExtensionsRoot = Join-Path $env:APPDATA "Adobe\CEP\extensions"
 }
 
-Write-InstallerLog "Installing Adobe assets from $payloadRootFull" $logRoot
+Write-InstallerLog "Installing Arizona CEP extension from $payloadRootFull" $logRoot
 
-$cepSource = Join-Path $payloadRootFull "cep\com.arizona-carrefour.cep"
 $cepDestination = Join-Path $CepExtensionsRoot "com.arizona-carrefour.cep"
+$cepExtensionsRootFull = Assert-ArizonaCepPath $cepDestination
+$cepBackup = ""
 
-if (Test-Path -LiteralPath $cepSource -PathType Container) {
+try {
   New-Item -ItemType Directory -Force -Path $CepExtensionsRoot | Out-Null
 
-  $sourceFingerprint = Get-DirectoryFingerprint $cepSource
   $destinationFingerprint = Get-DirectoryFingerprint $cepDestination
-  if ($sourceFingerprint -and $sourceFingerprint -eq $destinationFingerprint) {
+  if ($cepSourceFingerprint -eq $destinationFingerprint) {
     Write-InstallerLog "CEP extension already installed with matching fingerprint." $logRoot
   } else {
-    if (Test-Path -LiteralPath $cepDestination) {
-      $backup = Move-ToBackup -Path $cepDestination
-      Write-InstallerLog "Backed up existing CEP extension to $backup" $logRoot
+    if ($null -ne (Get-PathItem $cepDestination)) {
+      $cepBackup = Move-ToBackup -Path $cepDestination
+      Write-InstallerLog "Backed up existing CEP extension to $cepBackup" $logRoot
     }
     Copy-DirectoryContents -Source $cepSource -Destination $cepDestination
+    if ((Get-DirectoryFingerprint $cepDestination) -ne $cepSourceFingerprint) {
+      throw "CEP fingerprint mismatch after installation: $cepDestination"
+    }
     Write-InstallerLog "Installed CEP extension to $cepDestination" $logRoot
   }
-} else {
-  Write-InstallerLog "CEP payload not found; skipping CEP installation." $logRoot
-}
-
-$aexSource = Join-Path $payloadRootFull "aex\ArizonaBridgeTest.aex"
-if ($SkipAex) {
-  Write-InstallerLog "AEX installation skipped by flag." $logRoot
-  exit 0
-}
-
-if (!(Test-Path -LiteralPath $aexSource -PathType Leaf)) {
-  Write-InstallerLog "AEX payload not found; skipping AEX installation." $logRoot
-  exit 0
-}
-
-$afterProcess = Get-Process -Name "AfterFX" -ErrorAction SilentlyContinue
-if ($afterProcess) {
-  throw "Close After Effects before installing the Arizona AEX plugin."
-}
-
-$aexSourceHash = Get-FileSha256 $aexSource
-$afterInstallations = @(& "$PSScriptRoot\detect-after-effects.ps1" -Json | ConvertFrom-Json)
-if (!$afterInstallations -or $afterInstallations.Count -eq 0) {
-  Write-InstallerLog "No After Effects installation found; AEX plugin not installed." $logRoot
-  exit 0
-}
-
-foreach ($installation in $afterInstallations) {
-  $pluginDir = [string]$installation.pluginDir
-  $pluginPath = [string]$installation.pluginPath
-
-  New-Item -ItemType Directory -Force -Path $pluginDir | Out-Null
-  $existingHash = Get-FileSha256 $pluginPath
-  if ($existingHash -and $existingHash -eq $aexSourceHash) {
-    Write-InstallerLog "AEX already installed for $($installation.name)." $logRoot
-    continue
+} catch {
+  if ($null -ne (Get-PathItem $cepDestination)) {
+    Remove-PathSafe -Path $cepDestination -AllowedParent $cepExtensionsRootFull -Label "partial CEP extension"
   }
-
-  if (Test-Path -LiteralPath $pluginPath) {
-    $backup = Move-ToBackup -Path $pluginPath
-    Write-InstallerLog "Backed up existing AEX for $($installation.name) to $backup" $logRoot
+  if (![string]::IsNullOrWhiteSpace($cepBackup) -and $null -ne (Get-PathItem $cepBackup)) {
+    Move-Item -LiteralPath $cepBackup -Destination $cepDestination -Force
   }
-
-  $tempPath = "$pluginPath.tmp"
-  Copy-Item -LiteralPath $aexSource -Destination $tempPath -Force
-  Move-Item -LiteralPath $tempPath -Destination $pluginPath -Force
-
-  $installedHash = Get-FileSha256 $pluginPath
-  if ($installedHash -ne $aexSourceHash) {
-    throw "AEX hash mismatch after installing to $pluginPath"
-  }
-
-  Write-InstallerLog "Installed AEX for $($installation.name) to $pluginPath" $logRoot
+  throw
 }
+
+$state = [pscustomobject]@{
+  schemaVersion = 2
+  installedAt = (Get-Date).ToUniversalTime().ToString("o")
+  releaseManifest = [pscustomobject]@{
+    appPackageVersion = [string]$manifest.appPackageVersion
+    tauriVersion = [string]$manifest.tauriVersion
+    includesAfterEffectsPlugin = $false
+  }
+  cep = [pscustomobject]@{
+    path = Get-FullPath $cepDestination
+    fingerprint = $cepSourceFingerprint
+  }
+}
+
+Write-JsonFileAtomic -Path $statePathFull -Value $state
+Write-InstallerLog "Recorded installed CEP asset at $statePathFull" $logRoot
+exit 0

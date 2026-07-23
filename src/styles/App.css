@@ -1448,6 +1448,17 @@ textarea:focus{
   justify-self: start;
 }
 
+.settings-version-dropdown{
+  width: 160px;
+  justify-self: start;
+}
+
+.settings-version-dropdown .app-dropdown__trigger{
+  grid-template-columns: minmax(0, 1fr) 12px;
+  gap: 8px;
+  padding-right: 15px;
+}
+
 .settings-actions{
   display: flex;
   justify-content: flex-end;
@@ -1730,7 +1741,7 @@ textarea:focus{
   width: 160px;
 }
 
-.settings-bridge-shortcuts{
+.settings-after-shortcuts{
   display: grid;
   gap: 10px;
   margin-top: 0;
@@ -1738,7 +1749,7 @@ textarea:focus{
   border-top: 0;
 }
 
-.settings-bridge-shortcuts h2{
+.settings-after-shortcuts h2{
   margin: 0;
   color: var(--text);
   font-size: 13px;
