@@ -96,7 +96,7 @@ if ($presentLegacyAexTargets.Count -gt 0 -and (Test-AfterEffectsRunning)) {
 }
 
 foreach ($pluginPath in $legacyAexTargets) {
-  $pluginDir = Assert-ArizonaAexPath $pluginPath
+  $pluginDir = Assert-ArizonaAexPath -Path $pluginPath -AdobeRoots $AdobeRoots
   $pluginsRoot = Split-Path -Parent $pluginDir
   $aexWasPresent = $null -ne (Get-PathItem $pluginPath)
   Remove-PathSafe -Path $pluginPath -AllowedParent $pluginDir -Label "legacy Arizona AEX plugin"
@@ -121,7 +121,7 @@ if ([string]::IsNullOrWhiteSpace($CepExtensionsRoot)) {
 Write-InstallerLog "Installing Arizona CEP extension from $payloadRootFull" $logRoot
 
 $cepDestination = Join-Path $CepExtensionsRoot "com.arizona-carrefour.cep"
-$cepExtensionsRootFull = Assert-ArizonaCepPath $cepDestination
+$cepExtensionsRootFull = Assert-ArizonaCepPath -Path $cepDestination -ExpectedExtensionsRoot $CepExtensionsRoot
 $cepBackup = ""
 
 try {

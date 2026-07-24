@@ -11,6 +11,41 @@ O documento deve ser revisado antes de releases públicos e sempre que houver
 mudanças em autenticação, licenciamento, armazenamento de tokens, instalação
 do CEP, chaves de assinatura ou Edge Functions.
 
+## Estado da implementação em 23/07/2026
+
+Os achados detalhados abaixo preservam o diagnóstico original. O estado atual
+do código já inclui:
+
+- ativação sem senha por código aleatório, com hash no banco, validade de 15
+  minutos, tentativas limitadas, uso único e resposta não enumerável;
+- emissão do código por master/gestor no Tauri, com segregação de papéis,
+  proteção de identidades master e cópia pelo ícone `file_copy`;
+- TOTP obrigatório no primeiro acesso e em cada ciclo diário após as 04:00;
+- tokens e recibo sob autoridade do Rust/Windows Credential Manager, sem
+  exposição para o JavaScript do Tauri;
+- signup público desabilitado na configuração versionada e endpoint antigo de
+  senha encerrado com HTTP 410;
+- device criado somente por ativação autenticada, sem upsert/reativação na
+  validação comum, com revogação durável de devices e sessões;
+- recibo CEP limitado a 15 minutos, sessões reutilizadas por dia e auditoria de
+  relógio limitada;
+- CSP ativa, capabilities separadas, Asset Protocol restrito e abertura de
+  arquivos sem `cmd.exe`;
+- Admin master com senha + TOTP e tokens somente em memória;
+- rate limiting no banco, respostas genéricas e função de retenção;
+- payload CEP de produção sem `.debug` e sem source maps;
+- validação de caminhos do instalador, PowerShell invisível e desinstalação
+  local não bloqueada por falha de rede;
+- dependências JavaScript auditadas sem vulnerabilidades conhecidas;
+- JSX legível em dev e JSXBIN embutido no release.
+
+As únicas etapas que dependem de acesso/decisão externa estão em
+[`ACOES_MANUAIS_SEGURANCA.md`](./ACOES_MANUAIS_SEGURANCA.md): opções do
+Dashboard, agendamento `pg_cron`, controles operacionais, teste coordenado e o
+build final. As migrations e Edge Functions foram publicadas no Supabase em
+23/07/2026. Assinatura de distribuição, SMTP e OAuth continuam fora do escopo
+por decisão do responsável.
+
 > Antes de alterar ou remover qualquer chave, leia
 > `LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md`. Não apague, regenere ou substitua
 > chaves privadas sem uma rotação planejada.
@@ -785,14 +820,18 @@ não garante que o CEP foi reconstruído e coletado.
 - Manter a opção padrão de preservar dados consciente e documentada.
 - Avaliar requisitos da LGPD para e-mail, nome, dispositivo e auditorias.
 
-## 19. Supabase de produção: validações pendentes
+## 19. Supabase de produção: validações restantes
 
-A conta CLI usada na revisão recebeu HTTP 403 para APIs administrativas. Por
-isso, o código local não comprova a configuração real do projeto remoto.
-
-Antes do release, validar no Dashboard:
+Em 23/07/2026, a CLI confirmou no projeto remoto:
 
 - migrations locais e remotas em paridade;
+- `daily_auth_reset_hour` e o hardening de ativação/MFA aplicados;
+- as 13 Edge Functions publicadas com status `ACTIVE`;
+- `app-release-device` e as novas Functions de ativação publicadas.
+
+Essa publicação não comprova as opções administrativas do projeto. Antes do
+release, ainda é necessário validar no Dashboard:
+
 - RLS habilitado e forçado no banco remoto;
 - grants efetivos do schema `licensing`;
 - Security Advisor sem alertas críticos;
@@ -806,10 +845,7 @@ Antes do release, validar no Dashboard:
 - Network Restrictions;
 - backups e PITR conforme RPO/RTO;
 - retenção de logs e tabelas;
-- Edge Functions e versões publicadas;
 - secrets necessários presentes;
-- `app-release-device` publicado;
-- migration de `daily_auth_reset_hour` aplicada.
 
 Guardar evidências da revisão sem copiar segredos para tickets ou para o Git.
 

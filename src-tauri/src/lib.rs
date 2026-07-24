@@ -1,5 +1,6 @@
 mod after_effects;
 mod arizona;
+mod auth;
 mod cep_bridge;
 mod history;
 mod license;
@@ -33,6 +34,41 @@ pub fn clear_local_auth_for_uninstall_cli() -> i32 {
 #[derive(Default)]
 struct AuthState {
     session: Mutex<Option<AuthSession>>,
+    pending_totp_factor_id: Mutex<Option<String>>,
+    pending_totp_enrollment: Mutex<Option<auth::TotpEnrollment>>,
+    operation: Mutex<()>,
+}
+
+impl AuthState {
+    fn lock_operation(&self) -> Result<std::sync::MutexGuard<'_, ()>, String> {
+        self.operation
+            .lock()
+            .map_err(|_| "Não foi possível coordenar a autenticação.".to_string())
+    }
+}
+
+enum PendingTotpContextError {
+    Api(auth::ApiError),
+    Local(String),
+}
+
+#[derive(Clone, Copy)]
+enum AuthenticatedUiMode {
+    Reveal,
+    Refresh,
+}
+
+impl AuthenticatedUiMode {
+    fn event_name(self) -> &'static str {
+        match self {
+            Self::Reveal => "arizona-auth:login",
+            Self::Refresh => "arizona-auth:update",
+        }
+    }
+
+    fn should_reveal_window(self) -> bool {
+        matches!(self, Self::Reveal)
+    }
 }
 
 #[derive(Default)]
@@ -55,8 +91,11 @@ struct RegisteredAfterShortcut {
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AuthSession {
+    #[serde(skip_serializing)]
     access_token: Option<String>,
+    #[serde(skip_serializing)]
     refresh_token: Option<String>,
+    #[serde(skip_serializing)]
     cep_license_receipt: Option<String>,
     email: String,
     member_id: Option<String>,
@@ -80,7 +119,6 @@ struct AfterEffectsNotice {
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AdminWindowAuth {
-    access_token: String,
     organization_id: String,
     current_member_id: Option<String>,
     email: String,
@@ -90,7 +128,6 @@ struct AdminWindowAuth {
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SessionWindowAuth {
-    access_token: String,
     organization_id: Option<String>,
     current_member_id: Option<String>,
     email: String,
@@ -104,7 +141,8 @@ struct SecureAuthRecord {
     cep_license_receipt: Option<String>,
     email: String,
     auth_day: Option<String>,
-    password_login_at: Option<String>,
+    #[serde(alias = "passwordLoginAt")]
+    mfa_verified_at: Option<String>,
     server_time: Option<String>,
     local_time: Option<String>,
     expires_at: Option<String>,
@@ -113,6 +151,30 @@ struct SecureAuthRecord {
     organization_id: Option<String>,
     organization_name: Option<String>,
     seats_allowed: Option<i64>,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PublicAuthSession {
+    email: String,
+    member_id: Option<String>,
+    role: Option<String>,
+    organization_id: Option<String>,
+    organization_name: Option<String>,
+    seats_allowed: Option<i64>,
+    expires_at: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthFlowResponse {
+    state: &'static str,
+    code: Option<String>,
+    message: Option<String>,
+    retry_after_seconds: Option<u64>,
+    email: Option<String>,
+    enrollment: Option<auth::TotpEnrollment>,
+    session: Option<PublicAuthSession>,
 }
 
 #[derive(serde::Serialize)]
@@ -169,7 +231,7 @@ pub fn run() {
             }
 
             match event {
-                WindowEvent::Moved(_) | WindowEvent::CloseRequested { .. } => {
+                WindowEvent::CloseRequested { .. } => {
                     save_app_window_position(window);
                 }
                 _ => {}
@@ -194,8 +256,10 @@ pub fn run() {
             after_effects_action_command,
             list_installed_after_effects_versions,
             set_after_shortcut_recording,
-            complete_login,
-            update_auth_session,
+            auth_resume,
+            auth_activate,
+            auth_verify_totp,
+            auth_poll,
             restrict_admin_session,
             exit_app,
             open_visto,
@@ -239,9 +303,13 @@ pub fn run() {
             history_refresh_all_entries,
             project_name,
             app_info,
-            load_secure_auth,
-            save_secure_auth,
             clear_secure_auth,
+            admin_list_members,
+            admin_add_member,
+            admin_release_device,
+            admin_remove_member,
+            admin_generate_activation_code,
+            release_current_device,
             open_author_site,
             load_app_config,
             save_app_config
@@ -259,16 +327,12 @@ fn after_command_action_for_shortcut(
         return None;
     }
 
-    state
-        .registered
-        .lock()
-        .ok()
-        .and_then(|registered| {
-            registered
-                .iter()
-                .find(|item| item.shortcut == *shortcut)
-                .map(|item| item.action)
-        })
+    state.registered.lock().ok().and_then(|registered| {
+        registered
+            .iter()
+            .find(|item| item.shortcut == *shortcut)
+            .map(|item| item.action)
+    })
 }
 
 fn secondary_duplicate_window_is_active(app: &AppHandle) -> bool {
@@ -549,7 +613,8 @@ fn disable_browser_accelerator_keys(app: &tauri::App) {
 }
 
 #[tauri::command]
-fn open_visto() -> Result<ActionResponse, String> {
+fn open_visto(auth: State<AuthState>) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     Ok(match Arizona::new(AppConfig::default()).open_visto() {
         Ok(()) => ActionResponse::ok(),
         Err(err) => ActionResponse::err(err),
@@ -557,7 +622,8 @@ fn open_visto() -> Result<ActionResponse, String> {
 }
 
 #[tauri::command]
-fn open_bitrix() -> Result<ActionResponse, String> {
+fn open_bitrix(auth: State<AuthState>) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     Ok(match Arizona::new(AppConfig::default()).open_bitrix() {
         Ok(()) => ActionResponse::ok(),
         Err(err) => ActionResponse::err(err),
@@ -565,7 +631,8 @@ fn open_bitrix() -> Result<ActionResponse, String> {
 }
 
 #[tauri::command]
-fn open_pip() -> Result<ActionResponse, String> {
+fn open_pip(auth: State<AuthState>) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     Ok(match Arizona::new(AppConfig::default()).open_pip() {
         Ok(()) => ActionResponse::ok(),
         Err(err) => ActionResponse::err(err),
@@ -573,7 +640,8 @@ fn open_pip() -> Result<ActionResponse, String> {
 }
 
 #[tauri::command]
-fn open_claro() -> Result<ActionResponse, String> {
+fn open_claro(auth: State<AuthState>) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     Ok(match Arizona::new(AppConfig::default()).open_claro() {
         Ok(()) => ActionResponse::ok(),
         Err(err) => ActionResponse::err(err),
@@ -624,48 +692,1179 @@ fn app_info(app: AppHandle) -> Result<AppInfo, String> {
     })
 }
 
-#[tauri::command]
-fn load_secure_auth() -> Result<Option<SecureAuthRecord>, String> {
-    let entry = secure_auth_entry()?;
-    read_secure_auth_record(&entry)
+// `ureq` is synchronous. Running it from a regular Tauri command blocks the
+// WebView2 window callback, including the native move/drag message pump.
+async fn run_blocking_network_command<T, F>(operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(operation)
+        .await
+        .map_err(|error| {
+            format!("Não foi possível executar a operação de rede em segundo plano: {error}")
+        })?
 }
 
 #[tauri::command]
-fn save_secure_auth(record: SecureAuthRecord) -> Result<ActionResponse, String> {
-    if record.refresh_token.trim().is_empty() || record.email.trim().is_empty() {
-        return Ok(ActionResponse::err("Sessão segura incompleta."));
+async fn auth_resume(app: AppHandle, app_version: String) -> Result<AuthFlowResponse, String> {
+    run_blocking_network_command(move || {
+        let auth_state = app.state::<AuthState>();
+        let bridge = app.state::<CepBridgeState>();
+        let _operation = auth_state.lock_operation()?;
+        auth_resume_blocking(&app, &auth_state, &bridge, &app_version)
+    })
+    .await
+}
+
+fn auth_resume_blocking(
+    app: &AppHandle,
+    auth_state: &State<AuthState>,
+    bridge: &State<CepBridgeState>,
+    app_version: &str,
+) -> Result<AuthFlowResponse, String> {
+    let Some(record) = read_secure_auth_record(&secure_auth_entry()?)? else {
+        return Ok(auth_flow("activation_required", None, None));
+    };
+
+    let remote = match auth::refresh(record.refresh_token.trim()) {
+        Ok(remote) => remote,
+        Err(error) => {
+            if error.code != "network_error" {
+                forget_secure_auth(app, auth_state, bridge)?;
+            }
+            return Ok(api_error_flow(&error, Some(record.email)));
+        }
+    };
+
+    let response = continue_remote_auth(
+        app,
+        auth_state,
+        bridge,
+        remote,
+        Some(record.email),
+        app_version,
+        AuthenticatedUiMode::Reveal,
+    );
+    apply_auth_flow_ui(app, auth_state, bridge, &response)?;
+    Ok(response)
+}
+
+#[tauri::command]
+async fn auth_activate(
+    app: AppHandle,
+    email: String,
+    code: String,
+    app_version: String,
+) -> Result<AuthFlowResponse, String> {
+    run_blocking_network_command(move || {
+        let auth_state = app.state::<AuthState>();
+        let bridge = app.state::<CepBridgeState>();
+        let _operation = auth_state.lock_operation()?;
+        auth_activate_blocking(&app, &auth_state, &bridge, &email, &code, &app_version)
+    })
+    .await
+}
+
+fn auth_activate_blocking(
+    app: &AppHandle,
+    auth_state: &State<AuthState>,
+    bridge: &State<CepBridgeState>,
+    email: &str,
+    code: &str,
+    app_version: &str,
+) -> Result<AuthFlowResponse, String> {
+    let email = email.trim().to_lowercase();
+    if email.is_empty() || !email.contains('@') || code.trim().is_empty() {
+        return Ok(auth_flow(
+            "error",
+            Some("activation_invalid"),
+            Some("Informe o e-mail e o código de ativação.".to_string()),
+        ));
     }
 
-    let value = serde_json::to_string(&record).map_err(|err| err.to_string())?;
-    secure_auth_entry()?
-        .set_secret(value.as_bytes())
-        .map_err(|err| format!("Não foi possível salvar a sessão segura: {err}"))?;
-
-    match read_secure_auth_record(&secure_auth_entry()?)? {
-        Some(saved)
-            if saved.refresh_token == record.refresh_token && saved.email == record.email => {}
-        Some(_) => return Ok(ActionResponse::err("A sessão segura salva não confere.")),
-        None => {
-            return Ok(ActionResponse::err(
-                "A sessão segura não foi encontrada após salvar.",
-            ))
+    let exchange = match auth::activate(&email, code.trim()) {
+        Ok(exchange) => exchange,
+        Err(error) => return Ok(api_error_flow(&error, Some(email))),
+    };
+    let remote = match auth::exchange_magic_link(&exchange) {
+        Ok(remote) => remote,
+        Err(error) => return Ok(api_error_flow(&error, Some(email))),
+    };
+    if exchange.recovery {
+        if let Err(error) = auth::revoke_other_sessions(&remote.access_token) {
+            return Ok(api_error_flow(&error, Some(email)));
         }
     }
 
-    Ok(ActionResponse::ok())
+    let response = continue_remote_auth(
+        app,
+        auth_state,
+        bridge,
+        remote,
+        Some(email),
+        app_version,
+        AuthenticatedUiMode::Reveal,
+    );
+    apply_auth_flow_ui(app, auth_state, bridge, &response)?;
+    Ok(response)
 }
 
 #[tauri::command]
-fn clear_secure_auth(
+async fn auth_verify_totp(
     app: AppHandle,
-    auth: State<AuthState>,
-    bridge: State<CepBridgeState>,
-) -> Result<ActionResponse, String> {
+    code: String,
+    app_version: String,
+) -> Result<AuthFlowResponse, String> {
+    run_blocking_network_command(move || {
+        let auth_state = app.state::<AuthState>();
+        let bridge = app.state::<CepBridgeState>();
+        let _operation = auth_state.lock_operation()?;
+        auth_verify_totp_blocking(&app, &auth_state, &bridge, &code, &app_version)
+    })
+    .await
+}
+
+fn auth_verify_totp_blocking(
+    app: &AppHandle,
+    auth_state: &State<AuthState>,
+    bridge: &State<CepBridgeState>,
+    code: &str,
+    app_version: &str,
+) -> Result<AuthFlowResponse, String> {
+    let normalized_code: String = code
+        .chars()
+        .filter(|character| character.is_ascii_digit())
+        .collect();
+    if normalized_code.len() != 6 {
+        return Ok(auth_flow(
+            "error",
+            Some("invalid_totp"),
+            Some("Informe o código de 6 dígitos do autenticador.".to_string()),
+        ));
+    }
+
+    let (current, factor_id) = match pending_totp_context(auth_state) {
+        Ok(context) => context,
+        Err(PendingTotpContextError::Api(error)) => {
+            return Ok(api_error_flow(&error, None));
+        }
+        Err(PendingTotpContextError::Local(error)) => return Err(error),
+    };
+    let access_token = current
+        .access_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Sessão de autenticação incompleta.".to_string())?;
+
+    let remote = match auth::verify_totp(access_token, &factor_id, &normalized_code) {
+        Ok(remote) => remote,
+        Err(error) => return Ok(api_error_flow(&error, Some(current.email))),
+    };
+    let response = continue_remote_auth(
+        app,
+        auth_state,
+        bridge,
+        remote,
+        Some(current.email),
+        app_version,
+        AuthenticatedUiMode::Reveal,
+    );
+    apply_auth_flow_ui(app, auth_state, bridge, &response)?;
+    Ok(response)
+}
+
+fn pending_totp_context(
+    auth_state: &State<AuthState>,
+) -> Result<(AuthSession, String), PendingTotpContextError> {
+    let current = authenticated_session(auth_state).ok();
+    let pending_factor_id = auth_state
+        .pending_totp_factor_id
+        .lock()
+        .map_err(|_| {
+            PendingTotpContextError::Local("Não foi possível ler o desafio MFA.".to_string())
+        })?
+        .clone();
+
+    if let (Some(session), Some(factor_id)) = (current.as_ref(), pending_factor_id.as_ref()) {
+        if session
+            .access_token
+            .as_deref()
+            .is_some_and(|token| !token.trim().is_empty())
+        {
+            return Ok((session.clone(), factor_id.clone()));
+        }
+    }
+
+    let session = if let Some(session) = current.filter(|session| {
+        session
+            .access_token
+            .as_deref()
+            .is_some_and(|token| !token.trim().is_empty())
+    }) {
+        session
+    } else {
+        let record =
+            read_secure_auth_record(&secure_auth_entry().map_err(PendingTotpContextError::Local)?)
+                .map_err(PendingTotpContextError::Local)?
+                .ok_or_else(|| {
+                    PendingTotpContextError::Local(
+                        "Sessão segura não encontrada. Gere um novo código de acesso.".to_string(),
+                    )
+                })?;
+        let remote =
+            auth::refresh(record.refresh_token.trim()).map_err(PendingTotpContextError::Api)?;
+        let email = remote
+            .user
+            .as_ref()
+            .and_then(|user| user.email.clone())
+            .unwrap_or_else(|| record.email.clone())
+            .trim()
+            .to_lowercase();
+        let refresh_token = if remote.refresh_token.trim().is_empty() {
+            record.refresh_token
+        } else {
+            remote.refresh_token
+        };
+        let restored = AuthSession {
+            access_token: Some(remote.access_token),
+            refresh_token: Some(refresh_token.clone()),
+            cep_license_receipt: None,
+            email: email.clone(),
+            member_id: None,
+            role: None,
+            organization_id: None,
+            organization_name: None,
+            seats_allowed: None,
+            expires_at: None,
+        };
+        persist_refreshed_token(&email, &refresh_token).map_err(PendingTotpContextError::Local)?;
+        store_auth_session(auth_state, restored.clone()).map_err(PendingTotpContextError::Local)?;
+        restored
+    };
+
+    let access_token = session
+        .access_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            PendingTotpContextError::Local("Sessão de autenticação incompleta.".to_string())
+        })?;
+    let factors = auth::factors(access_token).map_err(PendingTotpContextError::Api)?;
+    let factor_id = pending_factor_id
+        .filter(|pending_id| factors.iter().any(|factor| factor.id == *pending_id))
+        .or_else(|| {
+            factors
+                .iter()
+                .find(|factor| {
+                    factor.status != "verified"
+                        && (factor.factor_type.is_empty() || factor.factor_type == "totp")
+                })
+                .or_else(|| {
+                    factors.iter().find(|factor| {
+                        factor.status == "verified"
+                            && (factor.factor_type.is_empty() || factor.factor_type == "totp")
+                    })
+                })
+                .map(|factor| factor.id.clone())
+        })
+        .ok_or_else(|| {
+            PendingTotpContextError::Local(
+                "Fator do autenticador não encontrado. Gere um novo código de acesso.".to_string(),
+            )
+        })?;
+
+    *auth_state.pending_totp_factor_id.lock().map_err(|_| {
+        PendingTotpContextError::Local("Não foi possível atualizar o desafio MFA.".to_string())
+    })? = Some(factor_id.clone());
+
+    Ok((session, factor_id))
+}
+
+#[tauri::command]
+async fn auth_poll(app: AppHandle, app_version: String) -> Result<AuthFlowResponse, String> {
+    run_blocking_network_command(move || {
+        let auth_state = app.state::<AuthState>();
+        let bridge = app.state::<CepBridgeState>();
+        let _operation = auth_state.lock_operation()?;
+        auth_poll_blocking(&app, &auth_state, &bridge, &app_version)
+    })
+    .await
+}
+
+fn auth_poll_blocking(
+    app: &AppHandle,
+    auth_state: &State<AuthState>,
+    bridge: &State<CepBridgeState>,
+    app_version: &str,
+) -> Result<AuthFlowResponse, String> {
+    let current = authenticated_session(auth_state)?;
+    let refresh_token = current
+        .refresh_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Sessão segura incompleta.".to_string())?;
+
+    let remote = match auth::refresh(refresh_token) {
+        Ok(remote) => remote,
+        Err(error) => {
+            let response = api_error_flow(&error, Some(current.email));
+            if error.is_definitive_license_denial() {
+                forget_secure_auth(app, auth_state, bridge)?;
+            }
+            apply_auth_flow_ui(app, auth_state, bridge, &response)?;
+            return Ok(response);
+        }
+    };
+
+    let response = continue_remote_auth(
+        app,
+        auth_state,
+        bridge,
+        remote,
+        Some(current.email),
+        app_version,
+        // A periodic/focus refresh may finish while the user is moving the
+        // window. It must update state without showing or focusing it again.
+        AuthenticatedUiMode::Refresh,
+    );
+    apply_auth_flow_ui(app, auth_state, bridge, &response)?;
+    Ok(response)
+}
+
+fn continue_remote_auth(
+    app: &AppHandle,
+    auth_state: &State<AuthState>,
+    bridge: &State<CepBridgeState>,
+    remote: auth::RemoteSession,
+    fallback_email: Option<String>,
+    app_version: &str,
+    ui_mode: AuthenticatedUiMode,
+) -> AuthFlowResponse {
+    let fallback_refresh_token = authenticated_session(auth_state)
+        .ok()
+        .and_then(|session| session.refresh_token);
+    let email = remote
+        .user
+        .as_ref()
+        .and_then(|user| user.email.clone())
+        .or(fallback_email)
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase();
+    let refresh_token = if remote.refresh_token.trim().is_empty() {
+        fallback_refresh_token.unwrap_or_default()
+    } else {
+        remote.refresh_token.clone()
+    };
+    let base_session = AuthSession {
+        access_token: Some(remote.access_token.clone()),
+        refresh_token: Some(refresh_token),
+        cep_license_receipt: None,
+        email: email.clone(),
+        member_id: None,
+        role: None,
+        organization_id: None,
+        organization_name: None,
+        seats_allowed: None,
+        expires_at: None,
+    };
+    if let Err(error) = persist_refreshed_token(
+        &email,
+        base_session.refresh_token.as_deref().unwrap_or_default(),
+    ) {
+        return auth_flow("error", Some("local_auth_error"), Some(error));
+    }
+
+    let factors = match auth::factors(&remote.access_token) {
+        Ok(factors) => factors,
+        Err(error) => return api_error_flow(&error, Some(email)),
+    };
+    let verified_factor = factors.iter().find(|factor| {
+        factor.status == "verified"
+            && (factor.factor_type.is_empty() || factor.factor_type == "totp")
+    });
+
+    if verified_factor.is_none() {
+        if let Err(error) = store_auth_session(auth_state, base_session.clone()) {
+            return auth_flow("error", Some("local_auth_error"), Some(error));
+        }
+
+        let reusable_enrollment = match auth_state.pending_totp_enrollment.lock() {
+            Ok(mut pending) => {
+                let reusable = reusable_totp_enrollment(pending.as_ref(), &factors);
+                if reusable.is_none() {
+                    *pending = None;
+                }
+                reusable
+            }
+            Err(_) => {
+                return auth_flow(
+                    "error",
+                    Some("local_auth_error"),
+                    Some("Não foi possível ler o cadastro MFA pendente.".to_string()),
+                );
+            }
+        };
+        if let Some(enrollment) = reusable_enrollment {
+            if let Ok(mut pending) = auth_state.pending_totp_factor_id.lock() {
+                *pending = Some(enrollment.factor_id.clone());
+            }
+            return totp_enrollment_flow(email, enrollment);
+        }
+
+        for factor in factors.iter().filter(|factor| factor.status != "verified") {
+            let _ = auth::delete_factor(&remote.access_token, &factor.id);
+        }
+        let enrollment = match auth::enroll_totp(&remote.access_token) {
+            Ok(enrollment) => enrollment,
+            Err(error) => return api_error_flow(&error, Some(email)),
+        };
+        if let Ok(mut pending) = auth_state.pending_totp_factor_id.lock() {
+            *pending = Some(enrollment.factor_id.clone());
+        }
+        if let Ok(mut pending) = auth_state.pending_totp_enrollment.lock() {
+            *pending = Some(enrollment.clone());
+        }
+        return totp_enrollment_flow(email, enrollment);
+    }
+
+    if let Ok(mut pending) = auth_state.pending_totp_factor_id.lock() {
+        *pending = verified_factor.map(|factor| factor.id.clone());
+    }
+    if let Ok(mut pending) = auth_state.pending_totp_enrollment.lock() {
+        *pending = None;
+    }
+
+    let device_body = match device_request_body(app, app_version) {
+        Ok(body) => body,
+        Err(error) => return auth_flow("error", Some("device_identity_error"), Some(error)),
+    };
+    let mut license = auth::validate_license(&remote.access_token, device_body.clone());
+    if matches!(
+        &license,
+        Err(error) if matches!(
+            error.code.as_str(),
+            "device_not_registered" | "device_revoked" | "device_not_active"
+        )
+    ) {
+        if let Err(error) = auth::activate_device(&remote.access_token, device_body.clone()) {
+            return api_error_flow(&error, Some(email));
+        }
+        license = auth::validate_license(&remote.access_token, device_body);
+    }
+
+    let license = match license {
+        Ok(license) => license,
+        Err(error) => {
+            if matches!(error.code.as_str(), "daily_mfa_required" | "mfa_required") {
+                if let Err(store_error) = store_auth_session(auth_state, base_session) {
+                    return auth_flow("error", Some("local_auth_error"), Some(store_error));
+                }
+            }
+            return api_error_flow(&error, Some(email));
+        }
+    };
+    match authenticated_session_from_license(base_session, &license) {
+        Ok(session) => {
+            if let Err(error) = finalize_authenticated_session(
+                app,
+                auth_state,
+                bridge,
+                session.clone(),
+                &license,
+                ui_mode,
+            ) {
+                return auth_flow("error", Some("local_auth_error"), Some(error));
+            }
+            AuthFlowResponse {
+                state: "authenticated",
+                code: None,
+                message: None,
+                retry_after_seconds: None,
+                email: Some(session.email.clone()),
+                enrollment: None,
+                session: Some(public_session(&session)),
+            }
+        }
+        Err(error) => auth_flow("error", Some("invalid_license_response"), Some(error)),
+    }
+}
+
+fn reusable_totp_enrollment(
+    pending: Option<&auth::TotpEnrollment>,
+    factors: &[auth::Factor],
+) -> Option<auth::TotpEnrollment> {
+    let pending = pending?;
+    factors
+        .iter()
+        .any(|factor| {
+            factor.id == pending.factor_id
+                && factor.status != "verified"
+                && (factor.factor_type.is_empty() || factor.factor_type == "totp")
+        })
+        .then(|| pending.clone())
+}
+
+fn totp_enrollment_flow(email: String, enrollment: auth::TotpEnrollment) -> AuthFlowResponse {
+    AuthFlowResponse {
+        state: "totp_enrollment_required",
+        code: None,
+        message: Some(
+            "Escaneie o QR Code no autenticador e confirme o código de 6 dígitos.".to_string(),
+        ),
+        retry_after_seconds: None,
+        email: Some(email),
+        enrollment: Some(enrollment),
+        session: None,
+    }
+}
+
+fn persist_refreshed_token(email: &str, refresh_token: &str) -> Result<(), String> {
+    if email.trim().is_empty() || refresh_token.trim().is_empty() {
+        return Err("Sessão atualizada incompleta.".to_string());
+    }
     let entry = secure_auth_entry()?;
-    let _ = entry.delete_credential();
-    clear_cep_license_receipt(&app)?;
-    clear_runtime_auth_session(&auth, &bridge)?;
-    Ok(ActionResponse::ok())
+    let mut record = read_secure_auth_record(&entry)?.unwrap_or(SecureAuthRecord {
+        refresh_token: String::new(),
+        cep_license_receipt: None,
+        email: email.to_string(),
+        auth_day: None,
+        mfa_verified_at: None,
+        server_time: None,
+        local_time: None,
+        expires_at: None,
+        member_id: None,
+        role: None,
+        organization_id: None,
+        organization_name: None,
+        seats_allowed: None,
+    });
+    record.refresh_token = refresh_token.to_string();
+    record.email = email.to_string();
+    write_secure_auth_record(&record)
+}
+
+fn device_request_body(app: &AppHandle, app_version: &str) -> Result<serde_json::Value, String> {
+    let install_id = load_or_create_install_id(app)?;
+    let stored = read_secure_auth_record(&secure_auth_entry()?)?;
+    Ok(serde_json::json!({
+        "installId": install_id,
+        "appVersion": app_version.trim(),
+        "deviceLabel": std::env::var("COMPUTERNAME").unwrap_or_else(|_| "Windows".to_string()),
+        "deviceFingerprintHash": "",
+        "clientLocalTime": now_iso(),
+        "lastServerTimeSeen": stored.as_ref().and_then(|record| record.server_time.clone()),
+        "lastLocalTimeSeen": stored.as_ref().and_then(|record| record.local_time.clone()),
+    }))
+}
+
+fn load_or_create_install_id(app: &AppHandle) -> Result<String, String> {
+    let directory = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| error.to_string())?;
+    let path = directory.join("install-id");
+    if let Ok(value) = fs::read_to_string(&path) {
+        let value = value.trim();
+        if value.len() >= 32 && value.len() <= 128 {
+            return Ok(value.to_string());
+        }
+    }
+
+    use rand::RngCore;
+    let mut bytes = [0_u8; 24];
+    rand::rng().fill_bytes(&mut bytes);
+    let value = bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("Não foi possível criar {}: {error}", directory.display()))?;
+    fs::write(&path, &value)
+        .map_err(|error| format!("Não foi possível salvar {}: {error}", path.display()))?;
+    Ok(value)
+}
+
+fn authenticated_session_from_license(
+    mut session: AuthSession,
+    license: &serde_json::Value,
+) -> Result<AuthSession, String> {
+    let member = license
+        .get("member")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| "Resposta de membro ausente.".to_string())?;
+    let organization = license
+        .get("organization")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| "Resposta de organização ausente.".to_string())?;
+
+    session.cep_license_receipt = json_text(license, "cepLicenseReceipt");
+    session.email = member
+        .get("email")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(&session.email)
+        .to_string();
+    session.member_id = object_text(member, "id");
+    session.role = object_text(member, "role");
+    session.organization_id = object_text(organization, "id");
+    session.organization_name = object_text(organization, "name");
+    session.seats_allowed = organization
+        .get("seatsAllowed")
+        .and_then(serde_json::Value::as_i64);
+    session.expires_at = json_text(license, "expiresAt");
+
+    if session
+        .cep_license_receipt
+        .as_deref()
+        .unwrap_or_default()
+        .is_empty()
+        || session.member_id.is_none()
+        || session.organization_id.is_none()
+        || session.expires_at.is_none()
+    {
+        return Err("Resposta de licença incompleta.".to_string());
+    }
+    Ok(session)
+}
+
+fn object_text(object: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<String> {
+    object
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn json_text(value: &serde_json::Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn finalize_authenticated_session(
+    app: &AppHandle,
+    auth_state: &State<AuthState>,
+    bridge: &State<CepBridgeState>,
+    session: AuthSession,
+    license: &serde_json::Value,
+    ui_mode: AuthenticatedUiMode,
+) -> Result<(), String> {
+    let record = SecureAuthRecord {
+        refresh_token: session.refresh_token.clone().unwrap_or_default(),
+        cep_license_receipt: session.cep_license_receipt.clone(),
+        email: session.email.clone(),
+        auth_day: json_text(license, "authDay"),
+        mfa_verified_at: json_text(license, "mfaVerifiedAt"),
+        server_time: json_text(license, "serverTime"),
+        local_time: Some(now_iso()),
+        expires_at: session.expires_at.clone(),
+        member_id: session.member_id.clone(),
+        role: session.role.clone(),
+        organization_id: session.organization_id.clone(),
+        organization_name: session.organization_name.clone(),
+        seats_allowed: session.seats_allowed,
+    };
+    write_secure_auth_record(&record)?;
+    store_auth_session(auth_state, session.clone())?;
+    sync_cep_license_receipt(app, session.cep_license_receipt.as_deref())?;
+    bridge.set_license_status(license_status_from_session(Some(&session)));
+    emit_public_auth_session(app, ui_mode.event_name(), &session)?;
+    if ui_mode.should_reveal_window() {
+        show_authenticated_window(app)?;
+    }
+    Ok(())
+}
+
+fn write_secure_auth_record(record: &SecureAuthRecord) -> Result<(), String> {
+    if record.refresh_token.trim().is_empty() || record.email.trim().is_empty() {
+        return Err("Sessão segura incompleta.".to_string());
+    }
+    let value = serde_json::to_string(record).map_err(|error| error.to_string())?;
+    secure_auth_entry()?
+        .set_secret(value.as_bytes())
+        .map_err(|error| format!("Não foi possível salvar a sessão segura: {error}"))
+}
+
+fn public_session(session: &AuthSession) -> PublicAuthSession {
+    PublicAuthSession {
+        email: session.email.clone(),
+        member_id: session.member_id.clone(),
+        role: session.role.clone(),
+        organization_id: session.organization_id.clone(),
+        organization_name: session.organization_name.clone(),
+        seats_allowed: session.seats_allowed,
+        expires_at: session.expires_at.clone(),
+    }
+}
+
+fn emit_public_auth_session(
+    app: &AppHandle,
+    event_name: &str,
+    session: &AuthSession,
+) -> Result<(), String> {
+    let public_json =
+        serde_json::to_string(&public_session(session)).map_err(|error| error.to_string())?;
+    let script = format!(
+        "window.__ARIZONA_AUTH_SESSION__ = {public_json}; window.dispatchEvent(new CustomEvent('{event_name}', {{ detail: {public_json} }}));"
+    );
+    if let Some(window) = app.get_webview_window(APP_WINDOW_LABEL) {
+        let _ = window.eval(script);
+    }
+    Ok(())
+}
+
+fn show_authenticated_window(app: &AppHandle) -> Result<(), String> {
+    let app_window = app
+        .get_webview_window(APP_WINDOW_LABEL)
+        .ok_or_else(|| "Janela principal não foi inicializada.".to_string())?;
+    app_window
+        .set_title("Arizona App")
+        .map_err(|error| error.to_string())?;
+    app_window.unminimize().map_err(|error| error.to_string())?;
+    app_window.show().map_err(|error| error.to_string())?;
+    app_window.set_focus().map_err(|error| error.to_string())?;
+    if let Some(login_window) = app.get_webview_window(LOGIN_WINDOW_LABEL) {
+        let _ = login_window.hide();
+    }
+    Ok(())
+}
+
+fn apply_auth_flow_ui(
+    app: &AppHandle,
+    auth_state: &State<AuthState>,
+    bridge: &State<CepBridgeState>,
+    response: &AuthFlowResponse,
+) -> Result<(), String> {
+    if response.state == "authenticated"
+        || response.state == "error" && response.code.as_deref() == Some("network_error")
+    {
+        return Ok(());
+    }
+
+    if matches!(
+        response.code.as_deref(),
+        Some(
+            "member_not_authorized"
+                | "organization_not_active"
+                | "license_expired"
+                | "device_revoked"
+                | "device_not_active"
+                | "invalid_user_token"
+        )
+    ) {
+        forget_secure_auth(app, auth_state, bridge)?;
+    }
+
+    clear_cep_license_receipt(app)?;
+    bridge.set_license_status(LicenseStatus::no_session());
+    emit_auth_cleared(app);
+    if let Some(app_window) = app.get_webview_window(APP_WINDOW_LABEL) {
+        let _ = app_window.hide();
+    }
+    if let Some(login_window) = app.get_webview_window(LOGIN_WINDOW_LABEL) {
+        let response_json = serde_json::to_string(response).map_err(|error| error.to_string())?;
+        let script = format!(
+            "window.dispatchEvent(new CustomEvent('arizona-auth:flow', {{ detail: {response_json} }}));"
+        );
+        let _ = login_window.eval(script);
+        let _ = login_window.show();
+        let _ = login_window.set_focus();
+    }
+
+    if response.state == "activation_required" {
+        clear_runtime_auth_session(auth_state, bridge)?;
+    }
+    Ok(())
+}
+
+fn forget_secure_auth(
+    app: &AppHandle,
+    auth_state: &State<AuthState>,
+    bridge: &State<CepBridgeState>,
+) -> Result<(), String> {
+    let _ = secure_auth_entry()?.delete_credential();
+    clear_cep_license_receipt(app)?;
+    clear_runtime_auth_session(auth_state, bridge)
+}
+
+fn auth_flow(state: &'static str, code: Option<&str>, message: Option<String>) -> AuthFlowResponse {
+    AuthFlowResponse {
+        state,
+        code: code.map(ToOwned::to_owned),
+        message,
+        retry_after_seconds: None,
+        email: None,
+        enrollment: None,
+        session: None,
+    }
+}
+
+fn api_error_flow(error: &auth::ApiError, email: Option<String>) -> AuthFlowResponse {
+    let code = canonical_auth_error_code(&error.code);
+    let state = match code {
+        "daily_mfa_required" | "mfa_required" => "totp_required",
+        "invalid_refresh_token" | "refresh_token_not_found" | "invalid_grant" => {
+            "activation_required"
+        }
+        _ => "error",
+    };
+    let message = match code {
+        "activation_invalid" => "O código de ativação é inválido ou expirou.",
+        "activation_unavailable" => {
+            "Não foi possível concluir a ativação agora. Tente o mesmo código novamente."
+        }
+        "daily_mfa_required" | "mfa_required" => {
+            "Confirme o código do autenticador para liberar o acesso de hoje."
+        }
+        "device_limit_reached" => {
+            "Este usuário já está ativo em outra máquina. Libere o acesso pela Gestão."
+        }
+        "device_revoked" | "device_not_active" => "Este dispositivo foi liberado pela Gestão.",
+        "device_cooldown" => "Aguarde antes de cadastrar outra máquina.",
+        "organization_not_active" => "A licença da empresa não está ativa.",
+        "license_expired" => "A licença da empresa expirou.",
+        "member_not_authorized" => "Este usuário não está autorizado.",
+        "rate_limited" => "Muitas tentativas. Aguarde antes de tentar novamente.",
+        "network_error" => "Não foi possível conectar ao Supabase.",
+        "invalid_totp" | "challenge_expired" | "mfa_verification_failed" => {
+            "Código do autenticador inválido ou expirado."
+        }
+        _ => "Não foi possível confirmar o acesso.",
+    };
+    AuthFlowResponse {
+        state,
+        code: Some(code.to_string()),
+        message: Some(message.to_string()),
+        retry_after_seconds: error.retry_after_seconds,
+        email,
+        enrollment: None,
+        session: None,
+    }
+}
+
+fn canonical_auth_error_code(code: &str) -> &str {
+    match code {
+        "mfa_challenge_expired" => "challenge_expired",
+        "over_request_rate_limit" => "rate_limited",
+        _ => code,
+    }
+}
+
+fn admin_access(auth_state: &State<AuthState>) -> Result<(AuthSession, String, String), String> {
+    let session = authenticated_session(auth_state)?;
+    if session.role.as_deref() != Some("admin") {
+        return Err("Acesso disponível apenas para gestores.".to_string());
+    }
+    if !license_status_from_session(Some(&session)).licensed {
+        return Err("Licença local expirada. Confirme o acesso novamente.".to_string());
+    }
+    let access_token = session
+        .access_token
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "Sessão de gestão incompleta.".to_string())?;
+    let organization_id = session
+        .organization_id
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "Organização ausente na sessão.".to_string())?;
+    Ok((session, access_token, organization_id))
+}
+
+#[tauri::command]
+async fn admin_list_members(app: AppHandle) -> Result<serde_json::Value, String> {
+    run_blocking_network_command(move || {
+        let auth_state = app.state::<AuthState>();
+        let _operation = auth_state.lock_operation()?;
+        let (_, access_token, organization_id) = admin_access(&auth_state)?;
+        auth::function_value(
+            "admin-list-members",
+            &access_token,
+            serde_json::json!({ "organizationId": organization_id }),
+        )
+        .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn admin_add_member(
+    app: AppHandle,
+    name: String,
+    email: String,
+) -> Result<serde_json::Value, String> {
+    run_blocking_network_command(move || {
+        let auth_state = app.state::<AuthState>();
+        let _operation = auth_state.lock_operation()?;
+        let (_, access_token, organization_id) = admin_access(&auth_state)?;
+        auth::function_value(
+            "admin-add-member",
+            &access_token,
+            serde_json::json!({
+                "organizationId": organization_id,
+                "name": name.trim(),
+                "email": email.trim().to_lowercase(),
+                "role": "user",
+            }),
+        )
+        .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn admin_release_device(
+    app: AppHandle,
+    member_id: String,
+) -> Result<serde_json::Value, String> {
+    run_blocking_network_command(move || {
+        let auth_state = app.state::<AuthState>();
+        let _operation = auth_state.lock_operation()?;
+        let (_, access_token, organization_id) = admin_access(&auth_state)?;
+        auth::function_value(
+            "admin-release-device",
+            &access_token,
+            serde_json::json!({
+                "organizationId": organization_id,
+                "memberId": member_id.trim(),
+            }),
+        )
+        .map_err(release_device_api_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn admin_remove_member(
+    app: AppHandle,
+    member_id: String,
+) -> Result<serde_json::Value, String> {
+    run_blocking_network_command(move || {
+        let auth_state = app.state::<AuthState>();
+        let _operation = auth_state.lock_operation()?;
+        let (_, access_token, organization_id) = admin_access(&auth_state)?;
+        auth::function_value(
+            "admin-remove-member",
+            &access_token,
+            serde_json::json!({
+                "organizationId": organization_id,
+                "memberId": member_id.trim(),
+            }),
+        )
+        .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn admin_generate_activation_code(
+    app: AppHandle,
+    member_id: String,
+) -> Result<serde_json::Value, String> {
+    run_blocking_network_command(move || {
+        let auth_state = app.state::<AuthState>();
+        let _operation = auth_state.lock_operation()?;
+        let (_, access_token, organization_id) = admin_access(&auth_state)?;
+        auth::function_value(
+            "admin-generate-activation-code",
+            &access_token,
+            serde_json::json!({
+                "organizationId": organization_id,
+                "memberId": member_id.trim(),
+            }),
+        )
+        .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn release_current_device(app: AppHandle) -> Result<ActionResponse, String> {
+    run_blocking_network_command(move || {
+        let auth_state = app.state::<AuthState>();
+        let bridge = app.state::<CepBridgeState>();
+        let _operation = auth_state.lock_operation()?;
+        let (_, access_token, _) = admin_access(&auth_state).or_else(|_| {
+            let session = authenticated_session(&auth_state)?;
+            let access_token = session
+                .access_token
+                .clone()
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "Sessão incompleta.".to_string())?;
+            Ok::<_, String>((session, access_token, String::new()))
+        })?;
+        auth::function_value(
+            "app-release-device",
+            &access_token,
+            serde_json::json!({ "source": "tauri_settings" }),
+        )
+        .map_err(release_device_api_error)?;
+        forget_secure_auth(&app, &auth_state, &bridge)?;
+        apply_auth_flow_ui(
+            &app,
+            &auth_state,
+            &bridge,
+            &auth_flow(
+                "activation_required",
+                None,
+                Some("Acesso desta máquina liberado.".to_string()),
+            ),
+        )?;
+        Ok(ActionResponse::ok())
+    })
+    .await
+}
+
+fn release_device_api_error(error: auth::ApiError) -> String {
+    if error.code != "device_switch_interval" {
+        return error.to_string();
+    }
+
+    let wait = error
+        .retry_after_seconds
+        .map(format_release_wait)
+        .map(|duration| format!(" Tente novamente em {duration}."))
+        .unwrap_or_default();
+    format!(
+        "device_switch_interval: Esta máquina ainda não completou o intervalo mínimo entre trocas.{wait}"
+    )
+}
+
+fn format_release_wait(total_seconds: u64) -> String {
+    const DAY: u64 = 86_400;
+    const HOUR: u64 = 3_600;
+
+    let days = total_seconds / DAY;
+    let hours = (total_seconds % DAY) / HOUR;
+    if days > 0 {
+        return format!("{days}d {hours}h");
+    }
+
+    let minutes = (total_seconds % HOUR).div_ceil(60);
+    if hours > 0 {
+        format!("{hours}h {minutes}min")
+    } else {
+        format!("{minutes}min")
+    }
+}
+
+#[cfg(test)]
+mod device_release_tests {
+    use super::format_release_wait;
+
+    #[test]
+    fn formats_long_device_switch_intervals_in_days() {
+        assert_eq!(format_release_wait(7 * 86_400 + 2 * 3_600), "7d 2h");
+    }
+
+    #[test]
+    fn rounds_short_device_switch_intervals_up_to_minutes() {
+        assert_eq!(format_release_wait(61), "2min");
+    }
+}
+
+#[cfg(test)]
+mod auth_flow_tests {
+    use super::{api_error_flow, reusable_totp_enrollment, AuthState};
+    use crate::auth::{ApiError, Factor, TotpEnrollment};
+
+    #[test]
+    fn canonicalizes_current_supabase_mfa_challenge_expiration() {
+        let flow = api_error_flow(
+            &ApiError {
+                code: "mfa_challenge_expired".to_string(),
+                message: "MFA challenge has expired".to_string(),
+                retry_after_seconds: None,
+            },
+            None,
+        );
+
+        assert_eq!(flow.state, "error");
+        assert_eq!(flow.code.as_deref(), Some("challenge_expired"));
+        assert_eq!(
+            flow.message.as_deref(),
+            Some("Código do autenticador inválido ou expirado.")
+        );
+    }
+
+    #[test]
+    fn canonicalizes_gotrue_request_rate_limit_for_the_login_ui() {
+        let flow = api_error_flow(
+            &ApiError {
+                code: "over_request_rate_limit".to_string(),
+                message: "Too many requests".to_string(),
+                retry_after_seconds: Some(45),
+            },
+            None,
+        );
+
+        assert_eq!(flow.state, "error");
+        assert_eq!(flow.code.as_deref(), Some("rate_limited"));
+        assert_eq!(flow.retry_after_seconds, Some(45));
+    }
+
+    #[test]
+    fn auth_operation_lock_excludes_a_second_operation() {
+        let state = AuthState::default();
+        let operation = state
+            .lock_operation()
+            .expect("first auth operation should acquire the lock");
+
+        assert!(state.operation.try_lock().is_err());
+        drop(operation);
+        assert!(state.operation.try_lock().is_ok());
+    }
+
+    #[test]
+    fn reuses_only_the_pending_enrollment_still_present_in_gotrue() {
+        let enrollment = TotpEnrollment {
+            factor_id: "factor-a".to_string(),
+            qr_code: "qr-a".to_string(),
+            secret: "secret-a".to_string(),
+            uri: "uri-a".to_string(),
+        };
+        let matching_factors = vec![Factor {
+            id: "factor-a".to_string(),
+            factor_type: "totp".to_string(),
+            status: "unverified".to_string(),
+        }];
+
+        let reused = reusable_totp_enrollment(Some(&enrollment), &matching_factors)
+            .expect("matching unverified factor should reuse the same QR and secret");
+        assert_eq!(reused.factor_id, enrollment.factor_id);
+        assert_eq!(reused.qr_code, enrollment.qr_code);
+        assert_eq!(reused.secret, enrollment.secret);
+
+        let replaced_factors = vec![Factor {
+            id: "factor-b".to_string(),
+            factor_type: "totp".to_string(),
+            status: "unverified".to_string(),
+        }];
+        assert!(reusable_totp_enrollment(Some(&enrollment), &replaced_factors).is_none());
+    }
+}
+
+#[tauri::command]
+async fn clear_secure_auth(app: AppHandle) -> Result<ActionResponse, String> {
+    run_blocking_network_command(move || {
+        let auth = app.state::<AuthState>();
+        let bridge = app.state::<CepBridgeState>();
+        let _operation = auth.lock_operation()?;
+        let entry = secure_auth_entry()?;
+        let _ = entry.delete_credential();
+        clear_cep_license_receipt(&app)?;
+        clear_runtime_auth_session(&auth, &bridge)?;
+        Ok(ActionResponse::ok())
+    })
+    .await
 }
 
 fn secure_auth_entry() -> Result<keyring::Entry, String> {
@@ -696,7 +1895,11 @@ fn read_secure_auth_record(entry: &keyring::Entry) -> Result<Option<SecureAuthRe
 }
 
 #[tauri::command]
-fn cep_bridge_status(bridge: State<CepBridgeState>) -> Result<cep_bridge::BridgeStatus, String> {
+fn cep_bridge_status(
+    auth: State<AuthState>,
+    bridge: State<CepBridgeState>,
+) -> Result<cep_bridge::BridgeStatus, String> {
+    require_authenticated(&auth)?;
     Ok(bridge.status())
 }
 
@@ -714,12 +1917,18 @@ fn after_effects_action_command(
 }
 
 #[tauri::command]
-fn list_installed_after_effects_versions() -> Vec<String> {
-    after_effects::installed_versions()
+fn list_installed_after_effects_versions(auth: State<AuthState>) -> Result<Vec<String>, String> {
+    require_authenticated(&auth)?;
+    Ok(after_effects::installed_versions())
 }
 
 #[tauri::command]
-fn set_after_shortcut_recording(app: AppHandle, recording: bool) -> Result<(), String> {
+fn set_after_shortcut_recording(
+    app: AppHandle,
+    auth: State<AuthState>,
+    recording: bool,
+) -> Result<(), String> {
+    require_authenticated(&auth)?;
     if recording {
         suspend_after_command_shortcuts(&app)
     } else {
@@ -748,60 +1957,6 @@ fn run_after_effects_action(
 }
 
 #[tauri::command]
-fn complete_login(
-    app: AppHandle,
-    auth: State<AuthState>,
-    bridge: State<CepBridgeState>,
-    session: AuthSession,
-) -> Result<ActionResponse, String> {
-    let email = session.email.trim();
-    if email.is_empty() {
-        return Ok(ActionResponse::err("Email da sessao invalido."));
-    }
-
-    store_auth_session(&auth, session.clone())?;
-    sync_cep_license_receipt(&app, session.cep_license_receipt.as_deref())?;
-    bridge.set_license_status(license_status_from_session(Some(&session)));
-    emit_auth_session(&app, "arizona-auth:login", &session)?;
-
-    let app_window = app
-        .get_webview_window(APP_WINDOW_LABEL)
-        .ok_or_else(|| "Janela principal nao foi inicializada.".to_string())?;
-
-    app_window
-        .set_title("Arizona App")
-        .map_err(|err| err.to_string())?;
-    app_window.unminimize().map_err(|err| err.to_string())?;
-    app_window.show().map_err(|err| err.to_string())?;
-    app_window.set_focus().map_err(|err| err.to_string())?;
-
-    if let Some(login_window) = app.get_webview_window(LOGIN_WINDOW_LABEL) {
-        let _ = login_window.hide();
-    }
-
-    Ok(ActionResponse::ok())
-}
-
-#[tauri::command]
-fn update_auth_session(
-    app: AppHandle,
-    auth: State<AuthState>,
-    bridge: State<CepBridgeState>,
-    session: AuthSession,
-) -> Result<ActionResponse, String> {
-    let email = session.email.trim();
-    if email.is_empty() {
-        return Ok(ActionResponse::err("Email da sessao invalido."));
-    }
-
-    store_auth_session(&auth, session.clone())?;
-    sync_cep_license_receipt(&app, session.cep_license_receipt.as_deref())?;
-    bridge.set_license_status(license_status_from_session(Some(&session)));
-    emit_auth_session(&app, "arizona-auth:update", &session)?;
-    Ok(ActionResponse::ok())
-}
-
-#[tauri::command]
 fn restrict_admin_session(
     app: AppHandle,
     auth: State<AuthState>,
@@ -813,9 +1968,7 @@ fn restrict_admin_session(
             .lock()
             .map_err(|_| "Nao foi possivel atualizar a sessao.".to_string())?;
         let Some(session) = stored_session.as_mut() else {
-            return Ok(ActionResponse::err(
-                "Entre com email e senha para continuar.",
-            ));
+            return Ok(ActionResponse::err("Confirme seu acesso para continuar."));
         };
 
         if session.role.as_deref().unwrap_or_default().trim() == "admin" {
@@ -1086,7 +2239,8 @@ fn open_author_site() -> Result<ActionResponse, String> {
 }
 
 #[tauri::command]
-fn open_links() -> Result<ActionResponse, String> {
+fn open_links(auth: State<AuthState>) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     let arizona = Arizona::new(AppConfig::default());
     if let Err(err) = arizona.open_visto() {
         return Ok(ActionResponse::err(err));
@@ -1102,7 +2256,12 @@ fn open_links() -> Result<ActionResponse, String> {
 }
 
 #[tauri::command]
-fn open_jobao(app: AppHandle, jobao_cod: String) -> Result<ActionResponse, String> {
+fn open_jobao(
+    app: AppHandle,
+    auth: State<AuthState>,
+    jobao_cod: String,
+) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     let arizona = arizona_from_app(&app)?;
     arizona.get_jobao_path(&jobao_cod)?;
 
@@ -1115,9 +2274,11 @@ fn open_jobao(app: AppHandle, jobao_cod: String) -> Result<ActionResponse, Strin
 #[tauri::command]
 fn open_jobinho(
     app: AppHandle,
+    auth: State<AuthState>,
     jobao_cod: String,
     jobinho_cod: String,
 ) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     let arizona = arizona_from_app(&app)?;
     arizona.get_jobao_path(&jobao_cod)?;
 
@@ -1132,9 +2293,11 @@ fn open_jobinho(
 #[tauri::command]
 fn abrir_ae(
     app: AppHandle,
+    auth: State<AuthState>,
     jobao_cod: String,
     jobinho_cod: String,
 ) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     let arizona = arizona_from_app(&app)?;
     arizona.get_jobao_path(&jobao_cod)?;
 
@@ -1148,7 +2311,13 @@ fn abrir_ae(
 }
 
 #[tauri::command]
-fn open_out(app: AppHandle, jobao_cod: String, option: String) -> Result<ActionResponse, String> {
+fn open_out(
+    app: AppHandle,
+    auth: State<AuthState>,
+    jobao_cod: String,
+    option: String,
+) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     let arizona = arizona_from_app(&app)?;
     arizona.get_jobao_path(&jobao_cod)?;
 
@@ -1159,7 +2328,12 @@ fn open_out(app: AppHandle, jobao_cod: String, option: String) -> Result<ActionR
 }
 
 #[tauri::command]
-fn import_products(app: AppHandle, jobao_cod: String) -> Result<ActionResponse, String> {
+fn import_products(
+    app: AppHandle,
+    auth: State<AuthState>,
+    jobao_cod: String,
+) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     let arizona = arizona_from_app(&app)?;
 
     match arizona.import_products(&jobao_cod) {
@@ -1318,7 +2492,13 @@ fn open_duplicate_identical_window(
 }
 
 fn require_authenticated(auth: &State<AuthState>) -> Result<(), String> {
-    authenticated_session(auth).map(|_| ())
+    let session = authenticated_session(auth)?;
+    let status = license_status_from_session(Some(&session));
+    if status.licensed {
+        Ok(())
+    } else {
+        Err("Licença local inválida ou expirada. Confirme o acesso novamente.".to_string())
+    }
 }
 
 fn authenticated_session(auth: &State<AuthState>) -> Result<AuthSession, String> {
@@ -1326,7 +2506,7 @@ fn authenticated_session(auth: &State<AuthState>) -> Result<AuthSession, String>
         .lock()
         .map_err(|_| "Nao foi possivel ler a sessao.".to_string())?
         .clone()
-        .ok_or_else(|| "Entre com email e senha para continuar.".to_string())
+        .ok_or_else(|| "Confirme seu acesso para continuar.".to_string())
 }
 
 fn admin_window_auth(
@@ -1353,12 +2533,6 @@ fn admin_window_auth(
         return Err(err);
     }
 
-    let access_token = session
-        .access_token
-        .as_deref()
-        .unwrap_or_default()
-        .trim()
-        .to_string();
     let organization_id = session
         .organization_id
         .as_deref()
@@ -1366,12 +2540,11 @@ fn admin_window_auth(
         .trim()
         .to_string();
 
-    if access_token.is_empty() || organization_id.is_empty() {
+    if organization_id.is_empty() {
         return Err("Sessao admin incompleta. Entre novamente.".to_string());
     }
 
     Ok(AdminWindowAuth {
-        access_token,
         organization_id,
         current_member_id: session.member_id,
         email: session.email,
@@ -1380,19 +2553,11 @@ fn admin_window_auth(
 }
 
 fn session_window_auth_from_session(session: &AuthSession) -> Result<SessionWindowAuth, String> {
-    let access_token = session
-        .access_token
-        .as_deref()
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-
-    if access_token.is_empty() {
-        return Err("Sessao incompleta. Entre novamente.".to_string());
+    if !license_status_from_session(Some(session)).licensed {
+        return Err("Licença local inválida ou expirada. Entre novamente.".to_string());
     }
 
     Ok(SessionWindowAuth {
-        access_token,
         organization_id: normalize_optional_text(session.organization_id.clone()),
         current_member_id: normalize_optional_text(session.member_id.clone()),
         email: session.email.clone(),
@@ -1429,6 +2594,15 @@ fn clear_runtime_auth_session(
         .lock()
         .map_err(|_| "Nao foi possivel limpar a sessao.".to_string())?;
     *stored_session = None;
+    drop(stored_session);
+    *auth
+        .pending_totp_factor_id
+        .lock()
+        .map_err(|_| "Nao foi possivel limpar o desafio MFA.".to_string())? = None;
+    *auth
+        .pending_totp_enrollment
+        .lock()
+        .map_err(|_| "Nao foi possivel limpar o cadastro MFA pendente.".to_string())? = None;
     bridge.set_license_status(LicenseStatus::no_session());
     Ok(())
 }
@@ -1496,42 +2670,52 @@ fn normalize_optional_text(value: Option<String>) -> Option<String> {
 #[tauri::command]
 fn list_identical_mp4_items(
     app: AppHandle,
+    auth: State<AuthState>,
     jobao_cod: String,
 ) -> Result<Vec<arizona::DuplicateMp4Item>, String> {
+    require_authenticated(&auth)?;
     arizona_from_app(&app)?.list_identical_mp4_items(&jobao_cod)
 }
 
 #[tauri::command]
 fn export_identical_mp4_names_json(
     app: AppHandle,
+    auth: State<AuthState>,
     jobao_cod: String,
 ) -> Result<arizona::DuplicateMp4NamesJsonExport, String> {
+    require_authenticated(&auth)?;
     arizona_from_app(&app)?.export_identical_mp4_names_json(&jobao_cod)
 }
 
 #[tauri::command]
 fn update_identical_mp4_names_json(
     app: AppHandle,
+    auth: State<AuthState>,
     jobao_cod: String,
 ) -> Result<arizona::DuplicateMp4NamesJsonExport, String> {
+    require_authenticated(&auth)?;
     arizona_from_app(&app)?.update_identical_mp4_names_json(&jobao_cod)
 }
 
 #[tauri::command]
 fn import_identical_mp4_names_json(
     app: AppHandle,
+    auth: State<AuthState>,
     jobao_cod: String,
 ) -> Result<arizona::DuplicateMp4NamesJsonImport, String> {
+    require_authenticated(&auth)?;
     arizona_from_app(&app)?.import_identical_mp4_names_json(&jobao_cod)
 }
 
 #[tauri::command]
 fn duplicate_identical_mp4(
     app: AppHandle,
+    auth: State<AuthState>,
     jobao_cod: String,
     source_file_name: String,
     copy_names: Vec<String>,
 ) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     let arizona = arizona_from_app(&app)?;
 
     Ok(
@@ -1553,10 +2737,12 @@ fn duplicate_identical_mp4(
 #[tauri::command]
 fn open_video(
     app: AppHandle,
+    auth: State<AuthState>,
     jobao_cod: String,
     jobinho_cod: String,
     media_type: String,
 ) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     match arizona_from_app(&app)?.video_file(&jobao_cod, &jobinho_cod, &media_type) {
         Ok(media) => show_media_window_with_native_fallback(app, media),
         Err(err) => Ok(ActionResponse::err(err)),
@@ -1566,9 +2752,11 @@ fn open_video(
 #[tauri::command]
 fn open_audio(
     app: AppHandle,
+    auth: State<AuthState>,
     jobao_cod: String,
     jobinho_cod: String,
 ) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     match arizona_from_app(&app)?.audio_file(&jobao_cod, &jobinho_cod) {
         Ok(media) => show_media_window_with_native_fallback(app, media),
         Err(err) => Ok(ActionResponse::err(err)),
@@ -1576,7 +2764,12 @@ fn open_audio(
 }
 
 #[tauri::command]
-fn open_media_native(media_path: String) -> Result<ActionResponse, String> {
+fn open_media_native(
+    app: AppHandle,
+    auth: State<AuthState>,
+    media_path: String,
+) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     let path = PathBuf::from(media_path.trim());
     if !path.is_file() {
         return Ok(ActionResponse::err("Mídia não encontrada."));
@@ -1584,6 +2777,9 @@ fn open_media_native(media_path: String) -> Result<ActionResponse, String> {
 
     if !is_media_path(&path) {
         return Ok(ActionResponse::err("Tipo de mídia inválido."));
+    }
+    if !media_path_is_allowed(&app, &path)? {
+        return Ok(ActionResponse::err("Mídia fora das pastas configuradas."));
     }
 
     Ok(match arizona::open_start_file(&path) {
@@ -1595,40 +2791,54 @@ fn open_media_native(media_path: String) -> Result<ActionResponse, String> {
 #[tauri::command]
 fn reveal_video(
     app: AppHandle,
+    auth: State<AuthState>,
     jobao_cod: String,
     jobinho_cod: String,
     media_type: String,
 ) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     arizona_from_app(&app)?.reveal_video(&jobao_cod, &jobinho_cod, &media_type)
 }
 
 #[tauri::command]
 fn open_roteiro(
     app: AppHandle,
+    auth: State<AuthState>,
     jobao_cod: String,
     jobinho_cod: String,
 ) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     arizona_from_app(&app)?.open_roteiro(&jobao_cod, &jobinho_cod)
 }
 
 #[tauri::command]
-fn history_list(app: AppHandle) -> Result<Vec<history::HistoryEntry>, String> {
+fn history_list(
+    app: AppHandle,
+    auth: State<AuthState>,
+) -> Result<Vec<history::HistoryEntry>, String> {
+    require_authenticated(&auth)?;
     history::list(&app)
 }
 
 #[tauri::command]
-fn history_clear(app: AppHandle) -> Result<ActionResponse, String> {
+fn history_clear(app: AppHandle, auth: State<AuthState>) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     history::clear(&app)?;
     Ok(ActionResponse::ok())
 }
 
 #[tauri::command]
-fn history_copy_list(app: AppHandle) -> Result<Vec<history::CopyHistoryEntry>, String> {
+fn history_copy_list(
+    app: AppHandle,
+    auth: State<AuthState>,
+) -> Result<Vec<history::CopyHistoryEntry>, String> {
+    require_authenticated(&auth)?;
     history::list_copies(&app)
 }
 
 #[tauri::command]
-fn history_copy_clear(app: AppHandle) -> Result<ActionResponse, String> {
+fn history_copy_clear(app: AppHandle, auth: State<AuthState>) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     history::clear_copies(&app)?;
     Ok(ActionResponse::ok())
 }
@@ -1636,49 +2846,85 @@ fn history_copy_clear(app: AppHandle) -> Result<ActionResponse, String> {
 #[tauri::command]
 fn history_product_import_list(
     app: AppHandle,
+    auth: State<AuthState>,
 ) -> Result<Vec<history::ProductImportHistoryEntry>, String> {
+    require_authenticated(&auth)?;
     history::list_product_imports(&app)
 }
 
 #[tauri::command]
-fn history_product_import_clear(app: AppHandle) -> Result<ActionResponse, String> {
+fn history_product_import_clear(
+    app: AppHandle,
+    auth: State<AuthState>,
+) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     history::clear_product_imports(&app)?;
     Ok(ActionResponse::ok())
 }
 
 #[tauri::command]
-fn history_copy_open_folder(app: AppHandle, id: i64) -> Result<ActionResponse, String> {
+fn history_copy_open_folder(
+    app: AppHandle,
+    auth: State<AuthState>,
+    id: i64,
+) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     history::open_copy_folder(&app, id)?;
     Ok(ActionResponse::ok())
 }
 
 #[tauri::command]
-fn history_copy_reveal_media(app: AppHandle, id: i64) -> Result<ActionResponse, String> {
+fn history_copy_reveal_media(
+    app: AppHandle,
+    auth: State<AuthState>,
+    id: i64,
+) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     history::reveal_copy_media(&app, id)?;
     Ok(ActionResponse::ok())
 }
 
 #[tauri::command]
-fn history_copy_open_media(app: AppHandle, id: i64) -> Result<ActionResponse, String> {
+fn history_copy_open_media(
+    app: AppHandle,
+    auth: State<AuthState>,
+    id: i64,
+) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     let path = history::copy_media_file(&app, id)?;
     let title = media_title_from_path(&path);
     show_media_path_with_title(app, path, "video", title)
 }
 
 #[tauri::command]
-fn history_open_jobao_folder(app: AppHandle, id: i64) -> Result<ActionResponse, String> {
+fn history_open_jobao_folder(
+    app: AppHandle,
+    auth: State<AuthState>,
+    id: i64,
+) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     history::open_jobao_folder(&app, id)?;
     Ok(ActionResponse::ok())
 }
 
 #[tauri::command]
-fn history_reveal_after_project(app: AppHandle, id: i64) -> Result<ActionResponse, String> {
+fn history_reveal_after_project(
+    app: AppHandle,
+    auth: State<AuthState>,
+    id: i64,
+) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     history::reveal_after_project(&app, id)?;
     Ok(ActionResponse::ok())
 }
 
 #[tauri::command]
-fn history_open_after_project(app: AppHandle, id: i64) -> Result<ActionResponse, String> {
+fn history_open_after_project(
+    app: AppHandle,
+    auth: State<AuthState>,
+    id: i64,
+) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     history::open_after_project(&app, id)?;
     Ok(ActionResponse::ok())
 }
@@ -1686,9 +2932,11 @@ fn history_open_after_project(app: AppHandle, id: i64) -> Result<ActionResponse,
 #[tauri::command]
 fn history_reveal_media(
     app: AppHandle,
+    auth: State<AuthState>,
     id: i64,
     media_type: String,
 ) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     history::reveal_media(&app, id, &media_type)?;
     Ok(ActionResponse::ok())
 }
@@ -1696,22 +2944,33 @@ fn history_reveal_media(
 #[tauri::command]
 fn history_open_media(
     app: AppHandle,
+    auth: State<AuthState>,
     id: i64,
     media_type: String,
 ) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     let path = history::media_file(&app, id, &media_type)?;
     let title = media_title_from_path(&path);
     show_media_path_with_title(app, path, "video", title)
 }
 
 #[tauri::command]
-fn history_refresh_entry(app: AppHandle, id: i64) -> Result<ActionResponse, String> {
+fn history_refresh_entry(
+    app: AppHandle,
+    auth: State<AuthState>,
+    id: i64,
+) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     history::refresh_entry(&app, id)?;
     Ok(ActionResponse::ok())
 }
 
 #[tauri::command]
-fn history_refresh_all_entries(app: AppHandle) -> Result<ActionResponse, String> {
+fn history_refresh_all_entries(
+    app: AppHandle,
+    auth: State<AuthState>,
+) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     let (updated, skipped) = history::refresh_all_entries(&app)?;
     let message = if skipped == 0 {
         format!("Paths atualizados em {updated} registros.")
@@ -1725,19 +2984,27 @@ fn history_refresh_all_entries(app: AppHandle) -> Result<ActionResponse, String>
 #[tauri::command]
 fn project_name(
     app: AppHandle,
+    auth: State<AuthState>,
     jobao_cod: String,
     jobinho_cod: String,
 ) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
     arizona_from_app(&app)?.project_name(&jobao_cod, &jobinho_cod)
 }
 
 #[tauri::command]
-fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
+fn load_app_config(app: AppHandle, auth: State<AuthState>) -> Result<AppConfig, String> {
+    require_authenticated(&auth)?;
     settings::load(&app)
 }
 
 #[tauri::command]
-fn save_app_config(app: AppHandle, config: AppConfig) -> Result<AppConfig, String> {
+fn save_app_config(
+    app: AppHandle,
+    auth: State<AuthState>,
+    config: AppConfig,
+) -> Result<AppConfig, String> {
+    require_authenticated(&auth)?;
     let config = settings::validate_config(config)?;
     register_after_command_shortcuts(&app, &config)?;
     settings::save(&app, config)
@@ -1840,6 +3107,33 @@ fn is_media_path(path: &Path) -> bool {
             )
         })
         .unwrap_or(false)
+}
+
+fn media_path_is_allowed(app: &AppHandle, path: &Path) -> Result<bool, String> {
+    let candidate = fs::canonicalize(path)
+        .map_err(|error| format!("Não foi possível validar {}: {error}", path.display()))?;
+    let config = settings::load_validated(app)?;
+    let roots = [config.drive, config.produtos_path];
+
+    for root in roots {
+        let root = PathBuf::from(root);
+        let Ok(root) = fs::canonicalize(root) else {
+            continue;
+        };
+        if path_starts_with_windows_case_insensitive(&candidate, &root) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn path_starts_with_windows_case_insensitive(path: &Path, root: &Path) -> bool {
+    let path = path.to_string_lossy().replace('/', "\\").to_lowercase();
+    let mut root = root.to_string_lossy().replace('/', "\\").to_lowercase();
+    while root.ends_with('\\') {
+        root.pop();
+    }
+    path == root || path.starts_with(&format!("{root}\\"))
 }
 
 #[cfg(windows)]

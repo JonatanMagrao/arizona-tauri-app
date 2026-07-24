@@ -92,7 +92,13 @@ function SecondaryWindow() {
       "Não foi possível fechar a janela."
     );
 
-    if (!result.ok) showToast(result.message, "error");
+    if (!result.ok) {
+      showToast(result.message, "error");
+      return;
+    }
+
+    hideToast();
+    setSecondaryState(DEFAULT_SECONDARY_STATE);
   };
 
   useEffect(() => {
@@ -194,11 +200,6 @@ function SecondaryTitlebar({ title, view, onClose }) {
     };
   }, []);
 
-  const startWindowDrag = (event) => {
-    if (event.button !== 0) return;
-    getCurrentWindow().startDragging().catch(() => {});
-  };
-
   const toggleMaximize = async () => {
     const currentWindow = getCurrentWindow();
     try {
@@ -210,20 +211,22 @@ function SecondaryTitlebar({ title, view, onClose }) {
   };
 
   return (
-    <header className="secondary-titlebar" aria-label="Barra da janela">
+    <header
+      className="secondary-titlebar"
+      aria-label="Barra da janela"
+    >
       <div
         className="secondary-titlebar__brand"
-        data-tauri-drag-region
-        onMouseDown={startWindowDrag}
       >
-        <img className="secondary-titlebar__logo" src={appLogo} alt="" aria-hidden="true" />
+        <img
+          className="secondary-titlebar__logo"
+          src={appLogo}
+          alt=""
+          aria-hidden="true"
+        />
         <span>{useSingleTitle ? title : "Arizona App"}</span>
       </div>
-      <div
-        className="secondary-titlebar__drag"
-        data-tauri-drag-region
-        onMouseDown={startWindowDrag}
-      >
+      <div className="secondary-titlebar__drag">
         {!useSingleTitle && <span>{title}</span>}
       </div>
       <div className="secondary-titlebar__controls">
@@ -650,7 +653,7 @@ function SettingsView({ auth, showError, showSuccess }) {
   };
 
   const requestReleaseDeviceAndExit = () => {
-    if (!auth?.accessToken || !auth?.organizationId || !auth?.currentMemberId) {
+    if (!auth?.organizationId || !auth?.currentMemberId) {
       showError("Sessao incompleta. Entre novamente para liberar este dispositivo.");
       return;
     }
@@ -659,7 +662,7 @@ function SettingsView({ auth, showError, showSuccess }) {
   };
 
   const releaseDeviceAndExit = async () => {
-    if (!auth?.accessToken || !auth?.organizationId || !auth?.currentMemberId) {
+    if (!auth?.organizationId || !auth?.currentMemberId) {
       showError("Sessao incompleta. Entre novamente para liberar este dispositivo.");
       return;
     }
@@ -667,8 +670,7 @@ function SettingsView({ auth, showError, showSuccess }) {
     setIsReleaseConfirmOpen(false);
     setIsReleasingDevice(true);
     try {
-      await releaseCurrentDevice(auth);
-      await invokeCommand(commandNames.clearSecureAuth);
+      await releaseCurrentDevice();
       await invokeCommand(commandNames.exitApp);
     } catch (error) {
       showError(adminErrorMessage(error));
@@ -882,7 +884,7 @@ function SettingsView({ auth, showError, showSuccess }) {
                 type="button"
                 className="btn btn-outline settings-release-button"
                 onClick={requestReleaseDeviceAndExit}
-                disabled={generalActionBusy || !auth?.accessToken || !auth?.organizationId || !auth?.currentMemberId}
+                disabled={generalActionBusy || !auth?.organizationId || !auth?.currentMemberId}
               >
                 {isReleasingDevice ? "Liberando..." : "Liberar e sair"}
               </button>
@@ -1342,22 +1344,7 @@ function getInitialSecondaryState() {
   if (window.__ARIZONA_SECONDARY_STATE__) {
     return normalizeSecondaryState(window.__ARIZONA_SECONDARY_STATE__);
   }
-
-  try {
-    const params = new URLSearchParams(window.location.search);
-    return normalizeSecondaryState({
-      view: params.get("view"),
-      jobaoCod: params.get("jobao") || "",
-      mediaPath: params.get("path") || "",
-      mediaKind: params.get("kind") || "video",
-      mediaTitle: params.get("title") || "",
-      productReport: null,
-      adminAuth: null,
-      sessionAuth: null,
-    });
-  } catch (error) {
-    return DEFAULT_SECONDARY_STATE;
-  }
+  return DEFAULT_SECONDARY_STATE;
 }
 
 function normalizeSecondaryState(payload) {
@@ -1415,7 +1402,6 @@ function normalizeAdminAuth(value) {
   if (!value || typeof value !== "object") return null;
 
   return {
-    accessToken: String(value.accessToken || value.access_token || "").trim(),
     organizationId: String(value.organizationId || value.organization_id || "").trim(),
     currentMemberId: String(value.currentMemberId || value.current_member_id || "").trim(),
     email: String(value.email || "").trim(),
@@ -1427,7 +1413,6 @@ function normalizeSessionAuth(value) {
   if (!value || typeof value !== "object") return null;
 
   return {
-    accessToken: String(value.accessToken || value.access_token || "").trim(),
     organizationId: String(value.organizationId || value.organization_id || "").trim(),
     currentMemberId: String(value.currentMemberId || value.current_member_id || "").trim(),
     email: String(value.email || "").trim(),

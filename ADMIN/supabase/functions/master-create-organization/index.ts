@@ -11,12 +11,39 @@ import {
   requirePublishableKey,
 } from "../_shared/supabase.ts";
 import { resolveMaster } from "../_shared/actors.ts";
+import {
+  ACCESS_POLICY_SELECT,
+  DEFAULT_ACCESS_POLICY,
+  accessPolicy,
+  accessPolicyColumns,
+  type AccessPolicy,
+} from "../_shared/access-policy.ts";
+import {
+  currentAuthDayStart,
+  normalizeDailyAuthResetHour,
+} from "../_shared/auth-cycle.ts";
+import {
+  enforceRateLimit,
+  rateLimitResponse,
+  requireRecentTotp,
+} from "../_shared/security.ts";
 
 type CreateOrganizationBody = {
   seatsAllowed?: unknown;
   licenseExpiresOn?: unknown;
   licenseIsIndefinite?: unknown;
   dailyAuthResetHour?: unknown;
+  activationCodeTtlMinutes?: unknown;
+  activationAttemptLimit?: unknown;
+  activationAttemptWindowMinutes?: unknown;
+  activationGenerationLimit?: unknown;
+  activationGenerationWindowMinutes?: unknown;
+  deviceReleaseLimit?: unknown;
+  deviceReleaseWindowMinutes?: unknown;
+  deviceSwitchIntervalDays?: unknown;
+  deviceSwitchCooldownDays?: unknown;
+  deviceSwitchCooldownMinutes?: unknown;
+  deviceRecoveryWindowMinutes?: unknown;
   users?: unknown;
   managers?: unknown;
   adminName?: unknown;
@@ -83,7 +110,54 @@ function cleanLicenseUsers(body: CreateOrganizationBody): LicenseUserInput[] {
   });
 }
 
+function parseAccessPolicy(body: CreateOrganizationBody): AccessPolicy | null {
+  const values = {
+    activation_code_ttl_minutes: Number(
+      body.activationCodeTtlMinutes ?? DEFAULT_ACCESS_POLICY.activationCodeTtlMinutes,
+    ),
+    activation_attempt_limit: Number(
+      body.activationAttemptLimit ?? DEFAULT_ACCESS_POLICY.activationAttemptLimit,
+    ),
+    activation_attempt_window_minutes: Number(
+      body.activationAttemptWindowMinutes
+        ?? DEFAULT_ACCESS_POLICY.activationAttemptWindowMinutes,
+    ),
+    activation_generation_limit: Number(
+      body.activationGenerationLimit ?? DEFAULT_ACCESS_POLICY.activationGenerationLimit,
+    ),
+    activation_generation_window_minutes: Number(
+      body.activationGenerationWindowMinutes
+        ?? DEFAULT_ACCESS_POLICY.activationGenerationWindowMinutes,
+    ),
+    device_release_limit: Number(
+      body.deviceReleaseLimit ?? DEFAULT_ACCESS_POLICY.deviceReleaseLimit,
+    ),
+    device_release_window_minutes: Number(
+      body.deviceReleaseWindowMinutes ?? DEFAULT_ACCESS_POLICY.deviceReleaseWindowMinutes,
+    ),
+    device_switch_interval_days: Number(
+      body.deviceSwitchIntervalDays
+      ?? body.deviceSwitchCooldownDays
+      ?? (
+        body.deviceSwitchCooldownMinutes === undefined
+          ? DEFAULT_ACCESS_POLICY.deviceSwitchIntervalDays
+          : Math.ceil(Number(body.deviceSwitchCooldownMinutes) / 1440)
+      ),
+    ),
+    device_recovery_window_minutes: Number(
+      body.deviceRecoveryWindowMinutes ?? DEFAULT_ACCESS_POLICY.deviceRecoveryWindowMinutes,
+    ),
+  };
+  const policy = accessPolicy(values);
+  const normalized = accessPolicyColumns(policy);
+  return Object.entries(values).every(([key, value]) => normalized[key] === value)
+    ? policy
+    : null;
+}
+
 function knownError(error: unknown): Response | null {
+  const limited = rateLimitResponse(error);
+  if (limited) return limited;
   const code = typeof error === "object" && error && "code" in error ? String(error.code) : "";
   const message = error instanceof Error ? error.message : String(error || "");
   const normalized = message.toLowerCase();
@@ -93,6 +167,9 @@ function knownError(error: unknown): Response | null {
   }
   if (message === "missing_bearer_token" || message === "invalid_user_token") {
     return errorResponse("invalid_user_token", "Login session is invalid.", 401);
+  }
+  if (message === "mfa_required" || message === "daily_mfa_required") {
+    return errorResponse("daily_mfa_required", "Confirm MFA to continue.", 401);
   }
   if (message.startsWith("missing_supabase_") || normalized.includes("invalid api key")) {
     return errorResponse("function_config_error", "Function configuration is incomplete.", 500);
@@ -138,6 +215,7 @@ Deno.serve(async (req) => {
     const licenseIsIndefinite = body.licenseIsIndefinite === true;
     const licenseExpiresOn = licenseIsIndefinite ? null : cleanDateInput(body.licenseExpiresOn);
     const dailyAuthResetHour = Number(body.dailyAuthResetHour ?? 4);
+    const policy = parseAccessPolicy(body);
     const users = cleanLicenseUsers(body);
 
     if (!Number.isInteger(seatsAllowed) || seatsAllowed < 1) {
@@ -147,6 +225,13 @@ Deno.serve(async (req) => {
       return errorResponse(
         "invalid_daily_auth_reset_hour",
         "dailyAuthResetHour must be an integer between 0 and 23.",
+        400,
+      );
+    }
+    if (!policy) {
+      return errorResponse(
+        "invalid_access_policy",
+        "Access policy values are outside the allowed range.",
         400,
       );
     }
@@ -177,11 +262,21 @@ Deno.serve(async (req) => {
     const { data: existingOrganization, error: existingOrganizationError } = await admin
       .schema("licensing")
       .from("organizations")
-      .select("id,name,seats_allowed,allowed_email_domain,license_expires_on,daily_auth_reset_hour,status")
+      .select(
+        `id,name,seats_allowed,allowed_email_domain,license_expires_on,daily_auth_reset_hour,status,${ACCESS_POLICY_SELECT}`,
+      )
       .eq("slug", slug)
       .maybeSingle();
 
     if (existingOrganizationError) throw existingOrganizationError;
+    requireRecentTotp(
+      req,
+      currentAuthDayStart(
+        new Date(),
+        normalizeDailyAuthResetHour(existingOrganization?.daily_auth_reset_hour),
+      ),
+    );
+    await enforceRateLimit(admin, "master.save.actor", master.id, 20, 3600);
 
     if (existingOrganization) {
       const { data: existingMembers, error: existingMembersError } = await admin
@@ -228,10 +323,13 @@ Deno.serve(async (req) => {
         allowed_email_domain: allowedEmailDomain,
         license_expires_on: licenseExpiresOn,
         daily_auth_reset_hour: dailyAuthResetHour,
+        ...accessPolicyColumns(policy),
         status: "active",
         created_by_master_id: master.id,
       }, { onConflict: "slug" })
-      .select("id,name,slug,seats_allowed,allowed_email_domain,license_expires_on,daily_auth_reset_hour,status")
+      .select(
+        `id,name,slug,seats_allowed,allowed_email_domain,license_expires_on,daily_auth_reset_hour,status,${ACCESS_POLICY_SELECT}`,
+      )
       .single();
 
     if (orgError) {
@@ -367,6 +465,7 @@ Deno.serve(async (req) => {
         allowedEmailDomain: existingOrganization.allowed_email_domain,
         licenseExpiresOn: existingOrganization.license_expires_on,
         dailyAuthResetHour: Number(existingOrganization.daily_auth_reset_hour ?? 4),
+        accessPolicy: accessPolicy(existingOrganization),
         status: existingOrganization.status,
       }
       : null;
@@ -377,6 +476,7 @@ Deno.serve(async (req) => {
       allowedEmailDomain,
       licenseExpiresOn,
       dailyAuthResetHour,
+      accessPolicy: policy,
       status: organization.status,
     };
     const auditRows: Record<string, unknown>[] = [
@@ -448,6 +548,7 @@ Deno.serve(async (req) => {
     console.error(error);
     const response = knownError(error);
     if (response) return response;
-    return errorResponse("internal_error", safeInternalMessage(error), 500);
+    console.error(safeInternalMessage(error));
+    return errorResponse("internal_error", "Unable to save the license.", 500);
   }
 });

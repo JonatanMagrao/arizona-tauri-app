@@ -39,9 +39,9 @@ Existem dois comportamentos independentes:
    - Ao executar um atalho, o Tauri materializa o JSX nos dados locais do app e
      chama `AfterFX.exe -r <acao.jsx>`.
 
-O backend pode continuar retornando `bridgeToken` temporariamente para clientes
-antigos. O Tauri atual ignora esse campo. Não remova secrets/chaves legadas do
-AEX durante a migração sem uma decisão explícita de compatibilidade.
+O backend e o Tauri atuais não geram nem retornam `bridgeToken`. Os
+secrets/chaves legadas do AEX continuam arquivados e não devem ser removidos
+sem uma decisão explícita de rotação/aposentadoria definitiva.
 
 ## Fonte única da verdade das chaves da extensão CEP
 
@@ -142,7 +142,8 @@ O ciclo de autenticação diária é separado do refresh token do Supabase. Cada
 licença possui `daily_auth_reset_hour`, configurável no painel Admin como
 “Renovação diária”, em `America/Sao_Paulo`. O padrão é `04:00`; horários
 anteriores ao corte ainda pertencem ao ciclo do dia anterior. A Edge Function
-`validate-license` limita o recibo CEP e a sessão local ao próximo corte.
+`validate-license` limita o recibo CEP a 15 minutos e nunca o estende além do
+próximo corte ou da validade da licença.
 
 Build de diagnóstico:
 

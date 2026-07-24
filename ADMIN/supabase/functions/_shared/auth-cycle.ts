@@ -83,3 +83,9 @@ export function nextAuthDayStart(value: Date, resetHour: number): Date {
   const boundaryDate = calendarDateParts(value, parts.hour < resetHour ? 0 : 1);
   return zonedDateTime(boundaryDate.year, boundaryDate.month, boundaryDate.day, resetHour);
 }
+
+export function currentAuthDayStart(value: Date, resetHour: number): Date {
+  const parts = zonedParts(value);
+  const boundaryDate = calendarDateParts(value, parts.hour < resetHour ? -1 : 0);
+  return zonedDateTime(boundaryDate.year, boundaryDate.month, boundaryDate.day, resetHour);
+}

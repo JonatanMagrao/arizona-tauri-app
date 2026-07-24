@@ -28,6 +28,28 @@ O horário de renovação diária é configurado por licença no painel Admin. O
 padrão é `04:00` em `America/Sao_Paulo`; isso controla a sessão diária e o
 recibo CEP, não a expiração global do refresh token do Supabase.
 
+O usuário final não cria nem digita senha. No primeiro acesso, um master ou
+gestor autorizado gera no Tauri um código de uso único, com validade definida
+na política da licença (15 minutos por padrão). O usuário ativa a conta com
+e-mail + código, cadastra TOTP no
+autenticador e, nos dias seguintes, confirma somente o TOTP após a renovação
+das 04:00. O código é guardado no Supabase apenas como hash e aparece em claro
+uma única vez para quem o emitiu.
+
+Quando um device é liberado, o código de recuperação revoga o device e as
+sessões de licença, mas preserva o fator TOTP já verificado. O usuário confirma
+a troca com a mesma entrada `Arizona App` do autenticador; um QR novo só é
+criado quando a conta ainda não possui fator verificado.
+
+Novos fatores TOTP enviados pelo Tauri usam `Arizona App` como issuer; o Admin
+usa `Arizona Admin`. O nome de um fator que já foi cadastrado no autenticador
+não é alterado retroativamente: é necessário cadastrar um fator novo.
+
+O Tauri é a autoridade da sessão local: access token, refresh token e recibo
+assinado não são entregues ao JavaScript da interface. O recibo offline da
+extensão CEP dura no máximo 15 minutos e é removido quando o backend revoga o
+acesso e o Tauri consegue sincronizar.
+
 ## Comandos do dia a dia
 
 Tudo junto:

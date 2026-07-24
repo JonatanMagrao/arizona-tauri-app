@@ -14,8 +14,13 @@ export function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-export function errorResponse(code: string, message: string, status = 400): Response {
-  return jsonResponse({ ok: false, error: { code, message } }, status);
+export function errorResponse(
+  code: string,
+  message: string,
+  status = 400,
+  details: Record<string, unknown> = {},
+): Response {
+  return jsonResponse({ ok: false, error: { code, message, ...details } }, status);
 }
 
 export async function readJsonBody<T extends Record<string, unknown>>(req: Request): Promise<T> {

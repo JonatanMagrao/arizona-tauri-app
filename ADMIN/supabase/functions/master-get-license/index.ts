@@ -10,11 +10,23 @@ import {
   requirePublishableKey,
 } from "../_shared/supabase.ts";
 import { resolveMaster } from "../_shared/actors.ts";
+import { ACCESS_POLICY_SELECT } from "../_shared/access-policy.ts";
+import {
+  currentAuthDayStart,
+  normalizeDailyAuthResetHour,
+} from "../_shared/auth-cycle.ts";
+import {
+  enforceRateLimit,
+  rateLimitResponse,
+  requireRecentTotp,
+} from "../_shared/security.ts";
 
 const ARIZONA_ORGANIZATION_SLUG = "arizona";
 const ARIZONA_ALLOWED_EMAIL_DOMAIN = "arizona.global";
 
 function knownError(error: unknown): Response | null {
+  const limited = rateLimitResponse(error);
+  if (limited) return limited;
   const message = error instanceof Error ? error.message : String(error || "");
   const normalized = message.toLowerCase();
 
@@ -23,6 +35,9 @@ function knownError(error: unknown): Response | null {
   }
   if (message === "missing_bearer_token" || message === "invalid_user_token") {
     return errorResponse("invalid_user_token", "Login session is invalid.", 401);
+  }
+  if (message === "mfa_required" || message === "daily_mfa_required") {
+    return errorResponse("daily_mfa_required", "Confirm MFA to continue.", 401);
   }
   if (message.startsWith("missing_supabase_") || normalized.includes("invalid api key")) {
     return errorResponse("function_config_error", "Function configuration is incomplete.", 500);
@@ -54,11 +69,21 @@ Deno.serve(async (req) => {
     const { data: organization, error: organizationError } = await admin
       .schema("licensing")
       .from("organizations")
-      .select("id,name,slug,seats_allowed,allowed_email_domain,license_expires_on,daily_auth_reset_hour,status,created_at,updated_at")
+      .select(
+        `id,name,slug,seats_allowed,allowed_email_domain,license_expires_on,daily_auth_reset_hour,status,created_at,updated_at,${ACCESS_POLICY_SELECT}`,
+      )
       .eq("slug", ARIZONA_ORGANIZATION_SLUG)
       .maybeSingle();
 
     if (organizationError) throw organizationError;
+    requireRecentTotp(
+      req,
+      currentAuthDayStart(
+        new Date(),
+        normalizeDailyAuthResetHour(organization?.daily_auth_reset_hour),
+      ),
+    );
+    await enforceRateLimit(admin, "master.get.actor", master.id, 120, 3600);
     if (!organization) {
       return jsonResponse({ ok: true, organization: null, admin: null, consumedSeats: 0 });
     }

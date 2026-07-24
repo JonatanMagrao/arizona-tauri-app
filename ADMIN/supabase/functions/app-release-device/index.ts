@@ -11,6 +11,15 @@ import {
   requirePublishableKey,
 } from "../_shared/supabase.ts";
 import { resolveMember } from "../_shared/actors.ts";
+import {
+  ACCESS_POLICY_SELECT,
+  accessPolicy,
+} from "../_shared/access-policy.ts";
+import { deviceSwitchLock } from "../_shared/device-switch.ts";
+import {
+  enforceRateLimit,
+  rateLimitResponse,
+} from "../_shared/security.ts";
 
 type ReleaseDeviceBody = {
   source?: unknown;
@@ -39,11 +48,21 @@ Deno.serve(async (req) => {
     if (!member) {
       return errorResponse("member_not_authorized", "This email is not authorized.", 403);
     }
+    await enforceRateLimit(admin, "device.self_release.request", member.id, 30, 3600);
+
+    const { data: organization, error: organizationError } = await admin
+      .schema("licensing")
+      .from("organizations")
+      .select(ACCESS_POLICY_SELECT)
+      .eq("id", member.organizationId)
+      .maybeSingle();
+    if (organizationError) throw organizationError;
+    const policy = accessPolicy(organization);
 
     const { data: activeDevices, error: devicesError } = await admin
       .schema("licensing")
       .from("devices")
-      .select("id,install_id,device_label,status")
+      .select("id,install_id,device_label,status,activated_at")
       .eq("organization_id", member.organizationId)
       .eq("member_id", member.id)
       .eq("status", "active");
@@ -54,6 +73,27 @@ Deno.serve(async (req) => {
     if (!activeDeviceIds.length) {
       return jsonResponse({ ok: true, released: false, devices: [] });
     }
+    const switchLock = (activeDevices || [])
+      .map((device) => deviceSwitchLock(
+        device.activated_at,
+        policy.deviceSwitchIntervalDays,
+      ))
+      .find(Boolean);
+    if (switchLock) {
+      return errorResponse(
+        "device_switch_interval",
+        "The active device has not completed the minimum interval between switches.",
+        409,
+        { ...switchLock },
+      );
+    }
+    await enforceRateLimit(
+      admin,
+      "device.release.member",
+      member.id,
+      policy.deviceReleaseLimit,
+      policy.deviceReleaseWindowMinutes * 60,
+    );
 
     const now = new Date().toISOString();
     const { data: releasedDevices, error: releaseError } = await admin
@@ -61,6 +101,8 @@ Deno.serve(async (req) => {
       .from("devices")
       .update({
         status: "revoked",
+        revoked_at: now,
+        revoked_reason: "device_self_released",
         updated_at: now,
       })
       .in("id", activeDeviceIds)
@@ -112,6 +154,8 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     console.error(error);
+    const limited = rateLimitResponse(error);
+    if (limited) return limited;
     const message = String((error as { message?: unknown })?.message || error || "");
 
     if (message === "invalid_publishable_key") {

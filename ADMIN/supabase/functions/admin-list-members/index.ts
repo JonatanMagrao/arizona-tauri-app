@@ -11,6 +11,8 @@ import {
   requirePublishableKey,
 } from "../_shared/supabase.ts";
 import { resolveMaster, resolveMember } from "../_shared/actors.ts";
+import { currentAuthDayStart, normalizeDailyAuthResetHour } from "../_shared/auth-cycle.ts";
+import { enforceRateLimit, requireRecentTotp } from "../_shared/security.ts";
 
 type ListMembersBody = {
   organizationId?: unknown;
@@ -46,7 +48,7 @@ Deno.serve(async (req) => {
     const { data: organization, error: organizationError } = await admin
       .schema("licensing")
       .from("organizations")
-      .select("id,name,seats_allowed,status,license_expires_on")
+      .select("id,name,seats_allowed,status,license_expires_on,daily_auth_reset_hour")
       .eq("id", organizationId)
       .maybeSingle();
 
@@ -54,11 +56,19 @@ Deno.serve(async (req) => {
     if (!organization || organization.status !== "active") {
       return errorResponse("organization_not_active", "Organization is not active.", 403);
     }
+    requireRecentTotp(
+      req,
+      currentAuthDayStart(
+        new Date(),
+        normalizeDailyAuthResetHour(organization.daily_auth_reset_hour),
+      ),
+    );
+    await enforceRateLimit(admin, "admin.list.actor", `${actor.kind}:${actor.id}`, 360, 3600);
 
     const { data: members, error: membersError } = await admin
       .schema("licensing")
       .from("members")
-      .select("id,name,email,role,status,created_at")
+      .select("id,name,email,role,status,auth_user_id,created_at")
       .eq("organization_id", organizationId)
       .in("role", ["admin", "user"])
       .in("status", ["invited", "active"])
@@ -86,6 +96,7 @@ Deno.serve(async (req) => {
       email: member.email,
       role: member.role,
       status: member.status,
+      hasAuthAccount: Boolean(member.auth_user_id),
       hasActiveDevice: deviceMemberIds.has(member.id),
     }));
 
@@ -116,6 +127,19 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     console.error(error);
+    const message = String((error as { message?: unknown })?.message || error || "");
+    if (message === "mfa_required" || message === "daily_mfa_required") {
+      return errorResponse("daily_mfa_required", "Confirm MFA to continue.", 401);
+    }
+    if (message === "rate_limited") {
+      return errorResponse("rate_limited", "Try again later.", 429);
+    }
+    if (message === "invalid_user_token" || message === "missing_bearer_token") {
+      return errorResponse("invalid_user_token", "Session is invalid.", 401);
+    }
+    if (message === "invalid_publishable_key") {
+      return errorResponse("invalid_publishable_key", "Invalid publishable key.", 401);
+    }
     return errorResponse("internal_error", "Unable to list members.", 500);
   }
 });

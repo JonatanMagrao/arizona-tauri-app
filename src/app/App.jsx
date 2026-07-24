@@ -6,7 +6,7 @@ import LinksPanel from "../features/main/LinksPanel";
 import LoginWindow from "../features/auth/LoginWindow";
 import SecondaryWindow from "../features/secondary/SecondaryWindow";
 import { useAutoHideToast } from "../hooks/useAutoHideToast";
-import { authErrorMessage, authToSession, validateActiveSession } from "../services/auth";
+import { pollSecureSession } from "../services/auth";
 import { commandNames, invokeAction, invokeCommand } from "../services/tauriCommands";
 import { DEFAULT_SETTINGS, normalizeSettings } from "../utils/settings";
 import { currentWindowLabel, isSecondaryWindowRoute } from "../utils/windowRouting";
@@ -202,13 +202,11 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
   useEffect(() => {
     let mounted = true;
 
-    const applyValidatedAuth = async (nextAuth) => {
-      if (!nextAuth) return null;
-      const nextSession = authToSession(nextAuth);
+    const applyValidatedAuth = async (nextSession) => {
+      if (!nextSession) return null;
       const currentSession = authSessionRef.current;
       if (!authSessionChanged(currentSession, nextSession)) return currentSession || nextSession;
 
-      await invokeCommand(commandNames.updateAuthSession, { session: nextSession }).catch(() => {});
       if (!mounted) return nextSession;
 
       const lostAdminAccess = currentSession?.role === "admin" && nextSession.role !== "admin";
@@ -225,21 +223,24 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
 
     const refreshAuth = async () => {
       const currentSession = authSessionRef.current;
-      if (!currentSession?.accessToken || authRefreshInFlightRef.current) return;
+      if (!currentSession || authRefreshInFlightRef.current) return;
 
       authRefreshInFlightRef.current = true;
       authRefreshPromiseRef.current = (async () => {
-        const nextAuth = await validateActiveSession(currentSession, { appVersion: "" });
+        const flow = await pollSecureSession({ appVersion: "" });
         if (!mounted) return null;
-        return applyValidatedAuth(nextAuth);
+        if (flow?.state === "authenticated") {
+          return applyValidatedAuth(flow.session);
+        }
+        if (flow?.code === "network_error") {
+          showToast(flow.message || "Não foi possível renovar a licença agora.", "error");
+        }
+        return null;
       })();
       try {
         await authRefreshPromiseRef.current;
       } catch (error) {
-        const code = String(error?.code || "");
-        if (code === "daily_login_required" || code === "stored_session_invalid") {
-          showToast(authErrorMessage(error), "error");
-        }
+        showToast(String(error || "Não foi possível renovar a licença."), "error");
       } finally {
         authRefreshPromiseRef.current = null;
         authRefreshInFlightRef.current = false;
@@ -565,11 +566,6 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
     await getCurrentWindow().minimize();
   };
 
-  const startWindowDrag = (event) => {
-    if (event.button !== 0) return;
-    getCurrentWindow().startDragging().catch(() => {});
-  };
-
   const openSecondaryView = async (view, args = {}) => {
     await run(
       commandNames.openSecondaryWindow,
@@ -604,18 +600,17 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
       <header className="app-titlebar" aria-label="Barra da janela">
         <div
           className="app-titlebar__brand"
-          data-tauri-drag-region
-          onMouseDown={startWindowDrag}
           title={titlebarLabel}
         >
-          <img className="app-titlebar__logo" src={appLogo} alt="" aria-hidden="true" />
+          <img
+            className="app-titlebar__logo"
+            src={appLogo}
+            alt=""
+            aria-hidden="true"
+          />
           <span>{titlebarLabel}</span>
         </div>
-        <div
-          className="app-titlebar__drag"
-          data-tauri-drag-region
-          onMouseDown={startWindowDrag}
-        />
+        <div className="app-titlebar__drag" />
         <div className="app-titlebar__controls">
           <button
             className={`titlebar-icon-btn titlebar-icon-btn--pin ${isAlwaysOnTop ? "titlebar-icon-btn--active" : ""}`}
@@ -842,9 +837,6 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
 function authSessionChanged(currentSession, nextSession) {
   if (!currentSession || !nextSession) return currentSession !== nextSession;
   return [
-    "accessToken",
-    "refreshToken",
-    "cepLicenseReceipt",
     "email",
     "memberId",
     "role",

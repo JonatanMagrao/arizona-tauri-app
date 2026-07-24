@@ -101,16 +101,9 @@ fn release_device_for_uninstall() -> Result<ReleaseOutcome, String> {
         .set("content-type", "application/json")
         .send_json(serde_json::json!({ "source": "nsis_uninstall" }));
 
-    let release_response = match self_release {
-        Ok(response) => read_release_response(response)?,
-        // Allows administrators to uninstall during a phased rollout before
-        // app-release-device is deployed. Authorization is still enforced by
-        // the existing admin-release-device Edge Function.
-        Err(ureq::Error::Status(404, _)) => {
-            release_device_through_admin_endpoint(&agent, &secure_auth, access_token)?
-        }
-        Err(error) => return Err(request_error("release the device", error)),
-    };
+    let release_response = self_release
+        .map_err(|error| request_error("release the device", error))
+        .and_then(read_release_response)?;
 
     if !release_response.ok {
         return Err("The device release endpoint did not confirm the operation.".to_string());
@@ -118,39 +111,6 @@ fn release_device_for_uninstall() -> Result<ReleaseOutcome, String> {
 
     clear_local_auth()?;
     Ok(ReleaseOutcome::Released)
-}
-
-fn release_device_through_admin_endpoint(
-    agent: &ureq::Agent,
-    secure_auth: &crate::SecureAuthRecord,
-    access_token: &str,
-) -> Result<ReleaseDeviceResponse, String> {
-    let organization_id = secure_auth
-        .organization_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "The secure session has no organization id.".to_string())?;
-    let member_id = secure_auth
-        .member_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "The secure session has no member id.".to_string())?;
-
-    let release_url = format!("{SUPABASE_URL}/functions/v1/admin-release-device");
-    let response = agent
-        .post(&release_url)
-        .set("apikey", SUPABASE_PUBLISHABLE_KEY)
-        .set("authorization", &format!("Bearer {access_token}"))
-        .set("content-type", "application/json")
-        .send_json(serde_json::json!({
-            "organizationId": organization_id,
-            "memberId": member_id,
-        }))
-        .map_err(|error| request_error("release the device as administrator", error))?;
-
-    read_release_response(response)
 }
 
 fn read_release_response(response: ureq::Response) -> Result<ReleaseDeviceResponse, String> {

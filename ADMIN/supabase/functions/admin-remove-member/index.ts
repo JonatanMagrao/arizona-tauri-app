@@ -11,6 +11,8 @@ import {
   requirePublishableKey,
 } from "../_shared/supabase.ts";
 import { resolveMaster, resolveMember } from "../_shared/actors.ts";
+import { currentAuthDayStart, normalizeDailyAuthResetHour } from "../_shared/auth-cycle.ts";
+import { enforceRateLimit, requireRecentTotp } from "../_shared/security.ts";
 
 type RemoveMemberBody = {
   organizationId?: unknown;
@@ -46,6 +48,25 @@ Deno.serve(async (req) => {
     if (!actor || (actor.kind === "member" && actor.role !== "admin")) {
       return errorResponse("forbidden", "Only masters or organization admins can remove members.", 403);
     }
+
+    const { data: organization, error: organizationError } = await admin
+      .schema("licensing")
+      .from("organizations")
+      .select("status,daily_auth_reset_hour")
+      .eq("id", organizationId)
+      .maybeSingle();
+    if (organizationError) throw organizationError;
+    if (!organization || organization.status !== "active") {
+      return errorResponse("organization_not_active", "Organization is not active.", 403);
+    }
+    requireRecentTotp(
+      req,
+      currentAuthDayStart(
+        new Date(),
+        normalizeDailyAuthResetHour(organization.daily_auth_reset_hour),
+      ),
+    );
+    await enforceRateLimit(admin, "admin.remove.actor", `${actor.kind}:${actor.id}`, 20, 3600);
 
     if (actor.kind === "member" && actor.id === memberId) {
       return errorResponse("forbidden", "Organization admins cannot remove themselves.", 403);
@@ -145,6 +166,19 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     console.error(error);
+    const message = String((error as { message?: unknown })?.message || error || "");
+    if (message === "mfa_required" || message === "daily_mfa_required") {
+      return errorResponse("daily_mfa_required", "Confirm MFA to continue.", 401);
+    }
+    if (message === "rate_limited") {
+      return errorResponse("rate_limited", "Try again later.", 429);
+    }
+    if (message === "invalid_user_token" || message === "missing_bearer_token") {
+      return errorResponse("invalid_user_token", "Session is invalid.", 401);
+    }
+    if (message === "invalid_publishable_key") {
+      return errorResponse("invalid_publishable_key", "Invalid publishable key.", 401);
+    }
     return errorResponse("internal_error", "Unable to remove member.", 500);
   }
 });

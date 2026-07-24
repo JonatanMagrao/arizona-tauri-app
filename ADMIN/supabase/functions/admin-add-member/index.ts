@@ -11,6 +11,8 @@ import {
   requirePublishableKey,
 } from "../_shared/supabase.ts";
 import { resolveMaster, resolveMember } from "../_shared/actors.ts";
+import { currentAuthDayStart, normalizeDailyAuthResetHour } from "../_shared/auth-cycle.ts";
+import { enforceRateLimit, requireRecentTotp } from "../_shared/security.ts";
 
 type AddMemberBody = {
   organizationId?: unknown;
@@ -85,7 +87,7 @@ Deno.serve(async (req) => {
     const { data: org, error: orgError } = await admin
       .schema("licensing")
       .from("organizations")
-      .select("id,status,seats_allowed,allowed_email_domain,license_expires_on")
+      .select("id,status,seats_allowed,allowed_email_domain,license_expires_on,daily_auth_reset_hour")
       .eq("id", organizationId)
       .maybeSingle();
 
@@ -93,11 +95,23 @@ Deno.serve(async (req) => {
     if (!org || org.status !== "active") {
       return errorResponse("organization_not_active", "Organization is not active.", 403);
     }
+    requireRecentTotp(
+      req,
+      currentAuthDayStart(new Date(), normalizeDailyAuthResetHour(org.daily_auth_reset_hour)),
+    );
+    await enforceRateLimit(admin, "admin.add.actor", `${actor.kind}:${actor.id}`, 30, 3600);
     const licenseExpiresAt = endOfLicenseDate(org.license_expires_on);
     if (licenseExpiresAt && licenseExpiresAt.getTime() < Date.now()) {
       return errorResponse("license_expired", "License has expired.", 403);
     }
     const activeMasterEmail = await isActiveMasterEmail(admin, email);
+    if (activeMasterEmail && actor.kind !== "master") {
+      return errorResponse(
+        "protected_identity",
+        "Only a master can add an account reserved for a master.",
+        403,
+      );
+    }
     if (!activeMasterEmail && org.allowed_email_domain && emailDomain(email) !== org.allowed_email_domain) {
       return errorResponse("email_domain_not_allowed", "Email is outside the organization domain.", 400);
     }
@@ -236,6 +250,19 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: true, member });
   } catch (error) {
     console.error(error);
+    const message = String((error as { message?: unknown })?.message || error || "");
+    if (message === "mfa_required" || message === "daily_mfa_required") {
+      return errorResponse("daily_mfa_required", "Confirm MFA to continue.", 401);
+    }
+    if (message === "rate_limited") {
+      return errorResponse("rate_limited", "Try again later.", 429);
+    }
+    if (message === "invalid_user_token" || message === "missing_bearer_token") {
+      return errorResponse("invalid_user_token", "Session is invalid.", 401);
+    }
+    if (message === "invalid_publishable_key") {
+      return errorResponse("invalid_publishable_key", "Invalid publishable key.", 401);
+    }
     return errorResponse("internal_error", "Unable to add member.", 500);
   }
 });

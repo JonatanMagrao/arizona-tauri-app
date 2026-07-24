@@ -1,97 +1,66 @@
-import { supabaseConfig } from "../config/supabase";
+import { commandNames, invokeCommand } from "./tauriCommands";
 
-export async function listAdminMembers(auth) {
-  return functionRequest(auth, "admin-list-members", {
-    organizationId: auth?.organizationId,
-  });
+export async function listAdminMembers() {
+  return invokeAdmin(commandNames.adminListMembers);
 }
 
-export async function addAdminMember(auth, member) {
-  return functionRequest(auth, "admin-add-member", {
-    organizationId: auth?.organizationId,
+export async function addAdminMember(_auth, member) {
+  return invokeAdmin(commandNames.adminAddMember, {
     name: member.name,
     email: member.email,
-    role: "user",
   });
 }
 
-export async function releaseAdminDevice(auth, memberId) {
-  return functionRequest(auth, "admin-release-device", {
-    organizationId: auth?.organizationId,
-    memberId,
-  });
+export async function releaseAdminDevice(_auth, memberId) {
+  return invokeAdmin(commandNames.adminReleaseDevice, { memberId });
 }
 
-export async function releaseCurrentDevice(auth) {
-  return releaseAdminDevice(auth, auth?.currentMemberId || auth?.memberId);
+export async function removeAdminMember(_auth, memberId) {
+  return invokeAdmin(commandNames.adminRemoveMember, { memberId });
 }
 
-export async function removeAdminMember(auth, memberId) {
-  return functionRequest(auth, "admin-remove-member", {
-    organizationId: auth?.organizationId,
-    memberId,
-  });
+export async function generateActivationCode(_auth, memberId) {
+  return invokeAdmin(commandNames.adminGenerateActivationCode, { memberId });
+}
+
+export async function releaseCurrentDevice() {
+  return invokeAdmin(commandNames.releaseCurrentDevice);
 }
 
 export function adminErrorMessage(error) {
   const code = String(error?.code || "");
-  const message = String(error?.message || "");
+  const message = String(error?.message || error || "");
 
   if (code === "forbidden") return "Acesso não autorizado.";
   if (code === "invalid_user_token") return "Sessão expirada. Entre novamente.";
-  if (code === "missing_organization_id") return "Organização não encontrada na sessão.";
+  if (code === "daily_mfa_required") return "Confirme o autenticador para continuar.";
   if (code === "organization_not_active") return "Licença inativa.";
   if (code === "license_expired") return "Licença expirada.";
   if (code === "seat_limit_exceeded") return "Não há vagas disponíveis.";
   if (code === "member_already_exists") return "Este e-mail já está cadastrado.";
   if (code === "email_domain_not_allowed") return "E-mail fora do domínio permitido.";
+  if (code === "protected_identity") return "Esta identidade só pode ser gerenciada pelo master.";
   if (code === "member_not_found") return "Usuário não encontrado.";
   if (code === "invalid_email") return "Informe um e-mail válido.";
   if (code === "missing_name") return "Informe o nome do usuário.";
-  if (code === "network_error") return "Não foi possível conectar ao Supabase.";
-
+  if (code === "rate_limited") return "Limite de tentativas atingido. Aguarde.";
+  if (code === "device_switch_interval") {
+    return message || "Esta máquina ainda não completou o intervalo mínimo entre trocas.";
+  }
+  if (code === "network_error" || message.includes("network_error")) {
+    return "Não foi possível conectar ao Supabase.";
+  }
   return message || "Operação não concluída.";
 }
 
-async function functionRequest(auth, functionName, body) {
-  const accessToken = String(auth?.accessToken || "").trim();
-  if (!accessToken) {
-    const error = new Error("Missing access token.");
-    error.code = "invalid_user_token";
-    throw error;
-  }
-
-  return request(`${supabaseConfig.supabaseUrl}/functions/v1/${functionName}`, {
-    method: "POST",
-    headers: {
-      apikey: supabaseConfig.publishableKey,
-      authorization: `Bearer ${accessToken}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-}
-
-async function request(url, options) {
-  let response;
+async function invokeAdmin(command, args = {}) {
   try {
-    response = await fetch(url, options);
-  } catch {
-    const error = new Error("Network request failed.");
-    error.code = "network_error";
-    throw error;
+    return await invokeCommand(command, args);
+  } catch (error) {
+    const text = String(error || "");
+    const match = text.match(/^([a-z0-9_]+):\s*(.*)$/i);
+    const nextError = new Error(match?.[2] || text || "Operação não concluída.");
+    nextError.code = match?.[1] || "";
+    throw nextError;
   }
-
-  const text = await response.text();
-  const data = text ? JSON.parse(text) : {};
-
-  if (!response.ok || data?.ok === false) {
-    const error = new Error(
-      data?.error?.message || data?.msg || data?.message || response.statusText,
-    );
-    error.code = data?.error?.code || data?.code || response.status;
-    throw error;
-  }
-
-  return data;
 }

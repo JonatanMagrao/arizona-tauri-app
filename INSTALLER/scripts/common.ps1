@@ -198,8 +198,38 @@ function Get-PathItem {
   return Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
 }
 
+function Assert-NoIntermediateReparsePoint {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [Parameter(Mandatory = $true)][string]$TrustedRoot,
+    [switch]$IncludePath
+  )
+
+  $fullPath = Get-FullPath $Path
+  $rootFull = Get-FullPath $TrustedRoot
+  Assert-PathInside -Path $fullPath -Parent $rootFull -Label "validated path"
+  $current = if ($IncludePath) { $fullPath } else { Split-Path -Parent $fullPath }
+
+  while (![string]::IsNullOrWhiteSpace($current) -and
+         $current.StartsWith($rootFull, [System.StringComparison]::OrdinalIgnoreCase) -and
+         $current.Length -ge $rootFull.Length) {
+    $item = Get-PathItem $current
+    if ($null -ne $item -and
+        ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+      throw "Intermediate reparse point is not allowed: $current"
+    }
+    if ($current.Equals($rootFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+      break
+    }
+    $current = Split-Path -Parent $current
+  }
+}
+
 function Assert-ArizonaCepPath {
-  param([Parameter(Mandatory = $true)][string]$Path)
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [string]$ExpectedExtensionsRoot = ""
+  )
 
   $fullPath = Get-FullPath $Path
   if ((Split-Path -Leaf $fullPath) -ne "com.arizona-carrefour.cep") {
@@ -215,11 +245,25 @@ function Assert-ArizonaCepPath {
     throw "CEP path is outside an Adobe CEP extensions directory: $fullPath"
   }
 
-  return $extensionsRoot
+  if ([string]::IsNullOrWhiteSpace($ExpectedExtensionsRoot)) {
+    if ([string]::IsNullOrWhiteSpace($env:APPDATA)) {
+      throw "APPDATA is not available; CEP root cannot be validated."
+    }
+    $ExpectedExtensionsRoot = Join-Path $env:APPDATA "Adobe\CEP\extensions"
+  }
+  $expectedRootFull = Get-FullPath $ExpectedExtensionsRoot
+  if (!$extensionsRoot.Equals($expectedRootFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "CEP path is outside the trusted extensions root: $fullPath"
+  }
+  Assert-NoIntermediateReparsePoint -Path $fullPath -TrustedRoot $expectedRootFull
+  return $expectedRootFull
 }
 
 function Assert-ArizonaAexPath {
-  param([Parameter(Mandatory = $true)][string]$Path)
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [string[]]$AdobeRoots = @()
+  )
 
   $fullPath = Get-FullPath $Path
   if ((Split-Path -Leaf $fullPath) -ne "ArizonaBridgeTest.aex") {
@@ -233,6 +277,40 @@ function Assert-ArizonaAexPath {
     throw "AEX path is outside an Arizona After Effects plugin directory: $fullPath"
   }
 
+  if ($AdobeRoots.Count -eq 0) {
+    foreach ($programFilesFolder in @("ProgramFiles", "ProgramFilesX86")) {
+      $programFiles = [Environment]::GetFolderPath($programFilesFolder)
+      if (![string]::IsNullOrWhiteSpace($programFiles)) {
+        $candidate = Join-Path $programFiles "Adobe"
+        if ($AdobeRoots -notcontains $candidate) {
+          $AdobeRoots += $candidate
+        }
+      }
+    }
+  }
+
+  $trustedRoot = $null
+  foreach ($candidateRoot in $AdobeRoots) {
+    if ([string]::IsNullOrWhiteSpace($candidateRoot)) {
+      continue
+    }
+    try {
+      Assert-PathInside -Path $fullPath -Parent $candidateRoot -Label "legacy Arizona AEX plugin"
+      $trustedRoot = Get-FullPath $candidateRoot
+      break
+    } catch {
+      continue
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace($trustedRoot)) {
+    throw "AEX path is outside the trusted Adobe roots: $fullPath"
+  }
+
+  $relative = $fullPath.Substring($trustedRoot.Length).TrimStart("\")
+  if ($relative -notmatch "^Adobe After Effects [^\\]+\\Support Files\\Plug-ins\\Arizona\\ArizonaBridgeTest\.aex$") {
+    throw "AEX path does not match a standard After Effects installation: $fullPath"
+  }
+  Assert-NoIntermediateReparsePoint -Path $arizonaPluginRoot -TrustedRoot $trustedRoot -IncludePath
   return $arizonaPluginRoot
 }
 

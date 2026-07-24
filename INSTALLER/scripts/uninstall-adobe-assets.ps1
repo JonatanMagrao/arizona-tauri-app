@@ -84,7 +84,7 @@ if ($null -ne $state -and $null -ne $state.cep -and ![string]::IsNullOrWhiteSpac
 }
 
 foreach ($cepDestination in @($cepTargets | Sort-Object -Unique)) {
-  $validatedCepRoot = Assert-ArizonaCepPath $cepDestination
+  $validatedCepRoot = Assert-ArizonaCepPath -Path $cepDestination -ExpectedExtensionsRoot $CepExtensionsRoot
   $cepWasPresent = $null -ne (Get-PathItem $cepDestination)
   Remove-PathSafe -Path $cepDestination -AllowedParent $validatedCepRoot -Label "Arizona CEP extension"
   if ($cepWasPresent) {
@@ -95,7 +95,7 @@ foreach ($cepDestination in @($cepTargets | Sort-Object -Unique)) {
 }
 
 foreach ($pluginPath in $legacyAexTargets) {
-  $pluginDir = Assert-ArizonaAexPath $pluginPath
+  $pluginDir = Assert-ArizonaAexPath -Path $pluginPath -AdobeRoots $AdobeRoots
   $pluginsRoot = Split-Path -Parent $pluginDir
   $aexWasPresent = $null -ne (Get-PathItem $pluginPath)
   Remove-PathSafe -Path $pluginPath -AllowedParent $pluginDir -Label "legacy Arizona AEX plugin"

@@ -11,6 +11,7 @@ import {
   requirePublishableKey,
 } from "../_shared/supabase.ts";
 import { resolveMember } from "../_shared/actors.ts";
+import { enforceRateLimit } from "../_shared/security.ts";
 
 type TrackEventBody = {
   eventName?: unknown;
@@ -23,6 +24,28 @@ type TrackEventBody = {
 
 function cleanString(value: unknown, maxLength: number): string {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function sanitizeMetadata(value: unknown, depth = 0): unknown {
+  if (depth > 3) return null;
+  if (Array.isArray(value)) {
+    return value.slice(0, 20).map((item) => sanitizeMetadata(item, depth + 1));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .slice(0, 40)
+        .map(([key, item]) => [
+          key.slice(0, 80),
+          /(token|password|secret|receipt|authorization|activation.?code)/i.test(key)
+            ? "[redacted]"
+            : sanitizeMetadata(item, depth + 1),
+        ]),
+    );
+  }
+  if (typeof value === "string") return value.slice(0, 500);
+  if (typeof value === "number" || typeof value === "boolean" || value === null) return value;
+  return null;
 }
 
 Deno.serve(async (req) => {
@@ -45,6 +68,7 @@ Deno.serve(async (req) => {
     if (!member) {
       return errorResponse("member_not_authorized", "This email is not authorized.", 403);
     }
+    await enforceRateLimit(admin, "event.track.member", member.id, 240, 3600);
 
     const installId = cleanString(body.installId, 128);
     let deviceId: string | null = null;
@@ -63,8 +87,11 @@ Deno.serve(async (req) => {
     }
 
     const metadata = body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
-      ? body.metadata
+      ? sanitizeMetadata(body.metadata)
       : {};
+    if (new TextEncoder().encode(JSON.stringify(metadata)).length > 8192) {
+      return errorResponse("payload_too_large", "metadata is too large.", 413);
+    }
 
     const { error: insertError } = await admin
       .schema("licensing")
@@ -85,6 +112,16 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: true });
   } catch (error) {
     console.error(error);
+    if (String((error as { message?: unknown })?.message || error || "") === "rate_limited") {
+      return errorResponse("rate_limited", "Try again later.", 429);
+    }
+    const message = String((error as { message?: unknown })?.message || error || "");
+    if (message === "invalid_user_token" || message === "missing_bearer_token") {
+      return errorResponse("invalid_user_token", "Session is invalid.", 401);
+    }
+    if (message === "invalid_publishable_key") {
+      return errorResponse("invalid_publishable_key", "Invalid publishable key.", 401);
+    }
     return errorResponse("internal_error", "Unable to track event.", 500);
   }
 });

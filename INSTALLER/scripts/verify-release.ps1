@@ -11,6 +11,7 @@ $hooksPath = Join-Path $repoRoot "INSTALLER\nsis\hooks.nsh"
 $payloadRoot = Join-Path $repoRoot "INSTALLER\payload"
 $embeddedScriptPath = Join-Path $repoRoot "src-tauri\src\after_effects\arizona_actions.jsx"
 $afterEffectsModulePath = Join-Path $repoRoot "src-tauri\src\after_effects.rs"
+$tauriBuildScriptPath = Join-Path $repoRoot "src-tauri\build.rs"
 
 if (!(Test-Path -LiteralPath $tauriConfigPath -PathType Leaf)) {
   throw "Tauri config not found: $tauriConfigPath"
@@ -24,14 +25,24 @@ if (!(Test-Path -LiteralPath $embeddedScriptPath -PathType Leaf)) {
 if (!(Test-Path -LiteralPath $afterEffectsModulePath -PathType Leaf)) {
   throw "Tauri After Effects runner not found: $afterEffectsModulePath"
 }
+if (!(Test-Path -LiteralPath $tauriBuildScriptPath -PathType Leaf)) {
+  throw "Tauri build script not found: $tauriBuildScriptPath"
+}
 if (Test-Path -LiteralPath (Join-Path $repoRoot "src-tauri\src\aegp_bridge.rs")) {
   throw "The retired AEX named-pipe bridge must not be part of the Tauri source."
 }
 
 $afterEffectsModule = Get-Content -LiteralPath $afterEffectsModulePath -Raw
 if (!$afterEffectsModule.Contains('include_str!("after_effects/arizona_actions.jsx")') -or
+    !$afterEffectsModule.Contains("after-effects-jsxbin") -or
     !$afterEffectsModule.Contains('.arg("-r")')) {
-  throw "The Tauri After Effects runner must embed the JSX and execute it with AfterFX -r."
+  throw "The Tauri After Effects runner must use readable JSX in dev, JSXBIN in release, and AfterFX -r."
+}
+
+$tauriBuildScript = Get-Content -LiteralPath $tauriBuildScriptPath -Raw
+if (!$tauriBuildScript.Contains('env::var("PROFILE").as_deref() == Ok("release")') -or
+    !$tauriBuildScript.Contains("build-after-effects-jsxbin.mjs")) {
+  throw "The release build must generate the embedded After Effects JSXBIN assets."
 }
 
 $hooks = Get-Content -LiteralPath $hooksPath -Raw
@@ -109,6 +120,13 @@ if ($RequirePayload) {
   $unexpectedPlugins = @(Get-ChildItem -LiteralPath $payloadRoot -Recurse -File -Filter "*.aex" -ErrorAction SilentlyContinue)
   if ($unexpectedPlugins.Count -gt 0) {
     throw "The plugin-free installer payload contains an unexpected .aex file."
+  }
+  $debugArtifacts = @(
+    Get-ChildItem -LiteralPath $cepPayload -Recurse -Force -File -ErrorAction SilentlyContinue |
+      Where-Object { $_.Name -eq ".debug" -or $_.Extension -eq ".map" }
+  )
+  if ($debugArtifacts.Count -gt 0) {
+    throw "The production CEP payload contains .debug or source-map files."
   }
 
   $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json

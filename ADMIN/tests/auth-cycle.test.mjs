@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  currentAuthDayStart,
   nextAuthDayStart,
   normalizeDailyAuthResetHour,
   serverAuthDay,
@@ -29,4 +30,20 @@ test("supports a per-license reset hour", () => {
   const midday = new Date("2026-07-23T15:00:00.000Z");
   assert.equal(serverAuthDay(midday, 12), "2026-07-23");
   assert.equal(nextAuthDayStart(midday, 12).toISOString(), "2026-07-24T15:00:00.000Z");
+});
+
+test("returns today's reset boundary after 04:00", () => {
+  const afterReset = new Date("2026-07-23T10:00:00.000Z");
+  assert.equal(
+    currentAuthDayStart(afterReset, 4).toISOString(),
+    "2026-07-23T07:00:00.000Z",
+  );
+});
+
+test("returns yesterday's reset boundary before 04:00", () => {
+  const beforeReset = new Date("2026-07-23T06:59:59.000Z");
+  assert.equal(
+    currentAuthDayStart(beforeReset, 4).toISOString(),
+    "2026-07-22T07:00:00.000Z",
+  );
 });

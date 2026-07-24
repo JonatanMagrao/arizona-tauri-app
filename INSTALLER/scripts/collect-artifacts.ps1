@@ -34,6 +34,13 @@ $cepPayload = Join-Path $payloadRootFull "cep\com.arizona-carrefour.cep"
 New-Item -ItemType Directory -Force -Path $cepPayload | Out-Null
 Copy-DirectoryContents -Source $cepDist -Destination $cepPayload
 
+# The development build keeps CEP debugging metadata close to the symlink used
+# by After Effects. The release payload must never expose DevTools or source
+# maps, even when collect-artifacts is run immediately after a dev/watch build.
+Get-ChildItem -LiteralPath $cepPayload -Recurse -Force -File |
+  Where-Object { $_.Name -eq ".debug" -or $_.Extension -eq ".map" } |
+  Remove-Item -Force
+
 $packageJson = Get-Content -LiteralPath (Join-Path $RepoRoot "package.json") -Raw | ConvertFrom-Json
 $tauriConfig = Get-Content -LiteralPath (Join-Path $RepoRoot "src-tauri\tauri.conf.json") -Raw | ConvertFrom-Json
 

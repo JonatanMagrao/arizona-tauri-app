@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "secondary",
+  "description": "Capability for authenticated secondary views.",
+  "windows": ["secondary"],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "core:window:allow-close",
+    "core:window:allow-hide",
+    "core:window:allow-is-maximized",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-set-enabled",
+    "core:window:allow-set-title"
+  ]
+}

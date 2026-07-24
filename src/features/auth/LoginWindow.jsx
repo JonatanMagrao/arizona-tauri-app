@@ -1,97 +1,92 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
-  authenticateUser,
+  activateWithCode,
   authErrorMessage,
-  changePassword,
-  inspectLoginEmail,
   normalizeEmail,
   resumeSecureSession,
-  saveSecureSession,
+  verifyTotp,
 } from "../../services/auth";
 import { commandNames, invokeCommand } from "../../services/tauriCommands";
+import {
+  AUTH_MODES,
+  acquireSubmission,
+  authFlowErrorMessage,
+  authFlowInstruction,
+  authRetryState,
+  releaseSubmission,
+  shouldResetTotp,
+} from "./loginFlow";
 
 import appLogo from "../../../src-tauri/icons/arizona_icon.ico";
 import closeIcon from "../../assets/icones/close.svg";
 import minimizeIcon from "../../assets/icones/minimize.svg";
-import visibilityIcon from "../../assets/icones/visibility.svg";
-import visibilityOffIcon from "../../assets/icones/visibility_off.svg";
-
-const MODES = Object.freeze({
-  LOGIN: "login",
-  SETUP: "setup",
-  CHANGE: "change",
-});
-
-const EMAIL_LOOKUP_DELAY_MS = 450;
 
 function LoginWindow() {
-  const [mode, setMode] = useState(MODES.LOGIN);
-  const [draft, setDraft] = useState({ email: "", password: "", newPassword: "", confirmPassword: "" });
+  const [mode, setMode] = useState(AUTH_MODES.ACTIVATION);
+  const [draft, setDraft] = useState({ email: "", activationCode: "", totp: "" });
   const [appInfo, setAppInfo] = useState({ version: "" });
+  const [enrollment, setEnrollment] = useState(null);
+  const [hint, setHint] = useState("");
   const [toast, setToast] = useState({ message: "", variant: "error" });
-  const [emailStatus, setEmailStatus] = useState({ state: "idle", email: "" });
+  const [retryUntil, setRetryUntil] = useState(0);
+  const [retryRemainingSeconds, setRetryRemainingSeconds] = useState(0);
   const [isBusy, setIsBusy] = useState(false);
-  const [visiblePasswords, setVisiblePasswords] = useState({
-    password: false,
-    newPassword: false,
-    confirmPassword: false,
-  });
-  const emailLookupRef = useRef(0);
   const modeRef = useRef(mode);
-  const isSetup = mode === MODES.SETUP;
-  const isChange = mode === MODES.CHANGE;
+  const retryUntilRef = useRef(0);
+  const submitInFlightRef = useRef(false);
+  const totpInputRef = useRef(null);
+
   const canSubmit = useMemo(() => {
-    const email = normalizeEmail(draft.email);
-    if (!email || !draft.password || isBusy) return false;
-    if (isChange && !draft.newPassword) return false;
-    if (isSetup && draft.password !== draft.confirmPassword) return false;
-    if (isChange && draft.newPassword !== draft.confirmPassword) return false;
-    return true;
-  }, [draft, isBusy, isChange, isSetup]);
-  const title = isSetup ? "Criar senha" : isChange ? "Mudar senha" : "Entrar";
-  const passwordLabel = isChange ? "Senha atual" : isSetup ? "Criar senha" : "Senha";
-  const passwordTooltip = isChange
-    ? "Informe sua senha atual."
-    : isSetup
-      ? "Crie uma senha com pelo menos 6 caracteres."
-      : "Informe sua senha cadastrada.";
-  const submitTooltip = submitButtonTitle({ mode, draft, isBusy, emailStatus });
+    if (isBusy || retryRemainingSeconds > 0) return false;
+    if (mode === AUTH_MODES.ACTIVATION) {
+      return normalizeEmail(draft.email).includes("@")
+        && normalizeActivationCode(draft.activationCode).length === 12;
+    }
+    return normalizeTotp(draft.totp).length === 6;
+  }, [draft, isBusy, mode, retryRemainingSeconds]);
 
   useEffect(() => {
     modeRef.current = mode;
   }, [mode]);
 
   useEffect(() => {
+    if (!retryUntil) {
+      setRetryRemainingSeconds(0);
+      return undefined;
+    }
+
+    const updateRemaining = () => {
+      const remaining = Math.max(0, Math.ceil((retryUntil - Date.now()) / 1000));
+      setRetryRemainingSeconds(remaining);
+      if (!remaining) {
+        retryUntilRef.current = 0;
+        setRetryUntil(0);
+      }
+    };
+    updateRemaining();
+    const timer = setInterval(updateRemaining, 1000);
+    return () => clearInterval(timer);
+  }, [retryUntil]);
+
+  useEffect(() => {
     let mounted = true;
 
-    async function boot() {
-      let version = "";
-      try {
-        const info = await invokeCommand(commandNames.appInfo);
-        version = String(info?.version || "").trim();
-        if (mounted) setAppInfo({ version });
-      } catch {
-        // A versão ajuda na auditoria, mas não deve bloquear o login.
-      }
+    const applyExternalFlow = (event) => {
+      if (mounted) applyFlow(event.detail);
+    };
+    window.addEventListener("arizona-auth:flow", applyExternalFlow);
 
-      if (!mounted) return;
+    async function boot() {
       setIsBusy(true);
       try {
-        const auth = await resumeSecureSession({ appVersion: version });
-        if (!mounted || !auth) return;
-        await completeAppLogin(auth);
-      } catch (error) {
+        const info = await invokeCommand(commandNames.appInfo);
+        const version = String(info?.version || "").trim();
         if (!mounted) return;
-        const email = normalizeEmail(error?.email);
-        if (email) setDraft((current) => ({ ...current, email }));
-
-        const code = String(error?.code || "");
-        if (code === "daily_login_required" || code === "stored_session_invalid") {
-          setToast({ message: authErrorMessage(error), variant: "success" });
-        } else if (code && code !== "network_error") {
-          setToast({ message: authErrorMessage(error), variant: "error" });
-        }
+        setAppInfo({ version });
+        applyFlow(await resumeSecureSession({ appVersion: version }));
+      } catch (error) {
+        if (mounted) setToast({ message: authErrorMessage(error), variant: "error" });
       } finally {
         if (mounted) setIsBusy(false);
       }
@@ -100,145 +95,111 @@ function LoginWindow() {
     boot();
     return () => {
       mounted = false;
+      window.removeEventListener("arizona-auth:flow", applyExternalFlow);
     };
   }, []);
 
-  useEffect(() => {
-    const email = normalizeEmail(draft.email);
-    const lookupId = emailLookupRef.current + 1;
-    emailLookupRef.current = lookupId;
-
-    if (!email || !email.includes("@") || isBusy) {
-      setEmailStatus({ state: "idle", email });
-      return undefined;
+  const applyFlow = (flow) => {
+    if (!flow) return;
+    setHint("");
+    setToast({ message: "", variant: "error" });
+    const retry = authRetryState(flow);
+    if (retry.isRetryBlocked && retry.retryAfterSeconds > 0) {
+      const nextRetryUntil = Date.now() + retry.retryAfterSeconds * 1000;
+      retryUntilRef.current = Math.max(retryUntilRef.current, nextRetryUntil);
+      setRetryUntil(retryUntilRef.current);
+      setRetryRemainingSeconds(Math.ceil((retryUntilRef.current - Date.now()) / 1000));
+    } else {
+      retryUntilRef.current = 0;
+      setRetryUntil(0);
+      setRetryRemainingSeconds(0);
+    }
+    if (flow.email) {
+      setDraft((current) => ({ ...current, email: normalizeEmail(flow.email) }));
     }
 
-    setEmailStatus({ state: "checking", email });
-    const timer = setTimeout(async () => {
-      try {
-        const status = await inspectLoginEmail(email);
-        if (emailLookupRef.current !== lookupId) return;
+    if (flow.state === "authenticated") {
+      setDraft((current) => ({ ...current, activationCode: "", totp: "" }));
+      return;
+    }
+    if (flow.state === "totp_enrollment_required") {
+      modeRef.current = AUTH_MODES.ENROLLMENT;
+      setMode(AUTH_MODES.ENROLLMENT);
+      setEnrollment(flow.enrollment || null);
+    } else if (flow.state === "totp_required") {
+      modeRef.current = AUTH_MODES.TOTP;
+      setMode(AUTH_MODES.TOTP);
+      setEnrollment(null);
+    } else if (flow.state === "activation_required") {
+      modeRef.current = AUTH_MODES.ACTIVATION;
+      setMode(AUTH_MODES.ACTIVATION);
+      setEnrollment(null);
+    }
 
-        const nextStatus = {
-          state: status?.setupRequired ? "setup" : status?.hasPassword ? "login" : "unknown",
-          email,
-        };
-        setEmailStatus(nextStatus);
-
-        if (status?.setupRequired && modeRef.current !== MODES.CHANGE) {
-          setMode(MODES.SETUP);
-          modeRef.current = MODES.SETUP;
-          setDraft((current) => ({ ...current, newPassword: "" }));
-        } else if (status?.hasPassword && modeRef.current === MODES.SETUP) {
-          setMode(MODES.LOGIN);
-          modeRef.current = MODES.LOGIN;
-          setDraft((current) => ({ ...current, confirmPassword: "" }));
-        }
-      } catch (error) {
-        if (emailLookupRef.current !== lookupId) return;
-        setEmailStatus({ state: "unknown", email, code: String(error?.code || "") });
-        if (modeRef.current === MODES.SETUP) {
-          setMode(MODES.LOGIN);
-          modeRef.current = MODES.LOGIN;
-          setDraft((current) => ({ ...current, confirmPassword: "" }));
-        }
+    const instruction = authFlowInstruction(flow.state);
+    if (flow.state === "error") {
+      if (!retry.isRetryBlocked || retry.retryAfterSeconds <= 0) {
+        setToast({
+          message: authFlowErrorMessage(flow, modeRef.current),
+          variant: "error",
+        });
       }
-    }, EMAIL_LOOKUP_DELAY_MS);
-
-    return () => clearTimeout(timer);
-  }, [draft.email, isBusy]);
+      if (
+        modeRef.current !== AUTH_MODES.ACTIVATION
+        && shouldResetTotp(flow)
+      ) {
+        setDraft((current) => ({ ...current, totp: "" }));
+        window.requestAnimationFrame(() => totpInputRef.current?.focus());
+      }
+    } else if (instruction) {
+      setHint(instruction);
+    } else if (flow.message) {
+      setHint(flow.message);
+    }
+  };
 
   const updateDraft = (field, value) => {
-    setDraft((current) => ({ ...current, [field]: value }));
+    const nextValue = field === "activationCode"
+      ? formatActivationCode(value)
+      : field === "totp"
+        ? normalizeTotp(value)
+        : value;
+    setDraft((current) => ({ ...current, [field]: nextValue }));
     if (toast.message) setToast({ message: "", variant: "error" });
-  };
-
-  const togglePasswordVisibility = (field) => {
-    setVisiblePasswords((current) => ({ ...current, [field]: !current[field] }));
-  };
-
-  const switchMode = () => {
-    const nextMode = mode === MODES.LOGIN ? MODES.CHANGE : MODES.LOGIN;
-    setMode(nextMode);
-    modeRef.current = nextMode;
-    setDraft((current) => ({ ...current, password: "", newPassword: "", confirmPassword: "" }));
-    setToast({ message: "", variant: "error" });
   };
 
   const submit = async (event) => {
     event.preventDefault();
-    const email = normalizeEmail(draft.email);
-
-    if (!email || !draft.password) {
-      setToast({ message: "Informe e-mail e senha.", variant: "error" });
-      return;
-    }
-
-    if (isChange && !draft.newPassword) {
-      setToast({ message: "Informe a nova senha.", variant: "error" });
-      return;
-    }
-
-    const targetPassword = isChange ? draft.newPassword : draft.password;
-    if ((isSetup || isChange) && targetPassword.length < 6) {
-      setToast({ message: "Use uma senha com pelo menos 6 caracteres.", variant: "error" });
-      return;
-    }
-
-    if ((isSetup || isChange) && targetPassword !== draft.confirmPassword) {
-      setToast({ message: "As senhas não conferem.", variant: "error" });
+    if (
+      !canSubmit
+      || retryUntilRef.current > Date.now()
+      || !acquireSubmission(submitInFlightRef)
+    ) {
       return;
     }
 
     setIsBusy(true);
     try {
-      const auth = isChange
-        ? await changePassword({
-          email,
-          currentPassword: draft.password,
-          newPassword: draft.newPassword,
+      const flow = mode === AUTH_MODES.ACTIVATION
+        ? await activateWithCode({
+          email: normalizeEmail(draft.email),
+          code: normalizeActivationCode(draft.activationCode),
           appVersion: appInfo.version,
         })
-        : await authenticateUser({
-          mode,
-          email,
-          password: draft.password,
+        : await verifyTotp({
+          code: normalizeTotp(draft.totp),
           appVersion: appInfo.version,
         });
-
-      await saveSecureSession(auth);
-      await completeAppLogin(auth);
+      applyFlow(flow);
     } catch (error) {
       setToast({ message: authErrorMessage(error), variant: "error" });
+    } finally {
+      releaseSubmission(submitInFlightRef);
       setIsBusy(false);
     }
   };
 
-  const completeAppLogin = async (auth) => {
-    const response = await invokeCommand(commandNames.completeLogin, {
-      session: {
-        accessToken: auth.accessToken,
-        refreshToken: auth.refreshToken,
-        cepLicenseReceipt: auth.cepLicenseReceipt,
-        email: auth.email,
-        memberId: auth.memberId,
-        role: auth.role,
-        organizationId: auth.organizationId,
-        organizationName: auth.organizationName,
-        seatsAllowed: auth.seatsAllowed,
-        expiresAt: auth.expiresAt,
-      },
-    });
-
-    if (response?.ok === false) {
-      throw new Error(response.message || "Não foi possível abrir o app.");
-    }
-  };
-
-  const minimizeWindow = () => {
-    getCurrentWindow().minimize().catch(() => {});
-  };
-
+  const minimizeWindow = () => getCurrentWindow().minimize().catch(() => {});
   const closeWindow = async () => {
     try {
       await invokeCommand(commandNames.exitApp);
@@ -246,29 +207,28 @@ function LoginWindow() {
       getCurrentWindow().close().catch(() => {});
     }
   };
-
-  const startWindowDrag = (event) => {
-    if (event.button !== 0) return;
-    getCurrentWindow().startDragging().catch(() => {});
-  };
+  const title = mode === AUTH_MODES.ACTIVATION
+    ? "Ativar acesso"
+    : mode === AUTH_MODES.ENROLLMENT
+      ? "Proteger acesso"
+      : "Confirmar acesso";
 
   return (
     <main className="login-shell">
       <header className="app-titlebar" aria-label="Barra da janela">
         <div
           className="app-titlebar__brand"
-          data-tauri-drag-region
-          onMouseDown={startWindowDrag}
           title="Arizona App"
         >
-          <img className="app-titlebar__logo" src={appLogo} alt="" aria-hidden="true" />
+          <img
+            className="app-titlebar__logo"
+            src={appLogo}
+            alt=""
+            aria-hidden="true"
+          />
           <span>Arizona App</span>
         </div>
-        <div
-          className="app-titlebar__drag"
-          data-tauri-drag-region
-          onMouseDown={startWindowDrag}
-        />
+        <div className="app-titlebar__drag" />
         <div className="app-titlebar__controls">
           <button
             className="titlebar-icon-btn titlebar-icon-btn--minimize"
@@ -292,105 +252,108 @@ function LoginWindow() {
       </header>
 
       <section className="login-panel" aria-labelledby="loginTitle">
-        {appInfo.version && (
-          <span className="login-version" title={`Versão ${appInfo.version}`}>
-            v{appInfo.version}
-          </span>
-        )}
+        {appInfo.version && <span className="login-version">v{appInfo.version}</span>}
         <div className="login-brand">
           <img src={appLogo} alt="" aria-hidden="true" />
           <div>
             <h1 id="loginTitle">{title}</h1>
+            <p className="login-subtitle">
+              {mode === AUTH_MODES.ACTIVATION
+                ? "Use o código entregue pelo seu gestor."
+                : mode === AUTH_MODES.ENROLLMENT
+                  ? "Escaneie o QR Code para criar uma nova entrada."
+                  : "Use a entrada Arizona App já cadastrada."}
+            </p>
           </div>
         </div>
 
         <form className="login-form" onSubmit={submit} noValidate>
-          <label className="login-field">
-            <span className="login-label-row">
-              E-mail
-              {emailStatus.state === "checking" && (
-                <span className="login-label-chip login-label-chip--muted">verificando</span>
+          {mode === AUTH_MODES.ACTIVATION ? (
+            <>
+              <label className="login-field">
+                <span>E-mail</span>
+                <input
+                  className="input"
+                  type="email"
+                  autoComplete="email"
+                  value={draft.email}
+                  onChange={(event) => updateDraft("email", event.target.value)}
+                  disabled={isBusy}
+                />
+              </label>
+              <label className="login-field">
+                <span>Código de ativação</span>
+                <input
+                  className="input login-code-input"
+                  type="text"
+                  inputMode="text"
+                  autoComplete="one-time-code"
+                  maxLength={14}
+                  value={draft.activationCode}
+                  onChange={(event) => updateDraft("activationCode", event.target.value)}
+                  disabled={isBusy}
+                  placeholder="XXXX-XXXX-XXXX"
+                />
+              </label>
+            </>
+          ) : (
+            <>
+              {mode === AUTH_MODES.ENROLLMENT && enrollment && (
+                <div className="login-mfa-enrollment">
+                  {enrollment.qrCode && (
+                    <img
+                      className="login-mfa-qr"
+                      src={enrollment.qrCode}
+                      alt="QR Code para cadastrar o Arizona no autenticador"
+                    />
+                  )}
+                  <div className="login-mfa-secret">
+                    <span>Chave manual</span>
+                    <code>{enrollment.secret}</code>
+                  </div>
+                </div>
               )}
-              {emailStatus.state === "setup" && isSetup && (
-                <span className="login-label-chip">Primeiro Acesso</span>
-              )}
-            </span>
-            <input
-              className="input"
-              type="email"
-              autoComplete="email"
-              value={draft.email}
-              onChange={(event) => updateDraft("email", event.target.value)}
-              disabled={isBusy}
-              title="Use o e-mail cadastrado na gestão."
-            />
-          </label>
-
-          <label className="login-field">
-            <span>{passwordLabel}</span>
-            <PasswordField
-              field="password"
-              autoComplete={isSetup ? "new-password" : "current-password"}
-              value={draft.password}
-              onChange={(value) => updateDraft("password", value)}
-              disabled={isBusy}
-              title={passwordTooltip}
-              isVisible={visiblePasswords.password}
-              onToggleVisibility={togglePasswordVisibility}
-            />
-          </label>
-
-          {isChange && (
-            <label className="login-field">
-              <span>Nova senha</span>
-              <PasswordField
-                field="newPassword"
-                autoComplete="new-password"
-                value={draft.newPassword}
-                onChange={(value) => updateDraft("newPassword", value)}
-                disabled={isBusy}
-                title="Escolha uma nova senha com pelo menos 6 caracteres."
-                isVisible={visiblePasswords.newPassword}
-                onToggleVisibility={togglePasswordVisibility}
-              />
-            </label>
+              <label className="login-field">
+                <span>Código do autenticador</span>
+                <input
+                  ref={totpInputRef}
+                  className="input login-code-input login-code-input--totp"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  value={draft.totp}
+                  onChange={(event) => updateDraft("totp", event.target.value)}
+                  disabled={isBusy}
+                  placeholder="000000"
+                  autoFocus
+                />
+              </label>
+            </>
           )}
 
-          {(isSetup || isChange) && (
-            <label className="login-field">
-              <span>Confirmar senha</span>
-              <PasswordField
-                field="confirmPassword"
-                autoComplete="new-password"
-                value={draft.confirmPassword}
-                onChange={(value) => updateDraft("confirmPassword", value)}
-                disabled={isBusy}
-                title="Repita a nova senha para confirmar."
-                isVisible={visiblePasswords.confirmPassword}
-                onToggleVisibility={togglePasswordVisibility}
-              />
-            </label>
-          )}
-
-          <button
-            className="btn btn-primary login-submit"
-            type="submit"
-            disabled={!canSubmit}
-            title={submitTooltip}
-          >
-            {isBusy ? "Validando..." : isSetup ? "Criar senha" : isChange ? "Alterar e entrar" : "Entrar"}
+          <button className="btn btn-primary login-submit" type="submit" disabled={!canSubmit}>
+            {isBusy
+              ? "Validando..."
+                : mode === AUTH_MODES.ACTIVATION
+                  ? "Continuar"
+                : mode === AUTH_MODES.ENROLLMENT
+                  ? "Confirmar e entrar"
+                  : "Entrar"}
           </button>
         </form>
 
-        <button
-          type="button"
-          className="login-mode-btn"
-          onClick={switchMode}
-          disabled={isBusy}
-          title={isSetup || isChange ? "Voltar para entrada com senha." : "Alterar a senha usando a senha atual."}
-        >
-          {isSetup || isChange ? "Entrar" : "Mudar senha"}
-        </button>
+        {hint && (
+          <p className="login-hint" role="status">
+            {hint}
+          </p>
+        )}
+
+        {retryRemainingSeconds > 0 && (
+          <p className="login-hint login-hint--warning" role="status">
+            {`Muitas tentativas. Tente novamente em ${formatDuration(retryRemainingSeconds)}.`}
+          </p>
+        )}
 
         {toast.message && (
           <div className={`login-message login-message--${toast.variant}`} role="alert">
@@ -402,67 +365,27 @@ function LoginWindow() {
   );
 }
 
-function PasswordField({
-  field,
-  autoComplete,
-  value,
-  onChange,
-  disabled,
-  title,
-  isVisible,
-  onToggleVisibility,
-}) {
-  const icon = isVisible ? visibilityOffIcon : visibilityIcon;
-  const label = isVisible ? "Ocultar senha" : "Mostrar senha";
-
-  return (
-    <div className="login-password-control">
-      <input
-        className="input"
-        type={isVisible ? "text" : "password"}
-        autoComplete={autoComplete}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        disabled={disabled}
-        title={title}
-      />
-      <button
-        type="button"
-        className="login-password-toggle"
-        onClick={() => onToggleVisibility(field)}
-        disabled={disabled}
-        title={label}
-        aria-label={label}
-        tabIndex="-1"
-      >
-        <img src={icon} alt="" aria-hidden="true" />
-      </button>
-    </div>
-  );
+function normalizeActivationCode(value) {
+  return String(value || "").toUpperCase().replace(/[^2-9A-HJ-NP-Z]/g, "").slice(0, 12);
 }
 
-function submitButtonTitle({ mode, draft, isBusy, emailStatus }) {
-  if (isBusy) return "Validando acesso.";
+function formatActivationCode(value) {
+  const normalized = normalizeActivationCode(value);
+  return normalized.match(/.{1,4}/g)?.join("-") || normalized;
+}
 
-  const email = normalizeEmail(draft.email);
-  if (!email) return "Informe o e-mail cadastrado.";
-  if (emailStatus?.state === "checking") return "Aguarde a verificação do e-mail.";
-  if (!draft.password) return mode === MODES.CHANGE ? "Informe sua senha atual." : "Informe sua senha.";
+function normalizeTotp(value) {
+  return String(value || "").replace(/\D/g, "").slice(0, 6);
+}
 
-  if (mode === MODES.SETUP) {
-    if (!draft.confirmPassword) return "Confirme a senha criada.";
-    if (draft.password !== draft.confirmPassword) return "As senhas precisam ser iguais.";
-    return "Criar senha e entrar.";
-  }
-
-  if (mode === MODES.CHANGE) {
-    if (!draft.newPassword) return "Informe a nova senha.";
-    if (!draft.confirmPassword) return "Confirme a nova senha.";
-    if (draft.newPassword !== draft.confirmPassword) return "As senhas precisam ser iguais.";
-    return "Alterar senha e entrar.";
-  }
-
-  return "Entrar no Arizona App.";
+function formatDuration(totalSeconds) {
+  const seconds = Math.max(0, Math.ceil(Number(totalSeconds) || 0));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainder = seconds % 60;
+  if (hours) return `${hours}h ${String(minutes).padStart(2, "0")}min`;
+  if (minutes) return `${minutes}min ${String(remainder).padStart(2, "0")}s`;
+  return `${remainder}s`;
 }
 
 export default LoginWindow;

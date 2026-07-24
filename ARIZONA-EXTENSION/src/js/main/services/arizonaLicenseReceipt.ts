@@ -45,6 +45,7 @@ type ReceiptClaims = {
   email?: string | null;
   organizationName?: string | null;
   organization_name?: string | null;
+  receiptVersion?: number;
   expiresAt?: string | null;
   expires_at?: string | null;
   iat?: number;
@@ -318,7 +319,7 @@ const receiptBlockReason = (
     reason = "receipt_claims_invalid";
   } else if (claims.exp && claims.exp <= nowSeconds) {
     reason = "receipt_expired";
-  } else if (claims.licensed === false) {
+  } else if (Number(claims.receiptVersion || 1) >= 2 && claims.licensed !== true) {
     reason = claims.reason || "not_licensed";
   } else if (!allowedFeatures.includes(AE_PANEL_FEATURE)) {
     reason = "feature_missing";
@@ -339,7 +340,9 @@ const normalizeFeatures = (claims: ReceiptClaims) => {
       ? claims.allowed_features
       : Array.isArray(claims.features)
         ? claims.features
-        : [AE_PANEL_FEATURE];
+        : Number(claims.receiptVersion || 1) >= 2
+          ? []
+          : [AE_PANEL_FEATURE];
 
   return values.map((value) => String(value).trim()).filter(Boolean);
 };

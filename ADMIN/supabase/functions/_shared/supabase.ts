@@ -1,4 +1,4 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2.110.8";
 
 type KeyMap = Record<string, string>;
 
@@ -53,8 +53,18 @@ export function getSecretKey(): string {
   return readKey(["SUPABASE_SECRET_KEYS", "SUPABASE_SECRET_KEY"]);
 }
 
+export function getServiceRoleKey(): string {
+  return readKey(["SUPABASE_SERVICE_ROLE_KEY"]);
+}
+
 export function createAdminClient() {
   return createClient(getSupabaseUrl(), getSecretKey(), {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
+export function createAuthAdminClient() {
+  return createClient(getSupabaseUrl(), getServiceRoleKey(), {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }

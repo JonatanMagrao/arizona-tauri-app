@@ -1,6 +1,6 @@
 [package]
 name = "arizona-app"
-version = "1.3.0"
+version = "2.1.0"
 description = "A Tauri App"
 authors = ["Jonatan Magrão"]
 edition = "2021"

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   addAdminMember,
   adminErrorMessage,
+  generateActivationCode,
   listAdminMembers,
   releaseAdminDevice,
   removeAdminMember,
@@ -9,8 +10,10 @@ import {
 import deviceIcon from "../../assets/icones/device.svg";
 import removeDeviceIcon from "../../assets/icones/remove_device.svg";
 import removeUserIcon from "../../assets/icones/remove_user.svg";
+import copyIcon from "../../assets/icones/file_copy.svg";
+import closeIcon from "../../assets/icones/close.svg";
 
-const REFRESH_INTERVAL_MS = 5000;
+const REFRESH_INTERVAL_MS = 15000;
 
 function AdminWindow({ auth, showError, showSuccess, onAccessRestricted }) {
   const [data, setData] = useState(null);
@@ -18,8 +21,13 @@ function AdminWindow({ auth, showError, showSuccess, onAccessRestricted }) {
   const [isLoading, setIsLoading] = useState(true);
   const [busyId, setBusyId] = useState("");
   const [isAccessRestricted, setIsAccessRestricted] = useState(false);
+  const [activation, setActivation] = useState(null);
   const mountedRef = useRef(true);
+  const busyIdRef = useRef("");
   const accessRestrictedRef = useRef(false);
+  const activationDialogRef = useRef(null);
+  const activationPrimaryActionRef = useRef(null);
+  const activationReturnFocusRef = useRef(null);
 
   const users = data?.users || [];
   const seatsAllowed = Number(data?.organization?.seatsAllowed || 0);
@@ -47,32 +55,99 @@ function AdminWindow({ auth, showError, showSuccess, onAccessRestricted }) {
 
   useEffect(() => {
     mountedRef.current = true;
+    busyIdRef.current = "";
     accessRestrictedRef.current = false;
     setIsAccessRestricted(false);
+    activationReturnFocusRef.current = null;
+    setActivation(null);
     refresh({ silent: false });
 
     const interval = setInterval(() => refresh({ silent: true }), REFRESH_INTERVAL_MS);
     return () => {
       mountedRef.current = false;
+      busyIdRef.current = "";
       clearInterval(interval);
     };
-  }, [auth?.accessToken, auth?.organizationId]);
+  }, [auth?.organizationId]);
 
   useEffect(() => {
     const handleRefreshShortcut = () => {
-      if (!busyId) refresh({ silent: false });
+      if (!busyIdRef.current) refresh({ silent: false });
     };
 
     window.addEventListener("arizona-admin:refresh", handleRefreshShortcut);
     return () => window.removeEventListener("arizona-admin:refresh", handleRefreshShortcut);
-  }, [auth?.accessToken, auth?.organizationId, busyId]);
+  }, [auth?.organizationId]);
+
+  useEffect(() => {
+    if (!activation?.code) return undefined;
+
+    const focusFrame = window.requestAnimationFrame(() => {
+      activationPrimaryActionRef.current?.focus();
+    });
+    const handleModalKeyDown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        setActivation(null);
+        return;
+      }
+
+      trapDialogFocus(event, activationDialogRef.current);
+    };
+
+    document.addEventListener("keydown", handleModalKeyDown, true);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("keydown", handleModalKeyDown, true);
+
+      const returnFocus = activationReturnFocusRef.current;
+      activationReturnFocusRef.current = null;
+      if (returnFocus?.isConnected) {
+        window.requestAnimationFrame(() => returnFocus.focus());
+      }
+    };
+  }, [activation?.code]);
 
   const updateDraft = (field, value) => {
     setDraft((current) => ({ ...current, [field]: value }));
   };
 
+  const presentActivation = (nextActivation, trigger) => {
+    if (!nextActivation?.code) {
+      setActivation(null);
+      return;
+    }
+
+    activationReturnFocusRef.current = trigger instanceof HTMLElement
+      ? trigger
+      : document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    setActivation(nextActivation);
+  };
+
+  const dismissActivation = () => {
+    setActivation(null);
+  };
+
+  const beginOperation = (operationId) => {
+    if (!operationId || busyIdRef.current) return false;
+
+    busyIdRef.current = operationId;
+    setBusyId(operationId);
+    return true;
+  };
+
+  const endOperation = (operationId) => {
+    if (busyIdRef.current !== operationId) return;
+
+    busyIdRef.current = "";
+    setBusyId("");
+  };
+
   async function refresh({ silent }) {
-    if (!auth?.accessToken || !auth?.organizationId) {
+    if (!auth?.organizationId) {
       if (!silent) showError("Sessão de gestão incompleta. Entre novamente.");
       setIsLoading(false);
       return;
@@ -85,7 +160,7 @@ function AdminWindow({ auth, showError, showSuccess, onAccessRestricted }) {
 
     if (!silent) setIsLoading(true);
     try {
-      const nextData = await listAdminMembers(auth);
+      const nextData = await listAdminMembers();
       if (mountedRef.current) setData(nextData);
     } catch (error) {
       handleAdminError(error, { silent });
@@ -101,6 +176,8 @@ function AdminWindow({ auth, showError, showSuccess, onAccessRestricted }) {
       if (!accessRestrictedRef.current) {
         accessRestrictedRef.current = true;
         setIsAccessRestricted(true);
+        activationReturnFocusRef.current = null;
+        setActivation(null);
         setData(null);
         showError("Seu acesso de gestão foi removido.");
       }
@@ -112,21 +189,33 @@ function AdminWindow({ auth, showError, showSuccess, onAccessRestricted }) {
 
   const submitMember = async (event) => {
     event.preventDefault();
-    if (!canAdd) return;
+    const operationId = "add";
+    if (!canAdd || !beginOperation(operationId)) return;
 
-    setBusyId("add");
+    const activationTrigger = event.nativeEvent?.submitter || document.activeElement;
     try {
-      await addAdminMember(auth, {
+      const created = await addAdminMember(auth, {
         name: cleanText(draft.name),
         email: cleanEmail(draft.email),
       });
       setDraft({ name: "", email: "" });
-      showSuccess("Usuário adicionado.");
+      if (created?.member?.id) {
+        try {
+          const generated = await generateActivationCode(auth, created.member.id);
+          presentActivation(generated?.activation || null, activationTrigger);
+          showSuccess("Usuário adicionado.");
+        } catch (codeError) {
+          showSuccess("Usuário adicionado.");
+          showError(`O código não foi gerado: ${adminErrorMessage(codeError)}`);
+        }
+      } else {
+        showSuccess("Usuário adicionado.");
+      }
       await refresh({ silent: true });
     } catch (error) {
       handleAdminError(error);
     } finally {
-      setBusyId("");
+      endOperation(operationId);
     }
   };
 
@@ -143,9 +232,43 @@ function AdminWindow({ auth, showError, showSuccess, onAccessRestricted }) {
     return user.role !== "admin";
   };
 
+  const canGenerateCode = (user) => {
+    if (!user?.id || user.id === data?.currentMemberId) return false;
+    if (canManageManagers) return true;
+    return user.role !== "admin";
+  };
+
+  const generateCode = async (user, trigger) => {
+    if (!canGenerateCode(user)) return;
+    const operationId = `code:${user.id}`;
+    if (!beginOperation(operationId)) return;
+
+    try {
+      const generated = await generateActivationCode(auth, user.id);
+      presentActivation(generated?.activation || null, trigger);
+    } catch (error) {
+      handleAdminError(error);
+    } finally {
+      endOperation(operationId);
+    }
+  };
+
+  const copyActivationCode = async () => {
+    const code = String(activation?.code || "");
+    if (!code) return;
+    try {
+      await copyText(code);
+      showSuccess("Código copiado.");
+    } catch {
+      showError("Não foi possível copiar o código.");
+    }
+  };
+
   const releaseDevice = async (user) => {
     if (!canReleaseUserDevice(user)) return;
-    setBusyId(`device:${user.id}`);
+    const operationId = `device:${user.id}`;
+    if (!beginOperation(operationId)) return;
+
     try {
       await releaseAdminDevice(auth, user.id);
       showSuccess("Acesso liberado.");
@@ -153,7 +276,7 @@ function AdminWindow({ auth, showError, showSuccess, onAccessRestricted }) {
     } catch (error) {
       handleAdminError(error);
     } finally {
-      setBusyId("");
+      endOperation(operationId);
     }
   };
 
@@ -161,7 +284,9 @@ function AdminWindow({ auth, showError, showSuccess, onAccessRestricted }) {
     if (!canRemoveUser(user)) return;
     if (!window.confirm(`Remover usuário ${user.email}?`)) return;
 
-    setBusyId(`remove:${user.id}`);
+    const operationId = `remove:${user.id}`;
+    if (!beginOperation(operationId)) return;
+
     try {
       await removeAdminMember(auth, user.id);
       showSuccess("Usuário removido.");
@@ -169,7 +294,7 @@ function AdminWindow({ auth, showError, showSuccess, onAccessRestricted }) {
     } catch (error) {
       handleAdminError(error);
     } finally {
-      setBusyId("");
+      endOperation(operationId);
     }
   };
 
@@ -252,6 +377,71 @@ function AdminWindow({ auth, showError, showSuccess, onAccessRestricted }) {
         </button>
       </form>
 
+      {activation?.code && (
+        <div
+          className="admin-activation-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) dismissActivation();
+          }}
+        >
+          <section
+            ref={activationDialogRef}
+            className="admin-activation-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="admin-activation-title"
+            aria-describedby="admin-activation-description admin-activation-meta"
+            tabIndex={-1}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header className="admin-activation-modal__header">
+              <div>
+                <span>Código gerado</span>
+                <h2 id="admin-activation-title">
+                  {activation.purpose === "recovery" ? "Código de recuperação" : "Código de ativação"}
+                </h2>
+              </div>
+              <button
+                type="button"
+                className="modal-icon-btn admin-activation-close-btn"
+                onClick={dismissActivation}
+                title="Fechar"
+                aria-label="Fechar código de ativação"
+              >
+                <img src={closeIcon} alt="" aria-hidden="true" />
+              </button>
+            </header>
+
+            <div className="admin-activation-modal__body">
+              <p id="admin-activation-description">
+                Copie e envie este código para <strong>{activation.email}</strong>.
+                Ele será exibido somente nesta tela.
+              </p>
+              <code className="admin-activation-modal__code">{activation.code}</code>
+              <small id="admin-activation-meta">
+                Válido até {formatDateTime(activation.expiresAt)}. Uso único.
+              </small>
+            </div>
+
+            <footer className="admin-activation-modal__actions">
+              <button type="button" className="btn btn-outline" onClick={dismissActivation}>
+                Fechar
+              </button>
+              <button
+                ref={activationPrimaryActionRef}
+                type="button"
+                className="btn btn-primary admin-activation-copy-btn"
+                onClick={copyActivationCode}
+              >
+                <img src={copyIcon} alt="" aria-hidden="true" />
+                <span>Copiar código</span>
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
+
       <section className="admin-table" aria-label="Lista de usuários">
         <div className="admin-row admin-row--head">
           <span>Usuário</span>
@@ -269,8 +459,10 @@ function AdminWindow({ auth, showError, showSuccess, onAccessRestricted }) {
           const isCurrentUser = user.id === data?.currentMemberId;
           const isDeviceBusy = busyId === `device:${user.id}`;
           const isRemoveBusy = busyId === `remove:${user.id}`;
+          const isCodeBusy = busyId === `code:${user.id}`;
           const canReleaseDevice = canReleaseUserDevice(user);
           const canRemoveMember = canRemoveUser(user);
+          const canGenerate = canGenerateCode(user);
           const selfRemoveTitle = isCurrentUser ? "Você não pode remover seu próprio acesso." : undefined;
           const protectedManagerTitle = user.role === "admin" && !canManageManagers && !isCurrentUser
             ? "Apenas master admin pode alterar gestores."
@@ -321,6 +513,20 @@ function AdminWindow({ auth, showError, showSuccess, onAccessRestricted }) {
               <div className="admin-actions">
                 <button
                   type="button"
+                  className="admin-icon-action"
+                  onClick={(event) => generateCode(user, event.currentTarget)}
+                  disabled={!canGenerate || Boolean(busyId)}
+                  title={canGenerate ? "Gerar código de ativação ou recuperação." : protectedManagerTitle || "Código indisponível."}
+                  aria-label={`Gerar código para ${user.email}`}
+                >
+                  {isCodeBusy ? (
+                    <span className="admin-action-spinner">...</span>
+                  ) : (
+                    <img src={copyIcon} alt="" aria-hidden="true" />
+                  )}
+                </button>
+                <button
+                  type="button"
                   className="admin-icon-action admin-icon-action--danger"
                   onClick={() => removeMember(user)}
                   disabled={!canRemoveMember || Boolean(busyId)}
@@ -340,6 +546,32 @@ function AdminWindow({ auth, showError, showSuccess, onAccessRestricted }) {
       </section>
     </main>
   );
+}
+
+function trapDialogFocus(event, dialog) {
+  if (event.key !== "Tab" || !dialog) return;
+
+  const focusable = Array.from(dialog.querySelectorAll(
+    'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  ));
+
+  if (focusable.length === 0) {
+    event.preventDefault();
+    dialog.focus();
+    return;
+  }
+
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const active = document.activeElement;
+
+  if (event.shiftKey && (active === first || !dialog.contains(active))) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && (active === last || !dialog.contains(active))) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 
 function cleanText(value) {
@@ -388,6 +620,32 @@ function licenseDaysInfo(value) {
 function compareUsers(a, b) {
   if (a.role !== b.role) return a.role === "admin" ? -1 : 1;
   return cleanEmail(a.email).localeCompare(cleanEmail(b.email));
+}
+
+async function copyText(value) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+
+  const input = document.createElement("textarea");
+  input.value = value;
+  input.style.position = "fixed";
+  input.style.opacity = "0";
+  document.body.appendChild(input);
+  input.select();
+  const copied = document.execCommand("copy");
+  input.remove();
+  if (!copied) throw new Error("copy_failed");
+}
+
+function formatDateTime(value) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "horário informado";
+  return new Intl.DateTimeFormat("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(date);
 }
 
 export default AdminWindow;

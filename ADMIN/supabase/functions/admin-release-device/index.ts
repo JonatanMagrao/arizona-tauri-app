@@ -11,6 +11,17 @@ import {
   requirePublishableKey,
 } from "../_shared/supabase.ts";
 import { resolveMaster, resolveMember } from "../_shared/actors.ts";
+import {
+  ACCESS_POLICY_SELECT,
+  accessPolicy,
+} from "../_shared/access-policy.ts";
+import { deviceSwitchLock } from "../_shared/device-switch.ts";
+import { currentAuthDayStart, normalizeDailyAuthResetHour } from "../_shared/auth-cycle.ts";
+import {
+  enforceRateLimit,
+  rateLimitResponse,
+  requireRecentTotp,
+} from "../_shared/security.ts";
 
 type ReleaseDeviceBody = {
   organizationId?: unknown;
@@ -49,6 +60,26 @@ Deno.serve(async (req) => {
       return errorResponse("forbidden", "Only masters or organization admins can release devices.", 403);
     }
 
+    const { data: organization, error: organizationError } = await admin
+      .schema("licensing")
+      .from("organizations")
+      .select(`status,daily_auth_reset_hour,${ACCESS_POLICY_SELECT}`)
+      .eq("id", organizationId)
+      .maybeSingle();
+    if (organizationError) throw organizationError;
+    if (!organization || organization.status !== "active") {
+      return errorResponse("organization_not_active", "Organization is not active.", 403);
+    }
+    const policy = accessPolicy(organization);
+    requireRecentTotp(
+      req,
+      currentAuthDayStart(
+        new Date(),
+        normalizeDailyAuthResetHour(organization.daily_auth_reset_hour),
+      ),
+    );
+    await enforceRateLimit(admin, "admin.release.actor", `${actor.kind}:${actor.id}`, 30, 3600);
+
     const { data: member, error: memberError } = await admin
       .schema("licensing")
       .from("members")
@@ -67,7 +98,7 @@ Deno.serve(async (req) => {
     let deviceQuery = admin
       .schema("licensing")
       .from("devices")
-      .select("id,install_id,device_label,status")
+      .select("id,install_id,device_label,status,activated_at")
       .eq("organization_id", organizationId)
       .eq("member_id", memberId)
       .eq("status", "active");
@@ -81,12 +112,35 @@ Deno.serve(async (req) => {
     if (!activeDeviceIds.length) {
       return jsonResponse({ ok: true, released: false, devices: [] });
     }
+    const switchLock = (devices || [])
+      .map((device) => deviceSwitchLock(
+        device.activated_at,
+        policy.deviceSwitchIntervalDays,
+      ))
+      .find(Boolean);
+    if (switchLock) {
+      return errorResponse(
+        "device_switch_interval",
+        "The active device has not completed the minimum interval between switches.",
+        409,
+        { ...switchLock },
+      );
+    }
+    await enforceRateLimit(
+      admin,
+      "device.release.member",
+      member.id,
+      policy.deviceReleaseLimit,
+      policy.deviceReleaseWindowMinutes * 60,
+    );
 
     const { data: releasedDevices, error: releaseError } = await admin
       .schema("licensing")
       .from("devices")
       .update({
         status: "revoked",
+        revoked_at: new Date().toISOString(),
+        revoked_reason: "device_released",
         updated_at: new Date().toISOString(),
       })
       .in("id", activeDeviceIds)
@@ -140,6 +194,18 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: true, released: true, devices: releasedDevices || [] });
   } catch (error) {
     console.error(error);
+    const limited = rateLimitResponse(error);
+    if (limited) return limited;
+    const message = String((error as { message?: unknown })?.message || error || "");
+    if (message === "mfa_required" || message === "daily_mfa_required") {
+      return errorResponse("daily_mfa_required", "Confirm MFA to continue.", 401);
+    }
+    if (message === "invalid_user_token" || message === "missing_bearer_token") {
+      return errorResponse("invalid_user_token", "Session is invalid.", 401);
+    }
+    if (message === "invalid_publishable_key") {
+      return errorResponse("invalid_publishable_key", "Invalid publishable key.", 401);
+    }
     return errorResponse("internal_error", "Unable to release device.", 500);
   }
 });
