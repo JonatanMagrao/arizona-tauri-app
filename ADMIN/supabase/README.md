@@ -177,7 +177,7 @@ cd ADMIN
 npm run dev
 ```
 
-Ela usa Supabase Auth com e-mail/senha + TOTP para o master e chama
+Ela usa Google OAuth via Supabase Auth para o master e chama
 `master-create-organization` para salvar:
 
 - licenca do Grupo Arizona;
@@ -195,6 +195,26 @@ pode usar outro dominio, por exemplo `jonatanmagrao.com.br`.
 
 A tela tambem chama `master-get-license` depois do login para carregar a licenca
 atual em modo edicao. O master admin pode usar o app Tauri sem consumir seat.
+O backend aceita o OAuth somente quando a identidade inclui o provider Google,
+o JWT registra `amr.method=oauth` depois do corte diário e o `auth_user_id`
+continua vinculado a um `licensing.master_accounts` ativo. O Client Secret do
+Google fica somente no provider do Supabase Auth.
+
+Essa mudança é exclusiva do Admin web. O Tauri continua usando código de
+ativação, TOTP, sessão local, device e validação de licença para masters,
+gestores e usuários finais.
+
+## Logs de atividade no Admin
+
+A aba **Logs de atividade** consulta os registros já existentes em
+`licensing.audit_log` por meio da Edge Function `master-list-audit-log`. A
+consulta é paginada, somente leitura e exige a mesma sessão master recente via
+Google OAuth usada pelo restante do Admin.
+
+A resposta apresenta apenas identidades e contexto necessários para a
+interface. Metadados brutos, códigos de ativação e identificadores de instalação
+não são enviados ao navegador. A função não cria logs, não altera tabelas e não
+precisa de migration.
 
 ## Primeiro acesso no Tauri
 
@@ -212,12 +232,12 @@ um novo QR é criado somente quando não existe TOTP verificado. A interface web
 do Tauri nunca recebe access token, refresh token ou recibo.
 
 Quando o autenticador foi perdido, o master pode usar **Resetar TOTP** no Admin
-web. A Edge Function `master-reset-member-totp` exige sessão master com TOTP
-recente, remove todos os fatores TOTP do membro, revoga os devices e sessões de
-licença e cancela códigos de ativação ainda abertos. A exclusão de um fator
-verificado também encerra as sessões Auth do usuário. Em seguida, o master deve
-gerar um novo código; esse fluxo apresentará um QR novo. A Gestão do Tauri não
-oferece nem chama essa operação.
+web. A Edge Function `master-reset-member-totp` exige sessão master iniciada
+recentemente pelo Google, remove todos os fatores TOTP do membro, revoga os
+devices e sessões de licença e cancela códigos de ativação ainda abertos. A
+exclusão de um fator verificado também encerra as sessões Auth do usuário. Em
+seguida, o master deve gerar um novo código; esse fluxo apresentará um QR novo.
+A Gestão do Tauri não oferece nem chama essa operação.
 
 ### Rate limits e políticas de acesso
 
@@ -261,7 +281,8 @@ como hashes SHA-256. A retenção operacional padrão desses eventos é de 2 dia
 Uma nova emissão revoga códigos anteriores ainda abertos para o mesmo membro.
 
 O Admin web oferece **Zerar tempos** em cada usuário. A Edge Function
-`master-reset-member-rate-limits` exige sessão master com TOTP recente,
+`master-reset-member-rate-limits` exige sessão master iniciada recentemente
+pelo Google,
 recalcula os hashes do ID, e-mail e identidade de ator do membro e remove
 somente os contadores correspondentes. Limites de IP e de outros atores são
 preservados. A operação é registrada em `licensing.audit_log` e não altera

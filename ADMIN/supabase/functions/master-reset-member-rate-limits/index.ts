@@ -18,7 +18,7 @@ import {
 import {
   enforceRateLimit,
   rateLimitResponse,
-  requireRecentTotp,
+  requireRecentGoogleOAuth,
   sha256Hex,
 } from "../_shared/security.ts";
 import { memberRateLimitSubjects } from "../_shared/member-rate-limit-reset.ts";
@@ -74,12 +74,13 @@ Deno.serve(async (req) => {
       return errorResponse("organization_not_active", "Organization is not active.", 403);
     }
 
-    requireRecentTotp(
+    requireRecentGoogleOAuth(
       req,
       currentAuthDayStart(
         new Date(),
         normalizeDailyAuthResetHour(organization.daily_auth_reset_hour),
       ),
+      user.providers,
     );
     await enforceRateLimit(
       admin,
@@ -151,8 +152,12 @@ Deno.serve(async (req) => {
 
     const message = String((error as { message?: unknown })?.message || error || "");
     const normalized = message.toLowerCase();
-    if (message === "mfa_required" || message === "daily_mfa_required") {
-      return errorResponse("daily_mfa_required", "Confirm MFA to continue.", 401);
+    if (message === "google_oauth_required" || message === "daily_google_oauth_required") {
+      return errorResponse(
+        "admin_google_oauth_required",
+        "Sign in with Google to continue.",
+        401,
+      );
     }
     if (message === "invalid_user_token" || message === "missing_bearer_token") {
       return errorResponse("invalid_user_token", "Session is invalid.", 401);

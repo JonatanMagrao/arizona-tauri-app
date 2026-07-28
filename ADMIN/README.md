@@ -23,7 +23,8 @@ npm run dev
 ```
 
 Abra a URL mostrada pelo Vite. A porta inicial e `1430`.
-Se a porta estiver ocupada, o Vite usa a proxima disponivel e mostra a URL no terminal.
+Ela é fixa porque faz parte da allowlist do Google OAuth e do Supabase. Feche o
+processo que estiver usando a porta se o Vite não conseguir iniciar.
 
 Depois do build, a pagina fica em `ADMIN/dist/index.html`.
 Para testar o build:
@@ -35,16 +36,19 @@ npm run preview
 ```
 
 Abra a URL mostrada pelo Vite. A porta inicial do preview e `1431`.
-Se a porta estiver ocupada, use a URL indicada pelo Vite.
+Ela também é fixa pela configuração de redirect OAuth.
 
 Fluxo atual:
 
 1. Criar o usuário master no Supabase Auth e vinculá-lo explicitamente em
    `licensing.master_accounts`.
-2. Entrar no painel local com a senha master e confirmar o TOTP. A sessão fica
-   em `sessionStorage`: sobrevive a recarregamentos na mesma aba, mas é removida
-   ao sair ou fechar a aba. Tokens expirados são renovados pelo refresh token;
-   o TOTP diário continua sendo exigido no corte configurado.
+2. Entrar no painel local exclusivamente com Google OAuth. O Supabase vincula a
+   identidade Google ao usuário Auth existente quando o e-mail verificado é o
+   mesmo; o backend ainda exige o vínculo explícito de `auth_user_id` em
+   `licensing.master_accounts`. A sessão fica em `sessionStorage`: sobrevive a
+   recarregamentos na mesma aba, mas é removida ao sair ou fechar a aba. Tokens
+   expirados são renovados pelo refresh token; uma nova autenticação Google é
+   exigida depois do corte diário configurado.
 3. Salvar a licença com seats, validade, renovação diária e usuários.
 4. Apenas o master define quem é gestor.
 5. No Tauri, master e gestores podem emitir código para usuários permitidos.
@@ -141,9 +145,10 @@ O reset manual dos contadores deve ser reservado para testes controlados ou
 correção de incidente e precisa filtrar o usuário/e-mail e o emissor exatos;
 não apague `licensing.rate_limit_events` de forma global em produção.
 O botão **Zerar tempos** aplica esse filtro individual automaticamente e exige
-sessão master com TOTP recente.
+sessão master iniciada recentemente pelo Google.
 
-Sem sessao master ativa, a tela local mostra apenas o login.
+Sem sessão master ativa, a tela local mostra apenas o botão **Entrar com
+Google**.
 
 Para criar outro master, não dependa de vínculo automático por e-mail. Use o
 passo explícito documentado em `supabase/README.md`.
@@ -161,3 +166,9 @@ legado `SUPABASE_SERVICE_ROLE_KEY`. Fatores TOTP verificados são preservados na
 recuperação comum de device e só são removidos pela ação master explícita no
 Admin web. A chave permanece restrita ao backend e nunca é enviada ao Tauri,
 ao navegador ou gravada no repositório.
+
+O Client ID e o Client Secret do Google ficam configurados diretamente no
+provider Google do Supabase Auth. O secret não pertence ao frontend, aos
+arquivos locais de ambiente nem ao repositório. O login Google é exclusivo do
+Admin web; ativação, recuperação, TOTP diário, device e licença do Tauri não
+mudam.

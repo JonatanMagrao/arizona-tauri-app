@@ -18,7 +18,7 @@ import {
 import {
   enforceRateLimit,
   rateLimitResponse,
-  requireRecentTotp,
+  requireRecentGoogleOAuth,
 } from "../_shared/security.ts";
 
 const ARIZONA_ORGANIZATION_SLUG = "arizona";
@@ -36,8 +36,12 @@ function knownError(error: unknown): Response | null {
   if (message === "missing_bearer_token" || message === "invalid_user_token") {
     return errorResponse("invalid_user_token", "Login session is invalid.", 401);
   }
-  if (message === "mfa_required" || message === "daily_mfa_required") {
-    return errorResponse("daily_mfa_required", "Confirm MFA to continue.", 401);
+  if (message === "google_oauth_required" || message === "daily_google_oauth_required") {
+    return errorResponse(
+      "admin_google_oauth_required",
+      "Sign in with Google to continue.",
+      401,
+    );
   }
   if (message.startsWith("missing_supabase_") || normalized.includes("invalid api key")) {
     return errorResponse("function_config_error", "Function configuration is incomplete.", 500);
@@ -76,12 +80,13 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     if (organizationError) throw organizationError;
-    requireRecentTotp(
+    requireRecentGoogleOAuth(
       req,
       currentAuthDayStart(
         new Date(),
         normalizeDailyAuthResetHour(organization?.daily_auth_reset_hour),
       ),
+      user.providers,
     );
     await enforceRateLimit(admin, "master.get.actor", master.id, 120, 3600);
     if (!organization) {

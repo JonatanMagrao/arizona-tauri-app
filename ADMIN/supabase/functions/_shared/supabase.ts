@@ -5,6 +5,7 @@ type KeyMap = Record<string, string>;
 export type AuthUser = {
   id: string;
   email: string;
+  providers: string[];
 };
 
 export function getSupabaseUrl(): string {
@@ -102,8 +103,19 @@ export async function getAuthUser(req: Request): Promise<AuthUser> {
     throw new Error("invalid_user_token");
   }
 
+  const providerValues = Array.isArray(data.user.app_metadata?.providers)
+    ? data.user.app_metadata.providers
+    : [data.user.app_metadata?.provider];
+  const providers = [...new Set(
+    providerValues
+      .filter((provider): provider is string => typeof provider === "string")
+      .map((provider) => provider.trim().toLowerCase())
+      .filter(Boolean),
+  )];
+
   return {
     id: data.user.id,
     email: data.user.email.toLowerCase(),
+    providers,
   };
 }

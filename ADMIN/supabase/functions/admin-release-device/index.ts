@@ -20,6 +20,7 @@ import { currentAuthDayStart, normalizeDailyAuthResetHour } from "../_shared/aut
 import {
   enforceRateLimit,
   rateLimitResponse,
+  requireRecentMasterAuthentication,
   requireRecentTotp,
 } from "../_shared/security.ts";
 
@@ -71,13 +72,15 @@ Deno.serve(async (req) => {
       return errorResponse("organization_not_active", "Organization is not active.", 403);
     }
     const policy = accessPolicy(organization);
-    requireRecentTotp(
-      req,
-      currentAuthDayStart(
-        new Date(),
-        normalizeDailyAuthResetHour(organization.daily_auth_reset_hour),
-      ),
+    const authBoundary = currentAuthDayStart(
+      new Date(),
+      normalizeDailyAuthResetHour(organization.daily_auth_reset_hour),
     );
+    if (actor.kind === "master") {
+      requireRecentMasterAuthentication(req, authBoundary, user.providers);
+    } else {
+      requireRecentTotp(req, authBoundary);
+    }
     await enforceRateLimit(admin, "admin.release.actor", `${actor.kind}:${actor.id}`, 30, 3600);
 
     const { data: member, error: memberError } = await admin
@@ -199,6 +202,13 @@ Deno.serve(async (req) => {
     const message = String((error as { message?: unknown })?.message || error || "");
     if (message === "mfa_required" || message === "daily_mfa_required") {
       return errorResponse("daily_mfa_required", "Confirm MFA to continue.", 401);
+    }
+    if (message === "google_oauth_required" || message === "daily_google_oauth_required") {
+      return errorResponse(
+        "admin_google_oauth_required",
+        "Sign in with Google to continue.",
+        401,
+      );
     }
     if (message === "invalid_user_token" || message === "missing_bearer_token") {
       return errorResponse("invalid_user_token", "Session is invalid.", 401);

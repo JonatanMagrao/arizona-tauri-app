@@ -100,3 +100,8 @@ tratado como criptografia ou como uma fronteira de seguranca.
 ## Roadmap
 
 Melhorias do app Tauri estão em [roadmap.md](./roadmap.md).
+
+Documentos de planejamento:
+
+- [Privacidade, registros operacionais, diagnóstico e feedback](./docs/roadmap-privacidade-telemetria.md)
+- [Arquitetura futura de atualizações independentes do Tauri e CEP](./docs/arquitetura-atualizacoes-independentes-tauri-cep.md)

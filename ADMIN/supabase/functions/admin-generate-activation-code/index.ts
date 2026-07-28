@@ -23,6 +23,7 @@ import {
   enforceRateLimit,
   rateLimitResponse,
   requestIp,
+  requireRecentMasterAuthentication,
   requireRecentTotp,
   sha256Hex,
 } from "../_shared/security.ts";
@@ -86,7 +87,12 @@ Deno.serve(async (req) => {
 
     const resetHour = normalizeDailyAuthResetHour(organization.daily_auth_reset_hour);
     const policy = accessPolicy(organization);
-    requireRecentTotp(req, currentAuthDayStart(new Date(), resetHour));
+    const authBoundary = currentAuthDayStart(new Date(), resetHour);
+    if (actor.kind === "master") {
+      requireRecentMasterAuthentication(req, authBoundary, user.providers);
+    } else {
+      requireRecentTotp(req, authBoundary);
+    }
 
     const { data: target, error: targetError } = await admin
       .schema("licensing")
@@ -207,6 +213,13 @@ Deno.serve(async (req) => {
     const message = String((error as { message?: unknown })?.message || error || "");
     if (message === "mfa_required" || message === "daily_mfa_required") {
       return errorResponse("daily_mfa_required", "Confirm MFA to continue.", 401);
+    }
+    if (message === "google_oauth_required" || message === "daily_google_oauth_required") {
+      return errorResponse(
+        "admin_google_oauth_required",
+        "Sign in with Google to continue.",
+        401,
+      );
     }
     if (message === "invalid_user_token" || message === "missing_bearer_token") {
       return errorResponse("invalid_user_token", "Session is invalid.", 401);

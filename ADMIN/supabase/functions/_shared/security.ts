@@ -1,15 +1,13 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2.110.8";
 import { errorResponse } from "./http.ts";
 import { bearerToken } from "./supabase.ts";
+import {
+  requireRecentGoogleOAuthClaims,
+  requireRecentTotpClaims,
+  type AuthAssuranceClaims,
+} from "./auth-assurance.ts";
 
-type AmrEntry = {
-  method?: unknown;
-  timestamp?: unknown;
-};
-
-type JwtClaims = {
-  aal?: unknown;
-  amr?: unknown;
+type JwtClaims = AuthAssuranceClaims & {
   exp?: unknown;
   sub?: unknown;
 };
@@ -37,20 +35,41 @@ export function jwtClaims(req: Request): JwtClaims {
 export function requireRecentTotp(req: Request, notBefore: Date): Date {
   // getAuthUser() must be called before this helper. It validates the JWT signature
   // against Supabase Auth; this helper only inspects the already validated claims.
-  const claims = jwtClaims(req);
-  if (claims.aal !== "aal2" || !Array.isArray(claims.amr)) {
-    throw new Error("mfa_required");
+  return requireRecentTotpClaims(jwtClaims(req), notBefore);
+}
+
+export function requireRecentGoogleOAuth(
+  req: Request,
+  notBefore: Date,
+  identityProviders: readonly string[] | null = null,
+): Date {
+  // getAuthUser() must be called before this helper. Supabase validates the JWT;
+  // the AMR claim then proves that this session originated in social OAuth.
+  if (
+    identityProviders !== null
+    && !identityProviders.some((provider) => provider.trim().toLowerCase() === "google")
+  ) {
+    throw new Error("google_oauth_required");
   }
+  return requireRecentGoogleOAuthClaims(jwtClaims(req), notBefore);
+}
 
-  const notBeforeSeconds = Math.floor(notBefore.getTime() / 1000);
-  const timestamps = (claims.amr as AmrEntry[])
-    .filter((entry) => entry?.method === "totp")
-    .map((entry) => Number(entry.timestamp))
-    .filter((value) => Number.isFinite(value));
-
-  const mostRecent = timestamps.length ? Math.max(...timestamps) : 0;
-  if (mostRecent < notBeforeSeconds) throw new Error("daily_mfa_required");
-  return new Date(mostRecent * 1000);
+export function requireRecentMasterAuthentication(
+  req: Request,
+  notBefore: Date,
+  identityProviders: readonly string[] | null = null,
+): Date {
+  try {
+    return requireRecentGoogleOAuth(req, notBefore, identityProviders);
+  } catch (oauthError) {
+    try {
+      // Preserve the existing Tauri master flow. The standalone ADMIN requires
+      // Google OAuth through its master-only endpoints before reaching here.
+      return requireRecentTotp(req, notBefore);
+    } catch {
+      throw oauthError;
+    }
+  }
 }
 
 export async function sha256Hex(value: string): Promise<string> {

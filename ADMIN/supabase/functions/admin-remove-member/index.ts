@@ -12,7 +12,11 @@ import {
 } from "../_shared/supabase.ts";
 import { resolveMaster, resolveMember } from "../_shared/actors.ts";
 import { currentAuthDayStart, normalizeDailyAuthResetHour } from "../_shared/auth-cycle.ts";
-import { enforceRateLimit, requireRecentTotp } from "../_shared/security.ts";
+import {
+  enforceRateLimit,
+  requireRecentMasterAuthentication,
+  requireRecentTotp,
+} from "../_shared/security.ts";
 
 type RemoveMemberBody = {
   organizationId?: unknown;
@@ -59,13 +63,15 @@ Deno.serve(async (req) => {
     if (!organization || organization.status !== "active") {
       return errorResponse("organization_not_active", "Organization is not active.", 403);
     }
-    requireRecentTotp(
-      req,
-      currentAuthDayStart(
-        new Date(),
-        normalizeDailyAuthResetHour(organization.daily_auth_reset_hour),
-      ),
+    const authBoundary = currentAuthDayStart(
+      new Date(),
+      normalizeDailyAuthResetHour(organization.daily_auth_reset_hour),
     );
+    if (actor.kind === "master") {
+      requireRecentMasterAuthentication(req, authBoundary, user.providers);
+    } else {
+      requireRecentTotp(req, authBoundary);
+    }
     await enforceRateLimit(admin, "admin.remove.actor", `${actor.kind}:${actor.id}`, 20, 3600);
 
     if (actor.kind === "member" && actor.id === memberId) {
@@ -169,6 +175,13 @@ Deno.serve(async (req) => {
     const message = String((error as { message?: unknown })?.message || error || "");
     if (message === "mfa_required" || message === "daily_mfa_required") {
       return errorResponse("daily_mfa_required", "Confirm MFA to continue.", 401);
+    }
+    if (message === "google_oauth_required" || message === "daily_google_oauth_required") {
+      return errorResponse(
+        "admin_google_oauth_required",
+        "Sign in with Google to continue.",
+        401,
+      );
     }
     if (message === "rate_limited") {
       return errorResponse("rate_limited", "Try again later.", 429);
