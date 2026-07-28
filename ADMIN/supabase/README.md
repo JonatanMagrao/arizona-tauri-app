@@ -186,6 +186,8 @@ Ela usa Supabase Auth com e-mail/senha + TOTP para o master e chama
 - usuarios da licenca;
 - papel de gestor por usuario, definido apenas pelo master;
 - liberacao de device ativo por usuario;
+- reset explicito do TOTP de um usuario, disponivel somente ao master neste
+  painel web;
 - limpeza/remocao de usuario para liberar seat.
 
 O dominio permitido dos usuarios e fixo: `arizona.global`. O email do master
@@ -208,6 +210,14 @@ Na recuperação de device, um fator TOTP já verificado não é removido: o usu
 confirma o mesmo autenticador. Matrículas incompletas podem ser descartadas e
 um novo QR é criado somente quando não existe TOTP verificado. A interface web
 do Tauri nunca recebe access token, refresh token ou recibo.
+
+Quando o autenticador foi perdido, o master pode usar **Resetar TOTP** no Admin
+web. A Edge Function `master-reset-member-totp` exige sessão master com TOTP
+recente, remove todos os fatores TOTP do membro, revoga os devices e sessões de
+licença e cancela códigos de ativação ainda abertos. A exclusão de um fator
+verificado também encerra as sessões Auth do usuário. Em seguida, o master deve
+gerar um novo código; esse fluxo apresentará um QR novo. A Gestão do Tauri não
+oferece nem chama essa operação.
 
 ### Rate limits e políticas de acesso
 
@@ -250,6 +260,13 @@ Os identificadores são armazenados em `licensing.rate_limit_events` somente
 como hashes SHA-256. A retenção operacional padrão desses eventos é de 2 dias.
 Uma nova emissão revoga códigos anteriores ainda abertos para o mesmo membro.
 
+O Admin web oferece **Zerar tempos** em cada usuário. A Edge Function
+`master-reset-member-rate-limits` exige sessão master com TOTP recente,
+recalcula os hashes do ID, e-mail e identidade de ator do membro e remove
+somente os contadores correspondentes. Limites de IP e de outros atores são
+preservados. A operação é registrada em `licensing.audit_log` e não altera
+usuário, TOTP, licença, device, sessão ou código de ativação.
+
 Em desenvolvimento, ajuste a política no Admin ou reutilize o código enquanto
 ele estiver válido; não gere sucessivos códigos para repetir o mesmo teste.
 Depois que um código
@@ -260,13 +277,13 @@ de incidente/teste e deve remover somente os eventos do membro, e-mail e ator
 envolvidos — nunca toda a tabela em produção.
 
 O acesso privilegiado ao Data API usa `SUPABASE_SECRET_KEYS`. O cliente
-separado de Auth Admin usa `SUPABASE_SERVICE_ROLE_KEY` apenas dentro de
-`app-activate`, porque operações administrativas de identidades e a remoção de
-matrículas MFA incompletas exigem um JWT com papel `service_role` e rejeitam a
-chave opaca `sb_secret` com `bad_jwt`. A recuperação de device nunca remove
-fator TOTP verificado. Essa exceção não pode chegar a clientes e deve ser
-reavaliada quando o endpoint do Auth Admin aceitar integralmente as chaves
-novas.
+separado de Auth Admin usa `SUPABASE_SERVICE_ROLE_KEY` dentro de `app-activate`
+e `master-reset-member-totp`, porque operações administrativas de identidades e
+fatores MFA exigem um JWT com papel `service_role` e rejeitam a chave opaca
+`sb_secret` com `bad_jwt`. A recuperação comum de device nunca remove fator
+TOTP verificado; somente o reset master explícito faz isso. Essa exceção não
+pode chegar a clientes e deve ser reavaliada quando o endpoint do Auth Admin
+aceitar integralmente as chaves novas.
 
 Nos acessos seguintes, o refresh token continua no Windows Credential Manager,
 mas a autorização diária depende de TOTP confirmado depois do corte das 04:00.

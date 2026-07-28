@@ -674,6 +674,89 @@ export default function AdminApp() {
     });
   }
 
+  async function handleResetTotp(user) {
+    const organizationId = currentLicense?.organization?.id;
+    if (!organizationId || !user.memberId) {
+      showToast("Salve o usuario antes de resetar o TOTP.", "error");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Resetar o autenticador de ${user.email}? `
+      + "As sessoes, a maquina ativa e os codigos abertos serao revogados. "
+      + "Depois, gere um novo codigo para o usuario cadastrar outro QR Code.",
+    );
+    if (!confirmed) return;
+
+    await runAsync(async () => {
+      const activeSession = await validSession();
+      const result = await functionRequest(
+        "master-reset-member-totp",
+        { organizationId, memberId: user.memberId },
+        activeSession.accessToken,
+      );
+
+      if (!result?.reset) {
+        const message = result?.reason === "auth_identity_missing"
+          ? "Este usuario ainda nao possui identidade de acesso."
+          : "Este usuario nao possui TOTP cadastrado.";
+        showToast(message, "error");
+        return;
+      }
+
+      setActivationCodes((current) => (
+        current.filter((activation) => activation.memberId !== user.memberId)
+      ));
+      setActivationPopover((current) => (
+        current?.memberId === user.memberId ? null : current
+      ));
+      setLicenseDraft((current) => ({
+        ...current,
+        users: current.users.map((draftUser) => (
+          draftUser.id === user.id ? { ...draftUser, activeDevice: null } : draftUser
+        )),
+      }));
+      setCurrentLicense((current) => current ? {
+        ...current,
+        users: (current.users || []).map((licenseUser) => (
+          licenseUser.id === user.memberId ? { ...licenseUser, activeDevice: null } : licenseUser
+        )),
+      } : current);
+      showToast("TOTP resetado. Gere um novo codigo para cadastrar outro QR Code.", "success");
+    });
+  }
+
+  async function handleResetUserRateLimits(user) {
+    const organizationId = currentLicense?.organization?.id;
+    if (!organizationId || !user.memberId) {
+      showToast("Salve o usuario antes de zerar os tempos.", "error");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Zerar os tempos das politicas de acesso de ${user.email}? `
+      + "Os contadores deste usuario recomecarao do zero. "
+      + "Limites globais de IP e de outros usuarios serao preservados.",
+    );
+    if (!confirmed) return;
+
+    await runAsync(async () => {
+      const activeSession = await validSession();
+      const result = await functionRequest(
+        "master-reset-member-rate-limits",
+        { organizationId, memberId: user.memberId },
+        activeSession.accessToken,
+      );
+      const deletedEvents = Number(result?.deletedEvents || 0);
+      showToast(
+        deletedEvents === 1
+          ? "Tempos zerados: 1 contador deste usuario foi limpo."
+          : `Tempos zerados: ${deletedEvents} contadores deste usuario foram limpos.`,
+        "success",
+      );
+    });
+  }
+
   async function handleClearUser(user) {
     if (!hasUserContent(user)) return;
 
@@ -716,7 +799,14 @@ export default function AdminApp() {
       ...current,
       users: current.users.map((draftUser) => (
         draftUser.id === userId
-          ? { ...draftUser, memberId: null, name: "", email: "", isManager: false, activeDevice: null }
+          ? {
+            ...draftUser,
+            memberId: null,
+            name: "",
+            email: "",
+            isManager: false,
+            activeDevice: null,
+          }
           : draftUser
       )),
     }));
@@ -1164,7 +1254,7 @@ export default function AdminApp() {
                       <div className="user-actions">
                         <span>Acoes</span>
                         <button
-                          className={`button button--small ${activation ? "button--code-ready" : ""}`}
+                          className={`button button--small user-action--activation ${activation ? "button--code-ready" : ""}`}
                           type="button"
                           disabled={isBusy || !user.memberId}
                           onClick={(event) => showActivationCode(
@@ -1175,7 +1265,25 @@ export default function AdminApp() {
                           {activation ? "Ver codigo" : "Gerar codigo"}
                         </button>
                         <button
-                          className="button button--danger button--small"
+                          className="button button--small"
+                          type="button"
+                          disabled={isBusy || !user.memberId}
+                          title="Remove o TOTP atual para cadastrar um novo QR Code."
+                          onClick={() => handleResetTotp(user)}
+                        >
+                          Resetar TOTP
+                        </button>
+                        <button
+                          className="button button--small"
+                          type="button"
+                          disabled={isBusy || !user.memberId}
+                          title="Zera os contadores das politicas de acesso deste usuario."
+                          onClick={() => handleResetUserRateLimits(user)}
+                        >
+                          Zerar tempos
+                        </button>
+                        <button
+                          className="button button--danger button--small user-action--delete"
                           type="button"
                           disabled={isBusy || !hasUserContent(user)}
                           onClick={() => handleClearUser(user)}
@@ -1763,6 +1871,7 @@ function errorMessage(error) {
   if (code === "device_limit_reached") return "Usuario ja possui uma maquina ativa. Libere o device antes de usar outra.";
   if (code === "device_not_active") return "Device bloqueado. Libere ou cadastre uma nova maquina.";
   if (code === "member_not_found") return "Usuario nao encontrado.";
+  if (code === "protected_identity") return "A identidade master nao pode ser resetada por esta acao.";
   if (code === "invalid_allowed_email_domain") return "Informe um dominio permitido valido.";
   if (code === "admin_email_domain_not_allowed") return "Email do usuario precisa usar arizona.global.";
   if (code === "email_domain_not_allowed") return "Email fora do dominio permitido.";

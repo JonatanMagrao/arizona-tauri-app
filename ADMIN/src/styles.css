@@ -270,7 +270,7 @@ input {
 
 .user-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 210px 112px 180px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 210px 112px 224px;
   gap: 10px;
   align-items: end;
 }
@@ -347,6 +347,14 @@ input {
 
 .user-actions {
   grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.user-action--activation {
+  grid-column: 1 / -1;
+}
+
+.user-action--delete {
+  grid-column: 1 / -1;
 }
 
 .user-actions > span {
@@ -933,7 +941,7 @@ input {
   }
 
   .user-row {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 190px 100px 170px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 190px 100px 210px;
   }
 }
 

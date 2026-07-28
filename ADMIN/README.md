@@ -56,12 +56,20 @@ Fluxo atual:
 8. O primeiro acesso do usuário é e-mail + código; depois ele cadastra TOTP.
    Em recuperação de device, um TOTP já verificado é preservado e reutilizado;
    um novo QR aparece somente se a conta ainda não possuir fator verificado.
-9. A partir daí, o acesso diário pede somente TOTP após o horário configurado
+9. Somente o master, neste painel web separado, pode usar **Resetar TOTP**.
+   A ação remove os fatores TOTP, encerra as sessões Auth, revoga devices e
+   sessões de licença e cancela códigos abertos. Depois, um novo código permite
+   cadastrar outro QR. A Gestão dentro do Tauri não expõe essa opção.
+10. A partir daí, o acesso diário pede somente TOTP após o horário configurado
    (04:00 por padrão).
-10. Cada usuário pode ter apenas uma máquina ativa. Liberar um device não
+11. Cada usuário pode ter apenas uma máquina ativa. Liberar um device não
     remove o usuário; remover o usuário revoga devices e sessões.
-11. Device revogado não é reativado por uma validação comum; uma instalação
+12. Device revogado não é reativado por uma validação comum; uma instalação
     nova precisa passar novamente pelo fluxo autorizado.
+13. Somente o master, neste painel web separado, pode usar **Zerar tempos** em
+    um usuário. A ação reinicia os contadores das políticas atribuíveis ao ID,
+    e-mail e papel daquele membro, preservando limites globais de IP e de
+    outros atores. Usuário, TOTP, licença, device e sessão não são alterados.
 
 ### Limites dos códigos de ativação
 
@@ -132,6 +140,8 @@ devolve `activation_unavailable` e libera o mesmo código para nova tentativa.
 O reset manual dos contadores deve ser reservado para testes controlados ou
 correção de incidente e precisa filtrar o usuário/e-mail e o emissor exatos;
 não apague `licensing.rate_limit_events` de forma global em produção.
+O botão **Zerar tempos** aplica esse filtro individual automaticamente e exige
+sessão master com TOTP recente.
 
 Sem sessao master ativa, a tela local mostra apenas o login.
 
@@ -144,9 +154,10 @@ Projeto Supabase:
 - URL: `https://nizchnscqkixawqxrwzd.supabase.co`
 
 O Tauri e o Admin cliente usam somente a chave `sb_publishable`. As Edge
-Functions usam `sb_secret` para o Data API. A única exceção temporária é
-`app-activate`: operações do Supabase Auth Admin, como criar a identidade Auth
-e remover matrículas MFA ainda não verificadas, ainda exigem o JWT legado
-`SUPABASE_SERVICE_ROLE_KEY`. Fatores TOTP verificados são preservados na
-recuperação de device. A chave permanece restrita ao backend e nunca é enviada
-ao Tauri, ao navegador ou gravada no repositório.
+Functions usam `sb_secret` para o Data API. As exceções temporárias são
+`app-activate` e `master-reset-member-totp`: operações do Supabase Auth Admin,
+como criar a identidade Auth e remover matrículas MFA, ainda exigem o JWT
+legado `SUPABASE_SERVICE_ROLE_KEY`. Fatores TOTP verificados são preservados na
+recuperação comum de device e só são removidos pela ação master explícita no
+Admin web. A chave permanece restrita ao backend e nunca é enviada ao Tauri,
+ao navegador ou gravada no repositório.

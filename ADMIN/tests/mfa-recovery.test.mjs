@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  totpFactorIds,
   unverifiedMfaFactorIds,
 } from "../supabase/functions/_shared/mfa-recovery.ts";
 
@@ -35,5 +36,32 @@ test("deduplicates and ignores invalid pending factor identifiers", () => {
       { id: null, status: "unverified" },
     ]),
     ["pending-totp"],
+  );
+});
+
+test("collects only TOTP factor identifiers across Auth Admin response buckets", () => {
+  assert.deepEqual(
+    totpFactorIds(
+      [
+        { id: "generic-totp", factor_type: "totp" },
+        { id: "phone-factor", factor_type: "phone" },
+        { id: "unknown-factor" },
+      ],
+      [
+        { id: "bucket-totp" },
+        { id: "generic-totp", factor_type: "totp" },
+      ],
+    ),
+    ["bucket-totp", "generic-totp"],
+  );
+});
+
+test("ignores invalid TOTP identifiers", () => {
+  assert.deepEqual(
+    totpFactorIds(
+      [{ id: " ", factor_type: "totp" }],
+      [{ id: null }, { id: "" }],
+    ),
+    [],
   );
 });
