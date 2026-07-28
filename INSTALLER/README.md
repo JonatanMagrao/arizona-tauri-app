@@ -44,11 +44,22 @@ npm run release:all
 
 O hook NSIS:
 
-1. instala e valida o fingerprint da extensão CEP em
+1. detecta a instalação `currentUser` da versão 2.0.0 em
+   `%LOCALAPPDATA%\arizona-app`, executa o desinstalador legado em modo de
+   update e remove a entrada HKCU antes de instalar a cópia `perMachine`;
+2. aborta em vez de criar uma segunda cópia quando a entrada 2.0.0 aponta para
+   caminho inesperado, está sem desinstalador ou não pode ser removida;
+3. instala e valida o fingerprint da extensão CEP em
    `%APPDATA%\Adobe\CEP\extensions\com.arizona-carrefour.cep`;
-2. remove `ArizonaBridgeTest.aex` legado, se existir em alguma versão do After;
-3. não cria nenhuma pasta em `Support Files\Plug-ins`;
-4. grava `installer/installed-assets.json` com schema 2 e somente o destino CEP.
+4. remove `ArizonaBridgeTest.aex` legado, se existir em alguma versão do After;
+5. não cria nenhuma pasta em `Support Files\Plug-ins`;
+6. grava `installer/installed-assets.json` com schema 2 e somente o destino CEP.
+
+A migração 2.0.0 preserva os dados autenticados em
+`%LOCALAPPDATA%\com.pc.arizona-app`; remove somente o executável, registro e
+atalhos da instalação antiga. A causa da duplicidade era a troca de escopo:
+2.0.0 usava o padrão `currentUser` (HKCU/LocalAppData), enquanto o instalador
+oficial atual usa `perMachine` (HKLM/Program Files).
 
 O protocolo legado `arizona://` não é mais registrado. Em upgrade ou
 desinstalação, a chave antiga é removida somente se ainda apontar para o

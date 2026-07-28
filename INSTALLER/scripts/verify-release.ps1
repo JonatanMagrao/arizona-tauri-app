@@ -47,8 +47,17 @@ if (!$tauriBuildScript.Contains('env::var("PROFILE").as_deref() == Ok("release")
 
 $hooks = Get-Content -LiteralPath $hooksPath -Raw
 foreach ($requiredHookText in @(
+  "NSIS_HOOK_PREINSTALL",
   "NSIS_HOOK_POSTINSTALL",
   "NSIS_HOOK_PREUNINSTALL",
+  "ARIZONA_LEGACY_UNINSTALL_KEY",
+  'ReadRegStr $R8 HKCU "${ARIZONA_LEGACY_UNINSTALL_KEY}" "DisplayName"',
+  'ReadRegStr $R9 HKCU "${ARIZONA_LEGACY_UNINSTALL_KEY}" "Publisher"',
+  '$LOCALAPPDATA\${ARIZONA_LEGACY_PRODUCT_NAME}',
+  '"$R6\uninstall.exe" /S /UPDATE _?=$R6',
+  'DeleteRegKey HKCU "${ARIZONA_LEGACY_UNINSTALL_KEY}"',
+  'SetShellVarContext current',
+  "Arizona stopped before installing a second copy.",
   '!define ARIZONA_INSTALLER_ROOT "$INSTDIR\installer"',
   '!define ARIZONA_PAYLOAD_ROOT "$INSTDIR\installer\payload"',
   '!define ARIZONA_SCRIPT_ROOT "$INSTDIR\installer\scripts"',
@@ -71,6 +80,10 @@ if ($hooks.Contains("ExecWait") -or
     $hooks.Contains("MB_ABORTRETRYIGNORE") -or
     $hooks.Contains("arizona_release_device_retry")) {
   throw "NSIS hooks must run helpers invisibly and must not block uninstall on online device release."
+}
+if ($hooks.Contains('Delete /REBOOTOK "$LOCALAPPDATA\arizona-app\arizona-app.exe"') -or
+    $hooks.Contains('RMDir /r "$LOCALAPPDATA\arizona-app"')) {
+  throw "Legacy upgrade must use the registered 2.0.0 uninstaller and preserve unrelated user data."
 }
 if ($hooks.Contains("ARIZONA_PROTOCOL") -or
     $hooks.Contains("WriteRegStr") -or

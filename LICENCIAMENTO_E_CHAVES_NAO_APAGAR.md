@@ -138,6 +138,18 @@ receipt_expired
 feature_missing
 ```
 
+O Admin web separado oferece ao master a ação explícita **Resetar TOTP** para
+casos de perda do autenticador. Ela remove os fatores TOTP do membro, revoga
+devices e sessões de licença e cancela códigos ainda abertos; a remoção de um
+fator verificado também encerra as sessões do Supabase Auth. Depois disso, um
+novo código de ativação/recuperação apresenta outro QR. Essa capacidade não
+existe na Gestão do Tauri.
+
+O mesmo painel oferece ao master **Zerar tempos** por usuário. Essa ação remove
+somente os eventos de rate limit atribuíveis ao ID, e-mail e identidade de ator
+daquele membro. Ela não muda a configuração das políticas, não remove dados de
+acesso e preserva os limites globais de IP e de outros atores.
+
 O ciclo de autenticação diária é separado do refresh token do Supabase. Cada
 licença possui `daily_auth_reset_hour`, configurável no painel Admin como
 “Renovação diária”, em `America/Sao_Paulo`. O padrão é `04:00`; horários

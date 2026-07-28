@@ -6,6 +6,82 @@
 !define ARIZONA_PAYLOAD_ROOT "$INSTDIR\installer\payload"
 !define ARIZONA_SCRIPT_ROOT "$INSTDIR\installer\scripts"
 !define ARIZONA_STATE_PATH "$INSTDIR\installer\installed-assets.json"
+; Version 2.0.0 used Tauri's default currentUser install mode. Its exact
+; identity and location must be migrated before the perMachine installer
+; writes the new copy under Program Files.
+!define ARIZONA_LEGACY_PRODUCT_NAME "arizona-app"
+!define ARIZONA_LEGACY_PUBLISHER "pc"
+!define ARIZONA_LEGACY_UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\arizona-app"
+!define ARIZONA_LEGACY_MANUFACTURER_KEY "Software\pc\arizona-app"
+
+!macro NSIS_HOOK_PREINSTALL
+  SetRegView 64
+  ReadRegStr $R8 HKCU "${ARIZONA_LEGACY_UNINSTALL_KEY}" "DisplayName"
+  ReadRegStr $R9 HKCU "${ARIZONA_LEGACY_UNINSTALL_KEY}" "Publisher"
+
+  ${If} $R8 == "${ARIZONA_LEGACY_PRODUCT_NAME}"
+  ${AndIf} $R9 == "${ARIZONA_LEGACY_PUBLISHER}"
+    ReadRegStr $R6 HKCU "${ARIZONA_LEGACY_MANUFACTURER_KEY}" ""
+
+    ; Only migrate the exact default path used by the 2.0.0 currentUser
+    ; installer. Never execute an arbitrary uninstaller from the registry.
+    ${If} $R6 != "$LOCALAPPDATA\${ARIZONA_LEGACY_PRODUCT_NAME}"
+      MessageBox MB_ICONSTOP|MB_OK "Arizona found the 2.0.0 user installation, but its path is not the expected safe location. Remove the old version manually and run this installer again." /SD IDOK
+      SetErrorLevel 2
+      Abort "Arizona stopped before installing a second copy."
+    ${EndIf}
+
+    ${IfNot} ${FileExists} "$R6\uninstall.exe"
+      MessageBox MB_ICONSTOP|MB_OK "Arizona found the 2.0.0 user installation, but its uninstaller is missing. Remove the old version manually and run this installer again." /SD IDOK
+      SetErrorLevel 2
+      Abort "Arizona stopped before installing a second copy."
+    ${EndIf}
+
+    !insertmacro CheckIfAppIsRunning "${ARIZONA_EXE}" "${ARIZONA_LEGACY_PRODUCT_NAME}"
+
+    DetailPrint "Replacing the Arizona 2.0.0 current-user installation..."
+    nsExec::ExecToStack /TIMEOUT=120000 '"$R6\uninstall.exe" /S /UPDATE _?=$R6'
+    Pop $R7
+    Pop $R5
+
+    ${If} $R7 != 0
+      MessageBox MB_ICONSTOP|MB_OK "Arizona could not remove the installed 2.0.0 version (exit $R7). Close Arizona, remove the old version manually and run this installer again." /SD IDOK
+      SetErrorLevel 2
+      Abort "Arizona stopped before installing a second copy."
+    ${EndIf}
+
+    ${If} ${FileExists} "$R6\${ARIZONA_EXE}"
+      MessageBox MB_ICONSTOP|MB_OK "Arizona 2.0.0 is still present after its uninstaller completed. Remove the old version manually and run this installer again." /SD IDOK
+      SetErrorLevel 2
+      Abort "Arizona stopped before installing a second copy."
+    ${EndIf}
+
+    ; The old uninstaller runs in update mode to preserve the authenticated
+    ; app data. Finish the cross-scope migration by removing only its exact
+    ; registration and shortcuts.
+    DeleteRegKey HKCU "${ARIZONA_LEGACY_UNINSTALL_KEY}"
+    DeleteRegKey HKCU "${ARIZONA_LEGACY_MANUFACTURER_KEY}"
+    DeleteRegKey /ifempty HKCU "Software\pc"
+
+    ReadRegStr $R5 HKCU "Software\Classes\arizona\shell\open\command" ""
+    ${If} $R5 == '"$R6\${ARIZONA_EXE}" "%1"'
+      DeleteRegKey HKCU "Software\Classes\arizona"
+    ${EndIf}
+
+    ReadRegStr $R5 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${ARIZONA_LEGACY_PRODUCT_NAME}"
+    ${If} $R5 == '"$R6\${ARIZONA_EXE}"'
+      DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${ARIZONA_LEGACY_PRODUCT_NAME}"
+    ${EndIf}
+
+    SetShellVarContext current
+    Delete "$SMPROGRAMS\${ARIZONA_LEGACY_PRODUCT_NAME}.lnk"
+    Delete "$SMPROGRAMS\Arizona\${ARIZONA_LEGACY_PRODUCT_NAME}.lnk"
+    RMDir "$SMPROGRAMS\Arizona"
+    Delete "$DESKTOP\${ARIZONA_LEGACY_PRODUCT_NAME}.lnk"
+    SetShellVarContext all
+    RMDir "$R6"
+  ${EndIf}
+!macroend
 
 !macro NSIS_HOOK_POSTINSTALL
 arizona_install_adobe_retry:
