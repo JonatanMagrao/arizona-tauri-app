@@ -12,10 +12,7 @@ import {
 } from "../_shared/supabase.ts";
 import { resolveMaster } from "../_shared/actors.ts";
 import {
-  currentAuthDayStart,
-  normalizeDailyAuthResetHour,
-} from "../_shared/auth-cycle.ts";
-import {
+  adminGoogleOAuthNotBefore,
   rateLimitResponse,
   requireRecentGoogleOAuth,
 } from "../_shared/security.ts";
@@ -209,10 +206,7 @@ Deno.serve(async (req) => {
 
     requireRecentGoogleOAuth(
       req,
-      currentAuthDayStart(
-        new Date(),
-        normalizeDailyAuthResetHour(organization.daily_auth_reset_hour),
-      ),
+      adminGoogleOAuthNotBefore(),
       user.providers,
     );
 

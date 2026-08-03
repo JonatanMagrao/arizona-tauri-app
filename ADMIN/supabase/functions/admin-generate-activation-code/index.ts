@@ -20,6 +20,7 @@ import {
   normalizeDailyAuthResetHour,
 } from "../_shared/auth-cycle.ts";
 import {
+  adminGoogleOAuthNotBefore,
   enforceRateLimit,
   rateLimitResponse,
   requestIp,
@@ -89,7 +90,12 @@ Deno.serve(async (req) => {
     const policy = accessPolicy(organization);
     const authBoundary = currentAuthDayStart(new Date(), resetHour);
     if (actor.kind === "master") {
-      requireRecentMasterAuthentication(req, authBoundary, user.providers);
+      requireRecentMasterAuthentication(
+        req,
+        authBoundary,
+        user.providers,
+        adminGoogleOAuthNotBefore(),
+      );
     } else {
       requireRecentTotp(req, authBoundary);
     }

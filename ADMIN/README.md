@@ -47,8 +47,10 @@ Fluxo atual:
    mesmo; o backend ainda exige o vínculo explícito de `auth_user_id` em
    `licensing.master_accounts`. A sessão fica em `sessionStorage`: sobrevive a
    recarregamentos na mesma aba, mas é removida ao sair ou fechar a aba. Tokens
-   expirados são renovados pelo refresh token; uma nova autenticação Google é
-   exigida depois do corte diário configurado.
+   expirados são renovados pelo refresh token. O painel bloqueia localmente
+   depois de 30 minutos sem atividade e exige novo OAuth Google no máximo 8
+   horas depois do login. Esses limites pertencem somente ao Admin; o ciclo
+   diário por TOTP do Tauri continua seguindo o horário da licença.
 3. Salvar a licença com seats, validade, renovação diária e usuários.
 4. Apenas o master define quem é gestor.
 5. No Tauri, master e gestores podem emitir código para usuários permitidos.

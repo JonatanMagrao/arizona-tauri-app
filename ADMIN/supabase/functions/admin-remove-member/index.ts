@@ -13,6 +13,7 @@ import {
 import { resolveMaster, resolveMember } from "../_shared/actors.ts";
 import { currentAuthDayStart, normalizeDailyAuthResetHour } from "../_shared/auth-cycle.ts";
 import {
+  adminGoogleOAuthNotBefore,
   enforceRateLimit,
   requireRecentMasterAuthentication,
   requireRecentTotp,
@@ -68,7 +69,12 @@ Deno.serve(async (req) => {
       normalizeDailyAuthResetHour(organization.daily_auth_reset_hour),
     );
     if (actor.kind === "master") {
-      requireRecentMasterAuthentication(req, authBoundary, user.providers);
+      requireRecentMasterAuthentication(
+        req,
+        authBoundary,
+        user.providers,
+        adminGoogleOAuthNotBefore(),
+      );
     } else {
       requireRecentTotp(req, authBoundary);
     }

@@ -2,6 +2,8 @@ import type { SupabaseClient } from "npm:@supabase/supabase-js@2.110.8";
 import { errorResponse } from "./http.ts";
 import { bearerToken } from "./supabase.ts";
 import {
+  adminGoogleOAuthNotBefore,
+  masterAuthenticationMethod,
   requireRecentGoogleOAuthClaims,
   requireRecentTotpClaims,
   type AuthAssuranceClaims,
@@ -58,19 +60,20 @@ export function requireRecentMasterAuthentication(
   req: Request,
   notBefore: Date,
   identityProviders: readonly string[] | null = null,
+  googleOAuthNotBefore: Date = notBefore,
 ): Date {
-  try {
-    return requireRecentGoogleOAuth(req, notBefore, identityProviders);
-  } catch (oauthError) {
-    try {
-      // Preserve the existing Tauri master flow. The standalone ADMIN requires
-      // Google OAuth through its master-only endpoints before reaching here.
-      return requireRecentTotp(req, notBefore);
-    } catch {
-      throw oauthError;
-    }
+  const claims = jwtClaims(req);
+
+  if (masterAuthenticationMethod(claims) === "oauth") {
+    return requireRecentGoogleOAuth(req, googleOAuthNotBefore, identityProviders);
   }
+
+  // Preserve the existing Tauri master flow: its session presents a TOTP AMR,
+  // while the standalone ADMIN presents an OAuth AMR.
+  return requireRecentTotpClaims(claims, notBefore);
 }
+
+export { adminGoogleOAuthNotBefore };
 
 export async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));

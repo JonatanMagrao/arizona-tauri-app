@@ -2,6 +2,11 @@ import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { createClient } from "@supabase/supabase-js";
 import { adminConfig } from "./config.js";
+import {
+  adminSessionExpiryReason,
+  nextAdminSessionExpiryAt,
+  normalizeAdminSessionTiming,
+} from "./admin-session.js";
 import arizonaIcon from "./assets/arizona-icon.png";
 
 const flashKey = `arizona-admin-flash:${adminConfig.projectRef}`;
@@ -163,6 +168,7 @@ const testAccessPolicy = {
   deviceRecoveryWindowMinutes: "30",
 };
 const auditPageSize = 40;
+const activityPersistenceIntervalMs = 15_000;
 
 function createDefaultLicenseDraft() {
   return {
@@ -207,6 +213,7 @@ export default function AdminApp() {
   const [isBusy, setIsBusy] = useState(Boolean(initialOAuthCallback.code));
   const dateControlRef = useRef(null);
   const oauthExchangeStartedRef = useRef(false);
+  const sessionRef = useRef(session);
 
   const isAuthenticated = Boolean(session?.accessToken);
   const sessionLabel = session?.email || "Desconectado";
@@ -222,8 +229,74 @@ export default function AdminApp() {
     : null;
 
   useEffect(() => {
+    sessionRef.current = session;
     if (session?.accessToken) persistAdminSession(session);
   }, [session]);
+
+  useEffect(() => {
+    if (!session?.accessToken) return undefined;
+
+    let expirationTimer = 0;
+    let expirationStarted = false;
+
+    function expireIfNeeded() {
+      const activeSession = sessionRef.current;
+      if (!activeSession?.accessToken) return;
+
+      const reason = adminSessionExpiryReason(activeSession);
+      if (reason) {
+        if (!expirationStarted) {
+          expirationStarted = true;
+          void expireAdminAccess(reason);
+        }
+        return;
+      }
+
+      window.clearTimeout(expirationTimer);
+      expirationTimer = window.setTimeout(
+        expireIfNeeded,
+        Math.max(25, nextAdminSessionExpiryAt(activeSession) - Date.now() + 25),
+      );
+    }
+
+    function recordActivity() {
+      const activeSession = sessionRef.current;
+      if (!activeSession?.accessToken) return;
+
+      const now = Date.now();
+      if (adminSessionExpiryReason(activeSession, now)) {
+        expireIfNeeded();
+        return;
+      }
+      if (now - Number(activeSession.lastActivityAt || 0) < activityPersistenceIntervalMs) {
+        return;
+      }
+
+      replaceAdminSession({
+        ...activeSession,
+        lastActivityAt: now,
+      });
+      expireIfNeeded();
+    }
+
+    function recordVisibleActivity() {
+      if (document.visibilityState === "visible") recordActivity();
+    }
+
+    document.addEventListener("pointerdown", recordActivity, { passive: true });
+    document.addEventListener("keydown", recordActivity);
+    document.addEventListener("visibilitychange", recordVisibleActivity);
+    window.addEventListener("focus", recordActivity);
+    expireIfNeeded();
+
+    return () => {
+      window.clearTimeout(expirationTimer);
+      document.removeEventListener("pointerdown", recordActivity);
+      document.removeEventListener("keydown", recordActivity);
+      document.removeEventListener("visibilitychange", recordVisibleActivity);
+      window.removeEventListener("focus", recordActivity);
+    };
+  }, [session?.sessionStartedAt]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -249,11 +322,11 @@ export default function AdminApp() {
         persistAdminSession(nextSession);
         setLicenseLoadState("loading");
         setLicenseLoadError("");
-        setSession(nextSession);
+        replaceAdminSession(nextSession);
         showToast("Acesso Google confirmado.", "success");
       } catch (error) {
         clearAdminSession();
-        setSession(null);
+        replaceAdminSession(null);
         showToast(errorMessage(error), "error");
       } finally {
         setIsBusy(false);
@@ -296,7 +369,7 @@ export default function AdminApp() {
           setLicenseLoadState("error");
           if (isInvalidAdminSessionError(error)) {
             clearAdminSession();
-            setSession(null);
+            replaceAdminSession(null);
           }
           showToast(message, "error");
         }
@@ -418,7 +491,7 @@ export default function AdminApp() {
       setAuditLoadState("error");
       if (isInvalidAdminSessionError(error)) {
         clearAdminSession();
-        setSession(null);
+        replaceAdminSession(null);
       }
     }
   }
@@ -520,9 +593,26 @@ export default function AdminApp() {
     }
   }
 
-  function handleLogout() {
-    clearAdminSession();
-    setSession(null);
+  async function handleLogout() {
+    const activeSession = sessionRef.current;
+    setIsBusy(true);
+    resetAdminWorkspace();
+
+    try {
+      await revokeAdminSession(activeSession);
+      showToast("Sessão encerrada.", "success");
+    } catch {
+      showToast(
+        "A sessão foi encerrada neste navegador, mas não foi possível confirmar a revogação remota.",
+        "error",
+      );
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  function resetAdminWorkspace() {
+    replaceAdminSession(null);
     setLicenseDraft(createDefaultLicenseDraft());
     setCurrentLicense(null);
     setLicenseLoadState("idle");
@@ -536,7 +626,50 @@ export default function AdminApp() {
     setAuditPagination({ total: 0, nextPage: null });
     setPolicyDraft({});
     setActiveAdminSection("license");
-    showToast("Sessao encerrada.", "success");
+  }
+
+  async function expireAdminAccess(reason) {
+    const activeSession = sessionRef.current;
+    resetAdminWorkspace();
+    showToast(
+      reason === "inactivity"
+        ? "Painel bloqueado após 30 minutos sem atividade."
+        : "A sessão administrativa atingiu o limite de 8 horas.",
+      "error",
+    );
+
+    try {
+      await revokeAdminSession(activeSession);
+    } catch {
+      // The local lock is immediate; the server-side eight-hour check remains active.
+    }
+  }
+
+  async function revokeAdminSession(activeSession) {
+    if (!activeSession?.accessToken || !activeSession?.refreshToken) return;
+
+    try {
+      const { error: restoreError } = await supabaseAuth.auth.setSession({
+        access_token: activeSession.accessToken,
+        refresh_token: activeSession.refreshToken,
+      });
+      if (restoreError) throw restoreError;
+
+      const { error: signOutError } = await supabaseAuth.auth.signOut({ scope: "local" });
+      if (signOutError) throw signOutError;
+    } finally {
+      clearSupabaseAuthArtifacts();
+    }
+  }
+
+  function replaceAdminSession(nextSession) {
+    sessionRef.current = nextSession;
+    setSession(nextSession);
+    if (nextSession?.accessToken) {
+      persistAdminSession(nextSession);
+    } else {
+      clearAdminSession();
+    }
   }
 
   function retryLicenseLoad() {
@@ -927,7 +1060,7 @@ export default function AdminApp() {
     } catch (error) {
       if (isInvalidAdminSessionError(error)) {
         clearAdminSession();
-        setSession(null);
+        replaceAdminSession(null);
       }
       showToast(errorMessage(error), "error");
     } finally {
@@ -995,31 +1128,43 @@ export default function AdminApp() {
   }
 
   async function validSession() {
-    if (!session?.accessToken) {
+    const activeSession = sessionRef.current;
+    if (!activeSession?.accessToken) {
       throw new Error("Entre com o acesso master.");
     }
 
-    const expiresAt = Number(session.expiresAt || 0);
-    if (expiresAt > Date.now() + 60_000) return session;
+    const expiryReason = adminSessionExpiryReason(activeSession);
+    if (expiryReason) {
+      await expireAdminAccess(expiryReason);
+      const error = new Error("Sessão administrativa expirada.");
+      error.code = "admin_session_expired";
+      throw error;
+    }
 
-    if (!session.refreshToken) {
+    const expiresAt = Number(activeSession.expiresAt || 0);
+    if (expiresAt > Date.now() + 60_000) return activeSession;
+
+    if (!activeSession.refreshToken) {
       const error = new Error("Sessao expirada. Entre novamente com Google.");
       error.code = "invalid_user_token";
       throw error;
     }
 
     const { data, error } = await supabaseAuth.auth.refreshSession({
-      refresh_token: session.refreshToken,
+      refresh_token: activeSession.refreshToken,
     });
     if (error) throw error;
-    const nextSession = sessionFromSupabaseSession(data.session, session.email);
+    const nextSession = sessionFromSupabaseSession(
+      data.session,
+      activeSession.email,
+      activeSession,
+    );
     clearSupabaseAuthArtifacts();
-    persistAdminSession(nextSession);
-    setSession(nextSession);
+    replaceAdminSession(nextSession);
     return nextSession;
   }
 
-  function sessionFromSupabaseSession(data, fallbackEmail = "") {
+  function sessionFromSupabaseSession(data, fallbackEmail = "", previousSession = null) {
     if (!data?.access_token || !data?.refresh_token || !hasOAuthAmr(data.access_token)) {
       const error = new Error("Entre com sua conta Google para acessar o Admin.");
       error.code = "admin_google_oauth_required";
@@ -1037,7 +1182,7 @@ export default function AdminApp() {
       throw error;
     }
 
-    return {
+    return normalizeAdminSessionTiming({
       accessToken: data.access_token,
       refreshToken: data.refresh_token,
       email,
@@ -1045,7 +1190,11 @@ export default function AdminApp() {
         ? Number(data.expires_at) * 1000
         : Date.now() + Number(data.expires_in || 3600) * 1000,
       authProvider: "google",
-    };
+      sessionStartedAt: Number(previousSession?.sessionStartedAt)
+        || oauthAuthenticatedAt(data.access_token)
+        || Date.now(),
+      lastActivityAt: Number(previousSession?.lastActivityAt) || Date.now(),
+    });
   }
 
   function applyLicense(data) {
@@ -2746,6 +2895,17 @@ function hasOAuthAmr(accessToken) {
     && payload.amr.some((entry) => entry?.method === "oauth");
 }
 
+function oauthAuthenticatedAt(accessToken) {
+  const payload = accessTokenPayload(accessToken);
+  if (!Array.isArray(payload?.amr)) return 0;
+
+  const timestamps = payload.amr
+    .filter((entry) => entry?.method === "oauth")
+    .map((entry) => Number(entry?.timestamp))
+    .filter((timestamp) => Number.isFinite(timestamp) && timestamp > 0);
+  return timestamps.length ? Math.max(...timestamps) * 1000 : 0;
+}
+
 function emailFromAccessToken(accessToken) {
   return cleanEmail(accessTokenPayload(accessToken)?.email);
 }
@@ -2766,7 +2926,16 @@ function loadAdminSession() {
       sessionStorage.removeItem(sessionKey);
       return null;
     }
-    return parsed;
+    const normalized = normalizeAdminSessionTiming({
+      ...parsed,
+      sessionStartedAt: Number(parsed.sessionStartedAt)
+        || oauthAuthenticatedAt(parsed.accessToken),
+    });
+    if (adminSessionExpiryReason(normalized)) {
+      sessionStorage.removeItem(sessionKey);
+      return null;
+    }
+    return normalized;
   } catch {
     return null;
   }
@@ -2806,6 +2975,7 @@ function clearSupabaseAuthArtifacts() {
 function isInvalidAdminSessionError(error) {
   return [
     "admin_google_oauth_required",
+    "admin_session_expired",
     "forbidden",
     "invalid_user_token",
     "refresh_token_not_found",
@@ -3242,6 +3412,7 @@ function errorMessage(error) {
   if (code === "invalid_publishable_key") return "Chave publica invalida no painel admin.";
   if (code === "invalid_user_token") return "Sessao expirada. Entre novamente com Google.";
   if (code === "admin_google_oauth_required") return "Entre novamente com sua conta Google.";
+  if (code === "admin_session_expired") return "Sessão administrativa expirada. Entre novamente.";
   if (code === "bad_code_verifier" || code === "flow_state_not_found") {
     return "O acesso Google expirou. Inicie o login novamente.";
   }

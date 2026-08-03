@@ -8,6 +8,12 @@ export type AuthAssuranceClaims = {
   amr?: unknown;
 };
 
+export const ADMIN_GOOGLE_OAUTH_MAX_AGE_MS = 8 * 60 * 60 * 1000;
+
+export function adminGoogleOAuthNotBefore(now = new Date()): Date {
+  return new Date(now.getTime() - ADMIN_GOOGLE_OAUTH_MAX_AGE_MS);
+}
+
 type RecentMethodOptions = {
   requiredAal?: string;
   missingError: string;
@@ -53,6 +59,12 @@ export function requireRecentGoogleOAuthClaims(
     missingError: "google_oauth_required",
     staleError: "daily_google_oauth_required",
   });
+}
+
+export function masterAuthenticationMethod(
+  claims: AuthAssuranceClaims,
+): "oauth" | "totp" {
+  return recentMethodAt(claims, "oauth") ? "oauth" : "totp";
 }
 
 export function requireRecentTotpClaims(

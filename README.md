@@ -105,3 +105,4 @@ Documentos de planejamento:
 
 - [Privacidade, registros operacionais, diagnóstico e feedback](./docs/roadmap-privacidade-telemetria.md)
 - [Arquitetura futura de atualizações independentes do Tauri e CEP](./docs/arquitetura-atualizacoes-independentes-tauri-cep.md)
+- [Impacto de mudanças de backend e necessidade de nova versão](./docs/impacto-mudancas-backend-e-versoes.md)

@@ -19,10 +19,7 @@ import {
   type AccessPolicy,
 } from "../_shared/access-policy.ts";
 import {
-  currentAuthDayStart,
-  normalizeDailyAuthResetHour,
-} from "../_shared/auth-cycle.ts";
-import {
+  adminGoogleOAuthNotBefore,
   enforceRateLimit,
   rateLimitResponse,
   requireRecentGoogleOAuth,
@@ -275,10 +272,7 @@ Deno.serve(async (req) => {
     if (existingOrganizationError) throw existingOrganizationError;
     requireRecentGoogleOAuth(
       req,
-      currentAuthDayStart(
-        new Date(),
-        normalizeDailyAuthResetHour(existingOrganization?.daily_auth_reset_hour),
-      ),
+      adminGoogleOAuthNotBefore(),
       user.providers,
     );
     await enforceRateLimit(admin, "master.save.actor", master.id, 20, 3600);
