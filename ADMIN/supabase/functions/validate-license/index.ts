@@ -12,15 +12,17 @@ import {
 } from "../_shared/supabase.ts";
 import { resolveMaster, resolveMember } from "../_shared/actors.ts";
 import {
-  currentAuthDayStart,
+  licenseExpiryInstant,
   nextAuthDayStart,
   normalizeDailyAuthResetHour,
   serverAuthDay,
 } from "../_shared/auth-cycle.ts";
 import {
-  enforceRateLimit,
-  requireRecentTotp,
-} from "../_shared/security.ts";
+  fingerprintDecision,
+  fingerprintPrefix,
+  normalizeFingerprint,
+} from "../_shared/device-fingerprint.ts";
+import { enforceRateLimit } from "../_shared/security.ts";
 import { signLicenseToken } from "../_shared/license-token.ts";
 
 type ValidateLicenseBody = {
@@ -45,12 +47,6 @@ function cleanString(value: unknown, maxLength: number): string {
 function parseDate(value: unknown): Date | null {
   if (typeof value !== "string" || !value.trim()) return null;
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
-function endOfLicenseDate(value: unknown): Date | null {
-  if (typeof value !== "string" || !value.trim()) return null;
-  const date = new Date(`${value.slice(0, 10)}T23:59:59.999Z`);
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
@@ -119,20 +115,19 @@ Deno.serve(async (req) => {
     }
 
     const now = new Date();
-    const licenseExpiresAt = endOfLicenseDate(organization.license_expires_on);
+    const resetHour = normalizeDailyAuthResetHour(organization.daily_auth_reset_hour);
+    const licenseExpiresAt = licenseExpiryInstant(organization.license_expires_on, resetHour);
     if (licenseExpiresAt && licenseExpiresAt.getTime() < now.getTime()) {
       return errorResponse("license_expired", "License has expired.", 403);
     }
 
-    const resetHour = normalizeDailyAuthResetHour(organization.daily_auth_reset_hour);
     const authDay = serverAuthDay(now, resetHour);
-    const mfaVerifiedAt = requireRecentTotp(req, currentAuthDayStart(now, resetHour));
     await enforceRateLimit(admin, "license.validate.member", member.id, 240, 3600);
 
     const { data: device, error: deviceError } = await admin
       .schema("licensing")
       .from("devices")
-      .select("id,install_id,status,last_mfa_login_at")
+      .select("id,install_id,status,device_fingerprint_hash")
       .eq("member_id", member.id)
       .eq("install_id", installId)
       .maybeSingle();
@@ -154,6 +149,82 @@ Deno.serve(async (req) => {
     }
     if (device.status !== "active") {
       return errorResponse("device_revoked", "This device is not active.", 403);
+    }
+
+    // Every supported client can identify its machine, so an empty fingerprint
+    // is rejected no matter what is stored: it is what a retired v2.1.1 build
+    // always sends, and also the single-field patch that would otherwise
+    // disable the identity check per machine.
+    const incomingFingerprint = normalizeFingerprint(body.deviceFingerprintHash);
+    if (!incomingFingerprint) {
+      await admin
+        .schema("licensing")
+        .from("audit_log")
+        .insert({
+          organization_id: member.organizationId,
+          actor_member_id: member.id,
+          action: "device.fingerprint_mismatch",
+          target_table: "devices",
+          target_id: device.id,
+          metadata: {
+            installId,
+            outcome: "empty",
+            storedFingerprintPrefix: fingerprintPrefix(
+              normalizeFingerprint(device.device_fingerprint_hash),
+            ),
+            incomingFingerprintPrefix: "",
+          },
+        });
+      return errorResponse("device_not_active", "Update the app to continue.", 403);
+    }
+
+    // A device with no stored fingerprint was bound before machine identity
+    // existed, and its identity would be whatever the next caller claims.
+    // Forcing it through one code-backed activation closes that permanently.
+    if (!normalizeFingerprint(device.device_fingerprint_hash)) {
+      await admin
+        .schema("licensing")
+        .from("audit_log")
+        .insert({
+          organization_id: member.organizationId,
+          actor_member_id: member.id,
+          action: "device.fingerprint_mismatch",
+          target_table: "devices",
+          target_id: device.id,
+          metadata: {
+            installId,
+            outcome: "unbound",
+            storedFingerprintPrefix: "",
+            incomingFingerprintPrefix: fingerprintPrefix(incomingFingerprint),
+          },
+        });
+      return errorResponse("device_not_active", "Reactivate this machine.", 403);
+    }
+
+    const fingerprint = fingerprintDecision(
+      device.device_fingerprint_hash,
+      incomingFingerprint,
+    );
+    if (fingerprint.outcome === "mismatch" || fingerprint.outcome === "missing") {
+      await admin
+        .schema("licensing")
+        .from("audit_log")
+        .insert({
+          organization_id: member.organizationId,
+          actor_member_id: member.id,
+          action: "device.fingerprint_mismatch",
+          target_table: "devices",
+          target_id: device.id,
+          metadata: {
+            installId,
+            outcome: fingerprint.outcome,
+            storedFingerprintPrefix: fingerprintPrefix(fingerprint.stored),
+            incomingFingerprintPrefix: fingerprint.outcome === "mismatch"
+              ? fingerprintPrefix(fingerprint.incoming)
+              : "",
+          },
+        });
+      return errorResponse("device_not_active", "Device identity mismatch.", 403);
     }
 
     const clientLocalTime = parseDate(body.clientLocalTime);
@@ -187,11 +258,12 @@ Deno.serve(async (req) => {
       .schema("licensing")
       .from("devices")
       .update({
-        device_fingerprint_hash: cleanString(body.deviceFingerprintHash, 256) || null,
+        // Hardware identity is written only by a code-backed activation. Storing
+        // whatever the first caller happens to send would let a copied
+        // credential claim the machine and lock the owner out of their own seat.
         device_label: cleanString(body.deviceLabel, 128) || null,
         app_version: cleanString(body.appVersion, 64) || null,
         last_seen_at: now.toISOString(),
-        last_mfa_login_at: mfaVerifiedAt.toISOString(),
         updated_at: now.toISOString(),
       })
       .eq("id", device.id)
@@ -312,7 +384,6 @@ Deno.serve(async (req) => {
       status: "licensed",
       serverTime: now.toISOString(),
       authDay,
-      mfaVerifiedAt: mfaVerifiedAt.toISOString(),
       expiresAt: session.expires_at,
       cepLicenseReceipt: token,
       organization: {
@@ -336,9 +407,6 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error(error);
     const message = String((error as { message?: unknown })?.message || error || "");
-    if (message === "mfa_required" || message === "daily_mfa_required") {
-      return errorResponse("daily_mfa_required", "Confirm MFA to continue.", 401);
-    }
     if (message === "rate_limited") {
       return errorResponse("rate_limited", "Try again later.", 429);
     }

@@ -5,17 +5,15 @@ import {
   authErrorMessage,
   normalizeEmail,
   resumeSecureSession,
-  verifyTotp,
 } from "../../services/auth";
 import { commandNames, invokeCommand } from "../../services/tauriCommands";
 import {
-  AUTH_MODES,
   acquireSubmission,
   authFlowErrorMessage,
-  authFlowInstruction,
   authRetryState,
+  normalizeAuthFlow,
   releaseSubmission,
-  shouldResetTotp,
+  resumeRetryDelayMs,
 } from "./loginFlow";
 
 import appLogo from "../../../src-tauri/icons/arizona_icon.ico";
@@ -23,32 +21,25 @@ import closeIcon from "../../assets/icones/close.svg";
 import minimizeIcon from "../../assets/icones/minimize.svg";
 
 function LoginWindow() {
-  const [mode, setMode] = useState(AUTH_MODES.ACTIVATION);
-  const [draft, setDraft] = useState({ email: "", activationCode: "", totp: "" });
+  const [draft, setDraft] = useState({ email: "", activationCode: "" });
   const [appInfo, setAppInfo] = useState({ version: "" });
-  const [enrollment, setEnrollment] = useState(null);
   const [hint, setHint] = useState("");
   const [toast, setToast] = useState({ message: "", variant: "error" });
   const [retryUntil, setRetryUntil] = useState(0);
   const [retryRemainingSeconds, setRetryRemainingSeconds] = useState(0);
   const [isBusy, setIsBusy] = useState(false);
-  const modeRef = useRef(mode);
   const retryUntilRef = useRef(0);
   const submitInFlightRef = useRef(false);
-  const totpInputRef = useRef(null);
+  const mountedRef = useRef(false);
+  const appVersionRef = useRef("");
+  const resumeRetryTimerRef = useRef(null);
+  const resumeInFlightRef = useRef(false);
 
   const canSubmit = useMemo(() => {
     if (isBusy || retryRemainingSeconds > 0) return false;
-    if (mode === AUTH_MODES.ACTIVATION) {
-      return normalizeEmail(draft.email).includes("@")
-        && normalizeActivationCode(draft.activationCode).length === 12;
-    }
-    return normalizeTotp(draft.totp).length === 6;
-  }, [draft, isBusy, mode, retryRemainingSeconds]);
-
-  useEffect(() => {
-    modeRef.current = mode;
-  }, [mode]);
+    return normalizeEmail(draft.email).includes("@")
+      && normalizeActivationCode(draft.activationCode).length === 12;
+  }, [draft, isBusy, retryRemainingSeconds]);
 
   useEffect(() => {
     if (!retryUntil) {
@@ -69,11 +60,44 @@ function LoginWindow() {
     return () => clearInterval(timer);
   }, [retryUntil]);
 
+  const clearResumeRetry = () => {
+    if (resumeRetryTimerRef.current) {
+      clearTimeout(resumeRetryTimerRef.current);
+      resumeRetryTimerRef.current = null;
+    }
+  };
+
+  const scheduleResumeRetry = (delayMs) => {
+    if (!mountedRef.current || resumeRetryTimerRef.current) return;
+    resumeRetryTimerRef.current = setTimeout(() => {
+      resumeRetryTimerRef.current = null;
+      resumeSession();
+    }, delayMs);
+  };
+
+  const resumeSession = async () => {
+    if (resumeInFlightRef.current) return;
+    resumeInFlightRef.current = true;
+    try {
+      const flow = await resumeSecureSession({ appVersion: appVersionRef.current });
+      if (!mountedRef.current) return;
+      applyFlow(flow);
+    } catch (error) {
+      if (!mountedRef.current) return;
+      setToast({ message: authErrorMessage(error), variant: "error" });
+      if (String(error?.message || error || "").includes("network_error")) {
+        scheduleResumeRetry(resumeRetryDelayMs("network_error"));
+      }
+    } finally {
+      resumeInFlightRef.current = false;
+    }
+  };
+
   useEffect(() => {
-    let mounted = true;
+    mountedRef.current = true;
 
     const applyExternalFlow = (event) => {
-      if (mounted) applyFlow(event.detail);
+      if (mountedRef.current) applyFlow(event.detail);
     };
     window.addEventListener("arizona-auth:flow", applyExternalFlow);
 
@@ -82,25 +106,35 @@ function LoginWindow() {
       try {
         const info = await invokeCommand(commandNames.appInfo);
         const version = String(info?.version || "").trim();
-        if (!mounted) return;
+        if (!mountedRef.current) return;
+        appVersionRef.current = version;
         setAppInfo({ version });
-        applyFlow(await resumeSecureSession({ appVersion: version }));
+        await resumeSession();
       } catch (error) {
-        if (mounted) setToast({ message: authErrorMessage(error), variant: "error" });
+        if (mountedRef.current) setToast({ message: authErrorMessage(error), variant: "error" });
       } finally {
-        if (mounted) setIsBusy(false);
+        if (mountedRef.current) setIsBusy(false);
       }
     }
 
     boot();
     return () => {
-      mounted = false;
+      mountedRef.current = false;
+      clearResumeRetry();
       window.removeEventListener("arizona-auth:flow", applyExternalFlow);
     };
   }, []);
 
-  const applyFlow = (flow) => {
+  const applyFlow = (rawFlow) => {
+    const flow = normalizeAuthFlow(rawFlow);
     if (!flow) return;
+    // Single-flight: any new flow replaces the pending silent resume retry.
+    // network_error keeps its 15s cadence; the reversible org-wide blocks
+    // (license_expired / organization_not_active) retry every 60s until the
+    // license returns; every other state stops the timer.
+    clearResumeRetry();
+    const resumeDelay = flow.state === "authenticated" ? null : resumeRetryDelayMs(flow.code);
+    if (resumeDelay != null) scheduleResumeRetry(resumeDelay);
     setHint("");
     setToast({ message: "", variant: "error" });
     const retry = authRetryState(flow);
@@ -119,51 +153,21 @@ function LoginWindow() {
     }
 
     if (flow.state === "authenticated") {
-      setDraft((current) => ({ ...current, activationCode: "", totp: "" }));
+      setDraft((current) => ({ ...current, activationCode: "" }));
       return;
     }
-    if (flow.state === "totp_enrollment_required") {
-      modeRef.current = AUTH_MODES.ENROLLMENT;
-      setMode(AUTH_MODES.ENROLLMENT);
-      setEnrollment(flow.enrollment || null);
-    } else if (flow.state === "totp_required") {
-      modeRef.current = AUTH_MODES.TOTP;
-      setMode(AUTH_MODES.TOTP);
-      setEnrollment(null);
-    } else if (flow.state === "activation_required") {
-      modeRef.current = AUTH_MODES.ACTIVATION;
-      setMode(AUTH_MODES.ACTIVATION);
-      setEnrollment(null);
-    }
 
-    const instruction = authFlowInstruction(flow.state);
     if (flow.state === "error") {
       if (!retry.isRetryBlocked || retry.retryAfterSeconds <= 0) {
-        setToast({
-          message: authFlowErrorMessage(flow, modeRef.current),
-          variant: "error",
-        });
+        setToast({ message: authFlowErrorMessage(flow), variant: "error" });
       }
-      if (
-        modeRef.current !== AUTH_MODES.ACTIVATION
-        && shouldResetTotp(flow)
-      ) {
-        setDraft((current) => ({ ...current, totp: "" }));
-        window.requestAnimationFrame(() => totpInputRef.current?.focus());
-      }
-    } else if (instruction) {
-      setHint(instruction);
     } else if (flow.message) {
       setHint(flow.message);
     }
   };
 
   const updateDraft = (field, value) => {
-    const nextValue = field === "activationCode"
-      ? formatActivationCode(value)
-      : field === "totp"
-        ? normalizeTotp(value)
-        : value;
+    const nextValue = field === "activationCode" ? formatActivationCode(value) : value;
     setDraft((current) => ({ ...current, [field]: nextValue }));
     if (toast.message) setToast({ message: "", variant: "error" });
   };
@@ -180,16 +184,11 @@ function LoginWindow() {
 
     setIsBusy(true);
     try {
-      const flow = mode === AUTH_MODES.ACTIVATION
-        ? await activateWithCode({
-          email: normalizeEmail(draft.email),
-          code: normalizeActivationCode(draft.activationCode),
-          appVersion: appInfo.version,
-        })
-        : await verifyTotp({
-          code: normalizeTotp(draft.totp),
-          appVersion: appInfo.version,
-        });
+      const flow = await activateWithCode({
+        email: normalizeEmail(draft.email),
+        code: normalizeActivationCode(draft.activationCode),
+        appVersion: appInfo.version,
+      });
       applyFlow(flow);
     } catch (error) {
       setToast({ message: authErrorMessage(error), variant: "error" });
@@ -207,11 +206,6 @@ function LoginWindow() {
       getCurrentWindow().close().catch(() => {});
     }
   };
-  const title = mode === AUTH_MODES.ACTIVATION
-    ? "Ativar acesso"
-    : mode === AUTH_MODES.ENROLLMENT
-      ? "Proteger acesso"
-      : "Confirmar acesso";
 
   return (
     <main className="login-shell">
@@ -256,90 +250,40 @@ function LoginWindow() {
         <div className="login-brand">
           <img src={appLogo} alt="" aria-hidden="true" />
           <div>
-            <h1 id="loginTitle">{title}</h1>
-            <p className="login-subtitle">
-              {mode === AUTH_MODES.ACTIVATION
-                ? "Use o código entregue pelo seu gestor."
-                : mode === AUTH_MODES.ENROLLMENT
-                  ? "Escaneie o QR Code para criar uma nova entrada."
-                  : "Use a entrada Arizona App já cadastrada."}
-            </p>
+            <h1 id="loginTitle">Ativar acesso</h1>
+            <p className="login-subtitle">Use o código entregue pelo seu gestor.</p>
           </div>
         </div>
 
         <form className="login-form" onSubmit={submit} noValidate>
-          {mode === AUTH_MODES.ACTIVATION ? (
-            <>
-              <label className="login-field">
-                <span>E-mail</span>
-                <input
-                  className="input"
-                  type="email"
-                  autoComplete="email"
-                  value={draft.email}
-                  onChange={(event) => updateDraft("email", event.target.value)}
-                  disabled={isBusy}
-                />
-              </label>
-              <label className="login-field">
-                <span>Código de ativação</span>
-                <input
-                  className="input login-code-input"
-                  type="text"
-                  inputMode="text"
-                  autoComplete="one-time-code"
-                  maxLength={14}
-                  value={draft.activationCode}
-                  onChange={(event) => updateDraft("activationCode", event.target.value)}
-                  disabled={isBusy}
-                  placeholder="XXXX-XXXX-XXXX"
-                />
-              </label>
-            </>
-          ) : (
-            <>
-              {mode === AUTH_MODES.ENROLLMENT && enrollment && (
-                <div className="login-mfa-enrollment">
-                  {enrollment.qrCode && (
-                    <img
-                      className="login-mfa-qr"
-                      src={enrollment.qrCode}
-                      alt="QR Code para cadastrar o Arizona no autenticador"
-                    />
-                  )}
-                  <div className="login-mfa-secret">
-                    <span>Chave manual</span>
-                    <code>{enrollment.secret}</code>
-                  </div>
-                </div>
-              )}
-              <label className="login-field">
-                <span>Código do autenticador</span>
-                <input
-                  ref={totpInputRef}
-                  className="input login-code-input login-code-input--totp"
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  maxLength={6}
-                  value={draft.totp}
-                  onChange={(event) => updateDraft("totp", event.target.value)}
-                  disabled={isBusy}
-                  placeholder="000000"
-                  autoFocus
-                />
-              </label>
-            </>
-          )}
+          <label className="login-field">
+            <span>E-mail</span>
+            <input
+              className="input"
+              type="email"
+              autoComplete="email"
+              value={draft.email}
+              onChange={(event) => updateDraft("email", event.target.value)}
+              disabled={isBusy}
+            />
+          </label>
+          <label className="login-field">
+            <span>Código de ativação</span>
+            <input
+              className="input login-code-input"
+              type="text"
+              inputMode="text"
+              autoComplete="one-time-code"
+              maxLength={14}
+              value={draft.activationCode}
+              onChange={(event) => updateDraft("activationCode", event.target.value)}
+              disabled={isBusy}
+              placeholder="XXXX-XXXX-XXXX"
+            />
+          </label>
 
           <button className="btn btn-primary login-submit" type="submit" disabled={!canSubmit}>
-            {isBusy
-              ? "Validando..."
-                : mode === AUTH_MODES.ACTIVATION
-                  ? "Continuar"
-                : mode === AUTH_MODES.ENROLLMENT
-                  ? "Confirmar e entrar"
-                  : "Entrar"}
+            {isBusy ? "Validando..." : "Continuar"}
           </button>
         </form>
 
@@ -372,10 +316,6 @@ function normalizeActivationCode(value) {
 function formatActivationCode(value) {
   const normalized = normalizeActivationCode(value);
   return normalized.match(/.{1,4}/g)?.join("-") || normalized;
-}
-
-function normalizeTotp(value) {
-  return String(value || "").replace(/\D/g, "").slice(0, 6);
 }
 
 function formatDuration(totalSeconds) {

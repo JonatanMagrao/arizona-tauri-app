@@ -20,7 +20,7 @@ import appLogo from "../../../src-tauri/icons/arizona_icon.ico";
 import closeIcon from "../../assets/icones/close.svg";
 import closeFullscreenIcon from "../../assets/icones/close_fullscreen.svg";
 import openInFullIcon from "../../assets/icones/open_in_full.svg";
-import { adminErrorMessage, releaseCurrentDevice } from "../../services/adminApi";
+import { releaseCurrentDevice, releaseDeviceErrorMessage } from "../../services/auth";
 
 const DEFAULT_SECONDARY_STATE = {
   view: "places",
@@ -673,7 +673,7 @@ function SettingsView({ auth, showError, showSuccess }) {
       await releaseCurrentDevice();
       await invokeCommand(commandNames.exitApp);
     } catch (error) {
-      showError(adminErrorMessage(error));
+      showError(releaseDeviceErrorMessage(error));
       setIsReleasingDevice(false);
     }
   };

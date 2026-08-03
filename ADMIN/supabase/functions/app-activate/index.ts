@@ -15,13 +15,14 @@ import {
   DEFAULT_ACCESS_POLICY,
   accessPolicy,
 } from "../_shared/access-policy.ts";
+import { licenseExpiryInstant } from "../_shared/auth-cycle.ts";
+import { deviceBindGrantExpiryInstant } from "../_shared/device-bind-grant.ts";
 import {
   enforceRateLimit,
   rateLimitResponse,
   requestIp,
   sha256Hex,
 } from "../_shared/security.ts";
-import { unverifiedMfaFactorIds } from "../_shared/mfa-recovery.ts";
 
 type ActivateBody = {
   email?: unknown;
@@ -68,26 +69,6 @@ function randomBootstrapPassword(): string {
   return `Az!9${value}`;
 }
 
-async function clearUnverifiedMfaFactors(
-  authAdmin: ReturnType<typeof createAuthAdminClient>,
-  userId: string,
-): Promise<void> {
-  const { data, error } = await authAdmin.auth.admin.mfa.listFactors({ userId });
-  if (error) throw error;
-  const factors = [
-    ...(data?.factors || []),
-    ...(data?.totp || []),
-    ...(data?.phone || []),
-  ];
-  for (const factorId of unverifiedMfaFactorIds(factors)) {
-    const { error: deleteError } = await authAdmin.auth.admin.mfa.deleteFactor({
-      userId,
-      id: factorId,
-    });
-    if (deleteError) throw deleteError;
-  }
-}
-
 async function magicTokenHash(
   authAdmin: ReturnType<typeof createAuthAdminClient>,
   email: string,
@@ -116,6 +97,8 @@ Deno.serve(async (req) => {
   );
   let claimedCodeId = "";
   let failureStage = "validate_request";
+  let grantedBindExpiresAt = "";
+  let grantedBindMemberId = "";
 
   try {
     requirePublishableKey(req);
@@ -194,17 +177,18 @@ Deno.serve(async (req) => {
     const { data: organization, error: organizationError } = await admin
       .schema("licensing")
       .from("organizations")
-      .select(`id,status,license_expires_on,${ACCESS_POLICY_SELECT}`)
+      .select(`id,status,license_expires_on,daily_auth_reset_hour,${ACCESS_POLICY_SELECT}`)
       .eq("id", member.organization_id)
       .maybeSingle();
     if (organizationError) throw organizationError;
     if (!organization || organization.status !== "active") {
       throw new Error("activation_organization_rejected");
     }
-    if (
-      organization.license_expires_on
-      && new Date(`${organization.license_expires_on}T23:59:59.999Z`).getTime() < Date.now()
-    ) {
+    const licenseExpiresAt = licenseExpiryInstant(
+      organization.license_expires_on,
+      organization.daily_auth_reset_hour,
+    );
+    if (licenseExpiresAt && licenseExpiresAt.getTime() < Date.now()) {
       throw new Error("activation_organization_expired");
     }
     const organizationPolicy = accessPolicy(organization);
@@ -251,7 +235,10 @@ Deno.serve(async (req) => {
     }
 
     failureStage = "link_member";
-    const now = new Date().toISOString();
+    const nowDate = new Date();
+    const now = nowDate.toISOString();
+    grantedBindExpiresAt = deviceBindGrantExpiryInstant(nowDate).toISOString();
+    grantedBindMemberId = member.id;
     const { data: linkedMember, error: linkError } = await admin
       .schema("licensing")
       .from("members")
@@ -260,6 +247,10 @@ Deno.serve(async (req) => {
         status: "active",
         activated_at: member.status === "invited" ? now : undefined,
         last_seen_at: now,
+        // Consuming a code is the only way to earn the right to bind hardware.
+        // The grant is one-shot; device registration clears it when it binds.
+        device_bind_not_before: now,
+        device_bind_expires_at: grantedBindExpiresAt,
       })
       .eq("id", member.id)
       .or(`auth_user_id.is.null,auth_user_id.eq.${authUser.id}`)
@@ -269,8 +260,6 @@ Deno.serve(async (req) => {
     if (!linkedMember) throw new Error("activation_member_link_rejected");
 
     if (consumed.purpose === "recovery") {
-      failureStage = "clear_unverified_mfa";
-      await clearUnverifiedMfaFactors(authAdmin, authUser.id);
       const recoveryExpiresAt = new Date(
         Date.now() + organizationPolicy.deviceRecoveryWindowMinutes * 60_000,
       ).toISOString();
@@ -354,6 +343,26 @@ Deno.serve(async (req) => {
     if (claimedCodeId) {
       try {
         const rollbackAdmin = createAdminClient();
+        // The activation never produced a session, so the bind grant it wrote
+        // must not survive: an unspent grant is exactly what a copied
+        // credential would need to claim the machine.
+        if (grantedBindMemberId && grantedBindExpiresAt) {
+          const { error: grantRollbackError } = await rollbackAdmin
+            .schema("licensing")
+            .from("members")
+            .update({
+              device_bind_not_before: null,
+              device_bind_expires_at: null,
+            })
+            .eq("id", grantedBindMemberId)
+            .eq("device_bind_expires_at", grantedBindExpiresAt);
+          if (grantRollbackError) {
+            console.error("app-activate bind grant release failed", {
+              stage: failureStage,
+              message: grantRollbackError.message,
+            });
+          }
+        }
         const { error: rollbackError } = await rollbackAdmin
           .schema("licensing")
           .from("activation_codes")

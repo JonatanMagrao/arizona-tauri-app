@@ -200,7 +200,8 @@ Deno.serve(async (req) => {
       .eq("slug", ARIZONA_ORGANIZATION_SLUG)
       .maybeSingle();
     if (organizationError) throw organizationError;
-    if (!organization || organization.status !== "active") {
+    // A suspension blocks users, not the master's incident-response tooling.
+    if (!organization || !["active", "paused"].includes(organization.status)) {
       return errorResponse("organization_not_active", "Organization is not active.", 403);
     }
 

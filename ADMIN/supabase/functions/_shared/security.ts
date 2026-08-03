@@ -3,9 +3,9 @@ import { errorResponse } from "./http.ts";
 import { bearerToken } from "./supabase.ts";
 import {
   adminGoogleOAuthNotBefore,
-  masterAuthenticationMethod,
+  authMethodAt,
+  latestSignInAt,
   requireRecentGoogleOAuthClaims,
-  requireRecentTotpClaims,
   type AuthAssuranceClaims,
 } from "./auth-assurance.ts";
 
@@ -34,10 +34,16 @@ export function jwtClaims(req: Request): JwtClaims {
   }
 }
 
-export function requireRecentTotp(req: Request, notBefore: Date): Date {
-  // getAuthUser() must be called before this helper. It validates the JWT signature
-  // against Supabase Auth; this helper only inspects the already validated claims.
-  return requireRecentTotpClaims(jwtClaims(req), notBefore);
+export function signedInAt(req: Request): Date | null {
+  // getAuthUser() must be called before this helper.
+  return latestSignInAt(jwtClaims(req));
+}
+
+// A Google OAuth session comes from the standalone ADMIN panel, where a master
+// wields master powers. A Tauri activation session never carries an oauth AMR,
+// so a master identity using the app acts as a regular org admin there.
+export function hasOAuthSignIn(req: Request): boolean {
+  return authMethodAt(jwtClaims(req), "oauth") !== null;
 }
 
 export function requireRecentGoogleOAuth(
@@ -54,23 +60,6 @@ export function requireRecentGoogleOAuth(
     throw new Error("google_oauth_required");
   }
   return requireRecentGoogleOAuthClaims(jwtClaims(req), notBefore);
-}
-
-export function requireRecentMasterAuthentication(
-  req: Request,
-  notBefore: Date,
-  identityProviders: readonly string[] | null = null,
-  googleOAuthNotBefore: Date = notBefore,
-): Date {
-  const claims = jwtClaims(req);
-
-  if (masterAuthenticationMethod(claims) === "oauth") {
-    return requireRecentGoogleOAuth(req, googleOAuthNotBefore, identityProviders);
-  }
-
-  // Preserve the existing Tauri master flow: its session presents a TOTP AMR,
-  // while the standalone ADMIN presents an OAuth AMR.
-  return requireRecentTotpClaims(claims, notBefore);
 }
 
 export { adminGoogleOAuthNotBefore };

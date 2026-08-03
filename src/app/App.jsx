@@ -166,6 +166,8 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
   const authSessionRef = useRef(authSession);
   const authRefreshInFlightRef = useRef(false);
   const authRefreshPromiseRef = useRef(null);
+  const appVersionRef = useRef("");
+  const appVersionPromiseRef = useRef(null);
   const canAccessAdmin = authSession?.role === "admin";
 
   const showError = (msg) => showToast(msg, "error");
@@ -221,13 +223,30 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
       return nextSession;
     };
 
+    // The poll is what records `app_version` on the server, so it has to wait
+    // for the real version instead of reporting an empty one on the first run.
+    const resolveAppVersion = async () => {
+      if (!appVersionRef.current) {
+        if (!appVersionPromiseRef.current) {
+          appVersionPromiseRef.current = invokeCommand(commandNames.appInfo)
+            .then((info) => String(info?.version || "").trim())
+            .catch(() => "");
+        }
+        appVersionRef.current = await appVersionPromiseRef.current;
+        appVersionPromiseRef.current = null;
+      }
+      return appVersionRef.current;
+    };
+
     const refreshAuth = async () => {
       const currentSession = authSessionRef.current;
       if (!currentSession || authRefreshInFlightRef.current) return;
 
       authRefreshInFlightRef.current = true;
       authRefreshPromiseRef.current = (async () => {
-        const flow = await pollSecureSession({ appVersion: "" });
+        const appVersion = await resolveAppVersion();
+        if (!mounted) return null;
+        const flow = await pollSecureSession({ appVersion });
         if (!mounted) return null;
         if (flow?.state === "authenticated") {
           return applyValidatedAuth(flow.session);

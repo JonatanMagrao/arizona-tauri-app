@@ -11,6 +11,7 @@ import {
   requirePublishableKey,
 } from "../_shared/supabase.ts";
 import { resolveMember } from "../_shared/actors.ts";
+import { licenseExpiryInstant } from "../_shared/auth-cycle.ts";
 import { enforceRateLimit } from "../_shared/security.ts";
 
 type TrackEventBody = {
@@ -68,6 +69,26 @@ Deno.serve(async (req) => {
     if (!member) {
       return errorResponse("member_not_authorized", "This email is not authorized.", 403);
     }
+
+    // A suspended or expired licence must write nothing, telemetry included.
+    const { data: organization, error: organizationError } = await admin
+      .schema("licensing")
+      .from("organizations")
+      .select("status,license_expires_on,daily_auth_reset_hour")
+      .eq("id", member.organizationId)
+      .maybeSingle();
+    if (organizationError) throw organizationError;
+    if (!organization || organization.status !== "active") {
+      return errorResponse("organization_not_active", "Organization is not active.", 403);
+    }
+    const licenseExpiresAt = licenseExpiryInstant(
+      organization.license_expires_on,
+      organization.daily_auth_reset_hour,
+    );
+    if (licenseExpiresAt && licenseExpiresAt.getTime() < Date.now()) {
+      return errorResponse("license_expired", "License has expired.", 403);
+    }
+
     await enforceRateLimit(admin, "event.track.member", member.id, 240, 3600);
 
     const installId = cleanString(body.installId, 128);

@@ -138,12 +138,105 @@ receipt_expired
 feature_missing
 ```
 
-O Admin web separado oferece ao master a ação explícita **Resetar TOTP** para
-casos de perda do autenticador. Ela remove os fatores TOTP do membro, revoga
-devices e sessões de licença e cancela códigos ainda abertos; a remoção de um
-fator verificado também encerra as sessões do Supabase Auth. Depois disso, um
-novo código de ativação/recuperação apresenta outro QR. Essa capacidade não
-existe na Gestão do Tauri.
+Build de diagnóstico:
+
+```text
+cd ARIZONA-EXTENSION
+npm run build:debug
+```
+
+Somente esse build grava `cep-license-debug.json`.
+
+## Confiança de máquina no lugar do autenticador
+
+O acesso do usuário no Arizona App não usa mais autenticador TOTP. A janela de
+login do Tauri é só de ativação: e-mail + código de 12 caracteres. Depois da
+ativação, aquele usuário não se autentica de novo naquela máquina. O que
+substitui o TOTP é a identidade do hardware:
+
+- o Tauri envia `deviceFingerprintHash`, o SHA-256 de
+  `arizona-device-fp:v1:{MachineGuid}`, com o GUID lido de
+  `HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid`
+  (`src-tauri/src/device_identity.rs`). Se o registro não puder ser lido, o
+  cliente 2.2.0 falha localmente com `device_identity_required`, antes de
+  consumir código ou chamar a rede;
+- `ADMIN/supabase/functions/_shared/device-fingerprint.ts` classifica o valor
+  que chega: igual ao gravado é `keep`; diferente do gravado é `mismatch`;
+  ausente onde já existe um gravado é `missing`, o rebaixamento que um cliente
+  adulterado tentaria para desligar a checagem naquela máquina;
+- em `mismatch` ou `missing`, `validate-license` responde `403
+  device_not_active` e grava `device.fingerprint_mismatch` em
+  `licensing.audit_log`, registrando apenas os 12 primeiros caracteres de cada
+  hash. `app-activate-device` faz o mesmo quando não há concessão de vínculo,
+  em vez de deixar a tentativa chegar à gravação;
+- **o fingerprint só é gravado por uma ativação respaldada por código.**
+  `validate-license` nunca grava. `app-activate-device` só grava quando existe
+  a concessão de vínculo descrita abaixo. Confiar no primeiro valor que
+  aparecesse permitiria que uma credencial copiada reivindicasse a máquina e
+  trancasse o dono para fora do próprio lugar;
+- cadastrar uma máquina exige essa concessão de uso único. `app-activate` a
+  emite ao consumir um código de ativação, gravando `device_bind_not_before` e
+  `device_bind_expires_at` em `licensing.members` (migration
+  `20260803120000_device_bind_grant.sql`, prazo de 30 minutos).
+  `app-activate-device` só a aceita de uma sessão criada em ou depois de
+  `device_bind_not_before`, gasta-a por um UPDATE condicional **antes** de
+  gravar o device — quem apagar primeiro leva o vínculo —, restaura-a se a
+  gravação do device falhar e recusa a segunda tentativa. Se a própria ativação
+  falhar, o rollback de `app-activate` apaga a concessão junto com o código. É
+  isso que impede um registro copiado do Windows Credential Manager de cadastrar
+  outro computador; a validação no computador para onde ele foi copiado é
+  recusada pela divergência de fingerprint — e, desde 03/08/2026, um device sem
+  fingerprint gravado nem valida (ver abaixo);
+- sem concessão, `app-activate-device` responde `device_activation_expired` a
+  uma instalação que nunca foi cadastrada e `device_revoked` a uma instalação
+  que já foi liberada e tenta voltar sozinha. Nos dois casos a saída é a mesma
+  e, no suporte, a leitura também: "peça um código novo";
+- revogar o device também anula a concessão ainda não gasta. Liberar dispositivo
+  pelo painel (`admin-release-device`), liberar pelo próprio app
+  (`app-release-device`) e remover membro (`admin-remove-member`) chamam
+  `clearDeviceBindGrant` logo depois de
+  revogar device e sessões. O portão de reativação de uma instalação liberada
+  aceita a concessão como autoridade; sem essa limpeza, a máquina recém-liberada
+  gastaria uma concessão pendente e retomaria o próprio lugar em silêncio por até
+  30 minutos. Só um código consumido **depois** da liberação a traz de volta;
+- a liberação feita pelo próprio app ("Liberar e sair") envia o `installId` junto
+  com o `source`, e `app-release-device` recusa com `403 device_not_active` —
+  registrando `device.self_release_rejected` — a liberação pedida por uma
+  instalação que não é a dona do lugar. A checagem só vale de fato com a frota na
+  2.2.0: a v2.1.1 não envia o campo e continua sendo aceita, assim como a
+  liberação disparada pelo desinstalador.
+
+O vínculo de máquina vale para a **frota inteira** desde 03/08/2026.
+`validate-license` recusa também o device que **não tem** fingerprint gravado:
+a resposta é `403 device_not_active` com "Reactivate this machine." e a
+auditoria registra `device.fingerprint_mismatch` com `outcome: "unbound"`.
+Distribuir a 2.2.0 não basta: cada máquina que estava em campo precisa passar
+por uma ativação respaldada por código — é ela que grava o fingerprint —, então
+cada usuário recebe um código novo junto com o instalador 2.2.0.
+
+A lacuna do valor vazio foi fechada: hoje ele é recusado em todos os caminhos.
+Na validação, `device_not_active` — "Update the app to continue." quando a
+requisição chega sem fingerprint (é o que a v2.1.1 aposentada sempre envia) e
+"Reactivate this machine." quando o device não tem valor gravado. Na ativação,
+a máquina que não consegue se identificar é recusada com
+`device_identity_required` **antes** de a concessão ser gasta, então o mesmo
+código sobrevive para nova tentativa; o cliente 2.2.0 nem chega à rede nesse
+caso — quando o `MachineGuid` não pode ser lido, ele falha localmente com
+`device_identity_required`, sem consumir código. Não existe mais nenhuma
+gravação deliberada de fingerprint vazio.
+
+O MFA do Supabase Auth pode ser **desligado** no painel do projeto: nenhum
+fluxo o utiliza mais. O backend não consulta fatores, o cliente 2.2.0 não
+cadastra nada e a v2.1.1 — a única que cadastrava o fator TOTP sozinha, contra
+o GoTrue — está bloqueada na validação. Desligar é opcional e apenas remove um
+resíduo cosmético.
+
+A ação **Resetar TOTP** e a Function `master-reset-member-totp` foram removidas
+do painel, do projeto Supabase e do repositório em 03/08/2026, junto com
+`admin-add-member`, `admin-list-members` e o compartilhado
+`_shared/mfa-recovery.ts`: não sobrou nenhum encanamento de TOTP no produto.
+A administração acontece somente no painel Admin web — a Gestão do Tauri foi
+removida e essa capacidade nunca existiu dentro do app.
 
 O mesmo painel oferece ao master **Zerar tempos** por usuário. Essa ação remove
 somente os eventos de rate limit atribuíveis ao ID, e-mail e identidade de ator
@@ -157,14 +250,15 @@ anteriores ao corte ainda pertencem ao ciclo do dia anterior. A Edge Function
 `validate-license` limita o recibo CEP a 15 minutos e nunca o estende além do
 próximo corte ou da validade da licença.
 
-Build de diagnóstico:
-
-```text
-cd ARIZONA-EXTENSION
-npm run build:debug
-```
-
-Somente esse build grava `cep-license-debug.json`.
+`license_expires_on` é o **último dia completo válido**. O bloqueio acontece na
+hora da renovação diária do dia seguinte, em `America/Sao_Paulo`, e não mais às
+`23:59:59.999Z`. O cálculo fica no helper `licenseExpiryInstant`
+(`ADMIN/supabase/functions/_shared/auth-cycle.ts`) e é usado por
+`validate-license`, `app-activate`, `app-activate-device`,
+`admin-generate-activation-code` e `track-event`. O corte atinge o Tauri e a extensão CEP ao
+mesmo tempo: o app percebe na próxima verificação de 30 segundos e o recibo
+assinado já carrega esse limite, que o painel relê a cada 5 segundos. Como o
+prazo está dentro do recibo e da sessão local, o bloqueio também vale offline.
 
 ## Fluxo dos atalhos via ExtendScript embutido
 
@@ -262,3 +356,5 @@ Antes de enviar secrets, rode `npm run license:check`.
 - Não vou rodar keygen sem rotação planejada.
 - Sei que os atalhos atuais usam JSX embutido, não AEX.
 - Não vou apagar chaves legadas enquanto a compatibilidade não for encerrada.
+- Sei que desligar o MFA do Supabase Auth é opcional desde 03/08/2026: nada
+  mais o utiliza, com a v2.1.1 bloqueada na validação.

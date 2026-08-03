@@ -1,11 +1,10 @@
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{fmt, time::Duration};
 
 pub const SUPABASE_URL: &str = "https://nizchnscqkixawqxrwzd.supabase.co";
 pub const SUPABASE_PUBLISHABLE_KEY: &str = "sb_publishable_BaGu8kZnq6kjnmF8H6ehQw_J-CcfT0G";
 const API_TIMEOUT: Duration = Duration::from_secs(20);
-const TOTP_ISSUER: &str = "Arizona App";
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct RemoteSession {
@@ -19,8 +18,6 @@ pub struct RemoteSession {
 pub struct RemoteUser {
     #[serde(default)]
     pub email: Option<String>,
-    #[serde(default)]
-    pub factors: Vec<Factor>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -31,43 +28,6 @@ pub struct ActivationExchange {
     pub token_type: String,
     #[serde(default)]
     pub recovery: bool,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct Factor {
-    pub id: String,
-    #[serde(default)]
-    pub factor_type: String,
-    #[serde(default)]
-    pub status: String,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct EnrollFactorResponse {
-    pub id: String,
-    pub totp: EnrolledTotp,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct EnrolledTotp {
-    pub qr_code: String,
-    pub secret: String,
-    #[serde(default)]
-    pub uri: String,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TotpEnrollment {
-    pub factor_id: String,
-    pub qr_code: String,
-    pub secret: String,
-    pub uri: String,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct ChallengeResponse {
-    pub id: String,
 }
 
 #[derive(Clone, Debug)]
@@ -86,17 +46,32 @@ impl ApiError {
         }
     }
 
-    pub fn is_definitive_license_denial(&self) -> bool {
-        matches!(
-            self.code.as_str(),
-            "member_not_authorized"
-                | "organization_not_active"
-                | "license_expired"
-                | "device_revoked"
-                | "device_not_active"
-                | "invalid_user_token"
-        )
+    pub fn should_erase_credential(&self) -> bool {
+        should_erase_credential(&self.code)
     }
+}
+
+// The stored credential must be erased for exactly these codes, whether they
+// arrive from a resume/poll failure or from a flow response built later.
+// The reversible org-wide blocks (license_expired, organization_not_active)
+// are deliberately absent: the Credential Manager record must survive them so
+// the login window can silently resume once the license returns.
+pub fn should_erase_credential(code: &str) -> bool {
+    matches!(
+        code,
+        "member_not_authorized"
+            | "device_revoked"
+            | "device_not_active"
+            | "device_activation_expired"
+            | "invalid_user_token"
+    )
+}
+
+// Blocking denials hide the app, clear the CEP receipt and drop the runtime
+// session. This is the erase set plus the two reversible org-wide codes,
+// which block without destroying the stored credential.
+pub fn is_blocking_denial(code: &str) -> bool {
+    should_erase_credential(code) || matches!(code, "license_expired" | "organization_not_active")
 }
 
 impl fmt::Display for ApiError {
@@ -144,81 +119,6 @@ pub fn refresh(refresh_token: &str) -> Result<RemoteSession, ApiError> {
         "/auth/v1/token?grant_type=refresh_token",
         json!({ "refresh_token": refresh_token }),
         None,
-    )
-}
-
-pub fn factors(access_token: &str) -> Result<Vec<Factor>, ApiError> {
-    let response: RemoteUser = request_json(
-        request_agent()
-            .get(&format!("{SUPABASE_URL}/auth/v1/user"))
-            .set("apikey", SUPABASE_PUBLISHABLE_KEY)
-            .set("authorization", &format!("Bearer {access_token}"))
-            .call(),
-    )?;
-
-    Ok(response.factors)
-}
-
-pub fn enroll_totp(access_token: &str) -> Result<TotpEnrollment, ApiError> {
-    let response: EnrollFactorResponse = auth_post(
-        "/auth/v1/factors",
-        totp_enrollment_body(),
-        Some(access_token),
-    )?;
-
-    Ok(TotpEnrollment {
-        factor_id: response.id,
-        qr_code: normalize_totp_qr_code(response.totp.qr_code),
-        secret: response.totp.secret,
-        uri: response.totp.uri,
-    })
-}
-
-fn totp_enrollment_body() -> Value {
-    json!({
-        "factor_type": "totp",
-        "friendly_name": TOTP_ISSUER,
-        "issuer": TOTP_ISSUER,
-    })
-}
-
-fn normalize_totp_qr_code(qr_code: String) -> String {
-    let qr_code = qr_code.trim();
-    if qr_code.is_empty() || qr_code.starts_with("data:") {
-        return qr_code.to_string();
-    }
-    format!("data:image/svg+xml;utf-8,{qr_code}")
-}
-
-pub fn delete_factor(access_token: &str, factor_id: &str) -> Result<(), ApiError> {
-    let _: Value = request_json(
-        request_agent()
-            .delete(&format!("{SUPABASE_URL}/auth/v1/factors/{factor_id}"))
-            .set("apikey", SUPABASE_PUBLISHABLE_KEY)
-            .set("authorization", &format!("Bearer {access_token}"))
-            .call(),
-    )?;
-    Ok(())
-}
-
-pub fn verify_totp(
-    access_token: &str,
-    factor_id: &str,
-    code: &str,
-) -> Result<RemoteSession, ApiError> {
-    let challenge: ChallengeResponse = auth_post(
-        &format!("/auth/v1/factors/{factor_id}/challenge"),
-        json!({}),
-        Some(access_token),
-    )?;
-
-    auth_post(
-        &format!("/auth/v1/factors/{factor_id}/verify"),
-        json!({
-            "challenge_id": challenge.id,
-            "code": code,
-        }),
-        Some(access_token),
     )
 }
 
@@ -361,9 +261,7 @@ fn parse_retry_after_seconds(value: &str) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        api_error_from_value, normalize_totp_qr_code, totp_enrollment_body, ActivationExchange,
-    };
+    use super::{api_error_from_value, ActivationExchange};
 
     #[test]
     fn accepts_activation_exchange_from_older_backend_without_recovery_flag() {
@@ -374,31 +272,6 @@ mod tests {
         .expect("activation exchange should deserialize");
 
         assert!(!exchange.recovery);
-    }
-
-    #[test]
-    fn wraps_raw_totp_svg_as_a_data_url() {
-        assert_eq!(
-            normalize_totp_qr_code("<svg></svg>".to_string()),
-            "data:image/svg+xml;utf-8,<svg></svg>"
-        );
-    }
-
-    #[test]
-    fn preserves_existing_totp_data_url() {
-        let qr_code = "data:image/svg+xml;utf-8,<svg></svg>";
-        assert_eq!(
-            normalize_totp_qr_code(qr_code.to_string()),
-            qr_code.to_string()
-        );
-    }
-
-    #[test]
-    fn enrollment_uses_arizona_app_as_totp_issuer() {
-        let body = totp_enrollment_body();
-        assert_eq!(body["issuer"], "Arizona App");
-        assert_eq!(body["friendly_name"], "Arizona App");
-        assert_eq!(body["factor_type"], "totp");
     }
 
     #[test]

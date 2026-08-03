@@ -26,24 +26,29 @@ npm run license:check
 
 O horário de renovação diária é configurado por licença no painel Admin. O
 padrão é `04:00` em `America/Sao_Paulo`; isso controla a sessão diária e o
-recibo CEP, não a expiração global do refresh token do Supabase.
+recibo CEP, não a expiração global do refresh token do Supabase. A data limite
+da licença é o último dia completo válido: o acesso bloqueia na renovação
+diária do dia seguinte.
 
-O usuário final não cria nem digita senha. No primeiro acesso, um master ou
-gestor autorizado gera no Tauri um código de uso único, com validade definida
-na política da licença (15 minutos por padrão). O usuário ativa a conta com
-e-mail + código, cadastra TOTP no
-autenticador e, nos dias seguintes, confirma somente o TOTP após a renovação
-das 04:00. O código é guardado no Supabase apenas como hash e aparece em claro
-uma única vez para quem o emitiu.
+O usuário final não cria nem digita senha, e não usa autenticador. No primeiro
+acesso, o master gera no painel Admin web um código de uso único, com validade
+definida na política da licença (15 minutos por padrão). O usuário ativa a
+conta com e-mail + código de 12 caracteres e, a partir daí, não se autentica de
+novo naquela máquina. O código é guardado no Supabase apenas como hash e
+aparece em claro uma única vez para quem o emitiu.
+
+O que substitui o autenticador é a confiança de máquina: o Tauri envia um
+`deviceFingerprintHash` derivado do `MachineGuid` do Windows, e o backend
+recusa uma credencial que apareça em outro hardware. Cadastrar uma máquina nova
+exige um código de ativação recente, e é isso que impede que um registro
+copiado do Windows Credential Manager funcione em outro computador.
 
 Quando um device é liberado, o código de recuperação revoga o device e as
-sessões de licença, mas preserva o fator TOTP já verificado. O usuário confirma
-a troca com a mesma entrada `Arizona App` do autenticador; um QR novo só é
-criado quando a conta ainda não possui fator verificado.
+sessões de licença. A troca é confirmada pelo próprio código, dentro da janela
+de recuperação configurada na licença.
 
-Novos fatores TOTP enviados pelo Tauri usam `Arizona App` como issuer; o Admin
-usa `Arizona Admin`. O nome de um fator que já foi cadastrado no autenticador
-não é alterado retroativamente: é necessário cadastrar um fator novo.
+A gestão de licenças, usuários e devices acontece somente no painel Admin web.
+O Arizona App não tem mais janela de Gestão.
 
 O Tauri é a autoridade da sessão local: access token, refresh token e recibo
 assinado não são entregues ao JavaScript da interface. O recibo offline da

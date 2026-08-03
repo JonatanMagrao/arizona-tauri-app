@@ -1,4 +1,4 @@
-import {
+﻿import {
   errorResponse,
   handleOptions,
   jsonResponse,
@@ -16,16 +16,16 @@ import {
   accessPolicy,
 } from "../_shared/access-policy.ts";
 import {
-  currentAuthDayStart,
+  licenseExpiryInstant,
   normalizeDailyAuthResetHour,
 } from "../_shared/auth-cycle.ts";
 import {
   adminGoogleOAuthNotBefore,
   enforceRateLimit,
+  hasOAuthSignIn,
   rateLimitResponse,
   requestIp,
-  requireRecentMasterAuthentication,
-  requireRecentTotp,
+  requireRecentGoogleOAuth,
   sha256Hex,
 } from "../_shared/security.ts";
 
@@ -69,7 +69,7 @@ Deno.serve(async (req) => {
 
     const admin = createAdminClient();
     const user = await getAuthUser(req);
-    const master = await resolveMaster(admin, user);
+    const master = hasOAuthSignIn(req) ? await resolveMaster(admin, user) : null;
     const actor = master ?? await resolveMember(admin, user, organizationId);
     if (!actor || (actor.kind === "member" && actor.role !== "admin")) {
       return errorResponse("forbidden", "Access denied.", 403);
@@ -88,16 +88,17 @@ Deno.serve(async (req) => {
 
     const resetHour = normalizeDailyAuthResetHour(organization.daily_auth_reset_hour);
     const policy = accessPolicy(organization);
-    const authBoundary = currentAuthDayStart(new Date(), resetHour);
     if (actor.kind === "master") {
-      requireRecentMasterAuthentication(
+      requireRecentGoogleOAuth(
         req,
-        authBoundary,
-        user.providers,
         adminGoogleOAuthNotBefore(),
+        user.providers,
       );
-    } else {
-      requireRecentTotp(req, authBoundary);
+    }
+
+    const licenseExpiresAt = licenseExpiryInstant(organization.license_expires_on, resetHour);
+    if (licenseExpiresAt && licenseExpiresAt.getTime() < Date.now()) {
+      return errorResponse("license_expired", "License has expired.", 403);
     }
 
     const { data: target, error: targetError } = await admin
@@ -114,6 +115,9 @@ Deno.serve(async (req) => {
     if (actor.kind === "member" && (target.role === "admin" || target.id === actor.id)) {
       return errorResponse("forbidden", "Managers cannot issue codes for this account.", 403);
     }
+    // A gestor minting a code in a master identity's name would only ever
+    // serve an impersonation; the master issuing one for himself is how a
+    // master activates the app on a machine.
     if (actor.kind === "member") {
       const { data: masterIdentity, error: masterIdentityError } = await admin
         .schema("licensing")
@@ -125,7 +129,7 @@ Deno.serve(async (req) => {
       if (masterIdentity) {
         return errorResponse(
           "protected_identity",
-          "Managers cannot issue codes for a master identity.",
+          "Activation codes cannot be issued for a master identity.",
           403,
         );
       }
@@ -217,9 +221,6 @@ Deno.serve(async (req) => {
     const limited = rateLimitResponse(error);
     if (limited) return limited;
     const message = String((error as { message?: unknown })?.message || error || "");
-    if (message === "mfa_required" || message === "daily_mfa_required") {
-      return errorResponse("daily_mfa_required", "Confirm MFA to continue.", 401);
-    }
     if (message === "google_oauth_required" || message === "daily_google_oauth_required") {
       return errorResponse(
         "admin_google_oauth_required",

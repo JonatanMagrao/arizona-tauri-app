@@ -231,14 +231,6 @@ confirma o mesmo autenticador. Matrículas incompletas podem ser descartadas e
 um novo QR é criado somente quando não existe TOTP verificado. A interface web
 do Tauri nunca recebe access token, refresh token ou recibo.
 
-Quando o autenticador foi perdido, o master pode usar **Resetar TOTP** no Admin
-web. A Edge Function `master-reset-member-totp` exige sessão master iniciada
-recentemente pelo Google, remove todos os fatores TOTP do membro, revoga os
-devices e sessões de licença e cancela códigos de ativação ainda abertos. A
-exclusão de um fator verificado também encerra as sessões Auth do usuário. Em
-seguida, o master deve gerar um novo código; esse fluxo apresentará um QR novo.
-A Gestão do Tauri não oferece nem chama essa operação.
-
 ### Rate limits e políticas de acesso
 
 Os valores abaixo são os padrões:
@@ -298,13 +290,11 @@ de incidente/teste e deve remover somente os eventos do membro, e-mail e ator
 envolvidos — nunca toda a tabela em produção.
 
 O acesso privilegiado ao Data API usa `SUPABASE_SECRET_KEYS`. O cliente
-separado de Auth Admin usa `SUPABASE_SERVICE_ROLE_KEY` dentro de `app-activate`
-e `master-reset-member-totp`, porque operações administrativas de identidades e
-fatores MFA exigem um JWT com papel `service_role` e rejeitam a chave opaca
-`sb_secret` com `bad_jwt`. A recuperação comum de device nunca remove fator
-TOTP verificado; somente o reset master explícito faz isso. Essa exceção não
-pode chegar a clientes e deve ser reavaliada quando o endpoint do Auth Admin
-aceitar integralmente as chaves novas.
+separado de Auth Admin usa `SUPABASE_SERVICE_ROLE_KEY` dentro de
+`app-activate`, porque operações administrativas de identidades exigem um JWT
+com papel `service_role` e rejeitam a chave opaca `sb_secret` com `bad_jwt`.
+Essa exceção não pode chegar a clientes e deve ser reavaliada quando o endpoint
+do Auth Admin aceitar integralmente as chaves novas.
 
 Nos acessos seguintes, o refresh token continua no Windows Credential Manager,
 mas a autorização diária depende de TOTP confirmado depois do corte das 04:00.

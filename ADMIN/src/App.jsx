@@ -218,6 +218,7 @@ export default function AdminApp() {
   const isAuthenticated = Boolean(session?.accessToken);
   const sessionLabel = session?.email || "Desconectado";
   const hasCurrentLicense = Boolean(currentLicense?.organization);
+  const isOrganizationPaused = currentLicense?.organization?.status === "paused";
   const seatsAllowed = Number(licenseDraft.seatsAllowed) || 0;
   const filledUsers = licenseDraft.users.filter((user) => user.name.trim() || user.email.trim()).length;
   const availableSeats = Math.max(0, seatsAllowed - filledUsers);
@@ -816,6 +817,60 @@ export default function AdminApp() {
     });
   }
 
+  async function handleSuspendOrganization() {
+    if (!hasCurrentLicense) {
+      showToast("Licenca ainda nao carregada.", "error");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Suspender a licença agora? TODOS os usuários perdem o acesso ao aplicativo "
+      + "em cerca de 30 segundos, na próxima validação de cada máquina. "
+      + "Nada é apagado: usuários e máquinas continuam cadastrados e o acesso de "
+      + "todos volta automaticamente quando a licença for reativada, sem novo código.",
+    );
+    if (!confirmed) return;
+
+    await changeOrganizationStatus(
+      "paused",
+      "Licença suspensa. Cada máquina bloqueia na próxima validação.",
+    );
+  }
+
+  async function handleResumeOrganization() {
+    await changeOrganizationStatus(
+      "active",
+      "Licença reativada. O acesso volta automaticamente em cada máquina.",
+    );
+  }
+
+  async function changeOrganizationStatus(status, successMessage) {
+    await runAsync(async () => {
+      const activeSession = await validSession();
+      await functionRequest(
+        "master-set-organization-status",
+        { status },
+        activeSession.accessToken,
+      );
+
+      try {
+        const refreshed = await functionRequest(
+          "master-get-license",
+          {},
+          activeSession.accessToken,
+        );
+        applyLicense(refreshed);
+      } catch {
+        setCurrentLicense((current) => (current?.organization ? {
+          ...current,
+          organization: { ...current.organization, status },
+        } : current));
+      }
+
+      showToast(successMessage, "success");
+    });
+  }
+
   async function handleGenerateActivationCode(user, anchor = null) {
     const organizationId = currentLicense?.organization?.id;
     if (!organizationId || !user?.memberId) {
@@ -912,58 +967,6 @@ export default function AdminApp() {
         )),
       } : current);
       showToast("Maquina liberada para este usuario.", "success");
-    });
-  }
-
-  async function handleResetTotp(user) {
-    const organizationId = currentLicense?.organization?.id;
-    if (!organizationId || !user.memberId) {
-      showToast("Salve o usuario antes de resetar o TOTP.", "error");
-      return;
-    }
-
-    const confirmed = window.confirm(
-      `Resetar o autenticador de ${user.email}? `
-      + "As sessoes, a maquina ativa e os codigos abertos serao revogados. "
-      + "Depois, gere um novo codigo para o usuario cadastrar outro QR Code.",
-    );
-    if (!confirmed) return;
-
-    await runAsync(async () => {
-      const activeSession = await validSession();
-      const result = await functionRequest(
-        "master-reset-member-totp",
-        { organizationId, memberId: user.memberId },
-        activeSession.accessToken,
-      );
-
-      if (!result?.reset) {
-        const message = result?.reason === "auth_identity_missing"
-          ? "Este usuario ainda nao possui identidade de acesso."
-          : "Este usuario nao possui TOTP cadastrado.";
-        showToast(message, "error");
-        return;
-      }
-
-      setActivationCodes((current) => (
-        current.filter((activation) => activation.memberId !== user.memberId)
-      ));
-      setActivationPopover((current) => (
-        current?.memberId === user.memberId ? null : current
-      ));
-      setLicenseDraft((current) => ({
-        ...current,
-        users: current.users.map((draftUser) => (
-          draftUser.id === user.id ? { ...draftUser, activeDevice: null } : draftUser
-        )),
-      }));
-      setCurrentLicense((current) => current ? {
-        ...current,
-        users: (current.users || []).map((licenseUser) => (
-          licenseUser.id === user.memberId ? { ...licenseUser, activeDevice: null } : licenseUser
-        )),
-      } : current);
-      showToast("TOTP resetado. Gere um novo codigo para cadastrar outro QR Code.", "success");
     });
   }
 
@@ -1405,8 +1408,49 @@ export default function AdminApp() {
                   <strong>{availableSeats}</strong>
                   {availableSeats === 1 ? " seat disponível" : " seats disponíveis"}
                 </span>
+                {hasCurrentLicense ? (
+                  <span
+                    className={`license-status-badge ${
+                      isOrganizationPaused ? "license-status-badge--paused" : ""
+                    }`}
+                  >
+                    {isOrganizationPaused ? "Licença suspensa" : "Licença ativa"}
+                  </span>
+                ) : null}
+                {hasCurrentLicense && !isOrganizationPaused ? (
+                  <button
+                    className="button button--danger button--small"
+                    type="button"
+                    disabled={isBusy}
+                    onClick={handleSuspendOrganization}
+                  >
+                    Suspender licença agora
+                  </button>
+                ) : null}
               </div>
             </div>
+
+            {isOrganizationPaused ? (
+              <div className="license-suspended-banner" role="alert">
+                <div className="license-suspended-banner__copy">
+                  <strong>Licença suspensa</strong>
+                  <p>
+                    Todos os usuários estão bloqueados e veem o motivo na janela de
+                    acesso do aplicativo. Usuários e máquinas continuam cadastrados:
+                    ao reativar, o acesso de todos volta automaticamente, sem novo
+                    código.
+                  </p>
+                </div>
+                <button
+                  className="button button--primary"
+                  type="button"
+                  disabled={isBusy}
+                  onClick={handleResumeOrganization}
+                >
+                  Reativar licença
+                </button>
+              </div>
+            ) : null}
 
             <form className="form" onSubmit={handleSaveLicense}>
               <section className="license-config" aria-labelledby="licenseConfigTitle">
@@ -1439,7 +1483,12 @@ export default function AdminApp() {
                     />
                   </div>
                   <div className="validity-field">
-                    <span className="setting-label">Validade</span>
+                    <span
+                      className="setting-label"
+                      title="O acesso bloqueia na hora da renovação diária do dia seguinte à data limite."
+                    >
+                      Validade
+                    </span>
                     <div className="validity-controls">
                       <div className="date-control" ref={dateControlRef}>
                         <input
@@ -1660,16 +1709,6 @@ export default function AdminApp() {
                               {user.memberId ? (
                                 <>
                                   <span className="user-overflow__label">Manutenção</span>
-                                  <button
-                                    type="button"
-                                    role="menuitem"
-                                    onClick={() => {
-                                      setOpenUserMenuId(null);
-                                      handleResetTotp(user);
-                                    }}
-                                  >
-                                    Redefinir autenticador
-                                  </button>
                                   <button
                                     type="button"
                                     role="menuitem"
@@ -3413,10 +3452,14 @@ function errorMessage(error) {
   if (code === "invalid_user_token") return "Sessao expirada. Entre novamente com Google.";
   if (code === "admin_google_oauth_required") return "Entre novamente com sua conta Google.";
   if (code === "admin_session_expired") return "Sessão administrativa expirada. Entre novamente.";
+  if (code === "organization_not_active") {
+    return "Licença suspensa. Reative a licença para usar esta ação.";
+  }
+  if (code === "organization_not_found") return "Licença ainda não cadastrada.";
+  if (code === "invalid_status") return "Status de licença inválido.";
   if (code === "bad_code_verifier" || code === "flow_state_not_found") {
     return "O acesso Google expirou. Inicie o login novamente.";
   }
-  if (code === "daily_mfa_required") return "Confirme novamente o autenticador.";
   if (code === "rate_limited") {
     const remaining = Number(error?.retryAfterSeconds || 0);
     return remaining > 0

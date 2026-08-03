@@ -2,6 +2,7 @@ mod after_effects;
 mod arizona;
 mod auth;
 mod cep_bridge;
+mod device_identity;
 mod history;
 mod license;
 mod media;
@@ -34,8 +35,6 @@ pub fn clear_local_auth_for_uninstall_cli() -> i32 {
 #[derive(Default)]
 struct AuthState {
     session: Mutex<Option<AuthSession>>,
-    pending_totp_factor_id: Mutex<Option<String>>,
-    pending_totp_enrollment: Mutex<Option<auth::TotpEnrollment>>,
     operation: Mutex<()>,
 }
 
@@ -45,11 +44,6 @@ impl AuthState {
             .lock()
             .map_err(|_| "Não foi possível coordenar a autenticação.".to_string())
     }
-}
-
-enum PendingTotpContextError {
-    Api(auth::ApiError),
-    Local(String),
 }
 
 #[derive(Clone, Copy)]
@@ -173,7 +167,6 @@ struct AuthFlowResponse {
     message: Option<String>,
     retry_after_seconds: Option<u64>,
     email: Option<String>,
-    enrollment: Option<auth::TotpEnrollment>,
     session: Option<PublicAuthSession>,
 }
 
@@ -258,7 +251,6 @@ pub fn run() {
             set_after_shortcut_recording,
             auth_resume,
             auth_activate,
-            auth_verify_totp,
             auth_poll,
             restrict_admin_session,
             exit_app,
@@ -730,7 +722,7 @@ fn auth_resume_blocking(
     let remote = match auth::refresh(record.refresh_token.trim()) {
         Ok(remote) => remote,
         Err(error) => {
-            if error.code != "network_error" {
+            if should_forget_secure_auth_on_resume_error(&error) {
                 forget_secure_auth(app, auth_state, bridge)?;
             }
             return Ok(api_error_flow(&error, Some(record.email)));
@@ -748,6 +740,18 @@ fn auth_resume_blocking(
     );
     apply_auth_flow_ui(app, auth_state, bridge, &response)?;
     Ok(response)
+}
+
+// Only credential-erasing denials and dead refresh tokens may erase the
+// keyring record; transient failures (rate limit, 5xx, malformed response)
+// and the reversible org-wide blocks (license_expired,
+// organization_not_active) must keep it so the next resume can retry.
+fn should_forget_secure_auth_on_resume_error(error: &auth::ApiError) -> bool {
+    error.should_erase_credential()
+        || matches!(
+            error.code.as_str(),
+            "invalid_grant" | "refresh_token_not_found" | "invalid_refresh_token"
+        )
 }
 
 #[tauri::command]
@@ -782,6 +786,11 @@ fn auth_activate_blocking(
             Some("Informe o e-mail e o código de ativação.".to_string()),
         ));
     }
+    // A machine that cannot identify itself can never validate; failing here
+    // keeps the activation code unspent instead of burning it on the server.
+    if let Some(response) = unidentifiable_machine_flow() {
+        return Ok(response);
+    }
 
     let exchange = match auth::activate(&email, code.trim()) {
         Ok(exchange) => exchange,
@@ -808,179 +817,6 @@ fn auth_activate_blocking(
     );
     apply_auth_flow_ui(app, auth_state, bridge, &response)?;
     Ok(response)
-}
-
-#[tauri::command]
-async fn auth_verify_totp(
-    app: AppHandle,
-    code: String,
-    app_version: String,
-) -> Result<AuthFlowResponse, String> {
-    run_blocking_network_command(move || {
-        let auth_state = app.state::<AuthState>();
-        let bridge = app.state::<CepBridgeState>();
-        let _operation = auth_state.lock_operation()?;
-        auth_verify_totp_blocking(&app, &auth_state, &bridge, &code, &app_version)
-    })
-    .await
-}
-
-fn auth_verify_totp_blocking(
-    app: &AppHandle,
-    auth_state: &State<AuthState>,
-    bridge: &State<CepBridgeState>,
-    code: &str,
-    app_version: &str,
-) -> Result<AuthFlowResponse, String> {
-    let normalized_code: String = code
-        .chars()
-        .filter(|character| character.is_ascii_digit())
-        .collect();
-    if normalized_code.len() != 6 {
-        return Ok(auth_flow(
-            "error",
-            Some("invalid_totp"),
-            Some("Informe o código de 6 dígitos do autenticador.".to_string()),
-        ));
-    }
-
-    let (current, factor_id) = match pending_totp_context(auth_state) {
-        Ok(context) => context,
-        Err(PendingTotpContextError::Api(error)) => {
-            return Ok(api_error_flow(&error, None));
-        }
-        Err(PendingTotpContextError::Local(error)) => return Err(error),
-    };
-    let access_token = current
-        .access_token
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "Sessão de autenticação incompleta.".to_string())?;
-
-    let remote = match auth::verify_totp(access_token, &factor_id, &normalized_code) {
-        Ok(remote) => remote,
-        Err(error) => return Ok(api_error_flow(&error, Some(current.email))),
-    };
-    let response = continue_remote_auth(
-        app,
-        auth_state,
-        bridge,
-        remote,
-        Some(current.email),
-        app_version,
-        AuthenticatedUiMode::Reveal,
-    );
-    apply_auth_flow_ui(app, auth_state, bridge, &response)?;
-    Ok(response)
-}
-
-fn pending_totp_context(
-    auth_state: &State<AuthState>,
-) -> Result<(AuthSession, String), PendingTotpContextError> {
-    let current = authenticated_session(auth_state).ok();
-    let pending_factor_id = auth_state
-        .pending_totp_factor_id
-        .lock()
-        .map_err(|_| {
-            PendingTotpContextError::Local("Não foi possível ler o desafio MFA.".to_string())
-        })?
-        .clone();
-
-    if let (Some(session), Some(factor_id)) = (current.as_ref(), pending_factor_id.as_ref()) {
-        if session
-            .access_token
-            .as_deref()
-            .is_some_and(|token| !token.trim().is_empty())
-        {
-            return Ok((session.clone(), factor_id.clone()));
-        }
-    }
-
-    let session = if let Some(session) = current.filter(|session| {
-        session
-            .access_token
-            .as_deref()
-            .is_some_and(|token| !token.trim().is_empty())
-    }) {
-        session
-    } else {
-        let record =
-            read_secure_auth_record(&secure_auth_entry().map_err(PendingTotpContextError::Local)?)
-                .map_err(PendingTotpContextError::Local)?
-                .ok_or_else(|| {
-                    PendingTotpContextError::Local(
-                        "Sessão segura não encontrada. Gere um novo código de acesso.".to_string(),
-                    )
-                })?;
-        let remote =
-            auth::refresh(record.refresh_token.trim()).map_err(PendingTotpContextError::Api)?;
-        let email = remote
-            .user
-            .as_ref()
-            .and_then(|user| user.email.clone())
-            .unwrap_or_else(|| record.email.clone())
-            .trim()
-            .to_lowercase();
-        let refresh_token = if remote.refresh_token.trim().is_empty() {
-            record.refresh_token
-        } else {
-            remote.refresh_token
-        };
-        let restored = AuthSession {
-            access_token: Some(remote.access_token),
-            refresh_token: Some(refresh_token.clone()),
-            cep_license_receipt: None,
-            email: email.clone(),
-            member_id: None,
-            role: None,
-            organization_id: None,
-            organization_name: None,
-            seats_allowed: None,
-            expires_at: None,
-        };
-        persist_refreshed_token(&email, &refresh_token).map_err(PendingTotpContextError::Local)?;
-        store_auth_session(auth_state, restored.clone()).map_err(PendingTotpContextError::Local)?;
-        restored
-    };
-
-    let access_token = session
-        .access_token
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            PendingTotpContextError::Local("Sessão de autenticação incompleta.".to_string())
-        })?;
-    let factors = auth::factors(access_token).map_err(PendingTotpContextError::Api)?;
-    let factor_id = pending_factor_id
-        .filter(|pending_id| factors.iter().any(|factor| factor.id == *pending_id))
-        .or_else(|| {
-            factors
-                .iter()
-                .find(|factor| {
-                    factor.status != "verified"
-                        && (factor.factor_type.is_empty() || factor.factor_type == "totp")
-                })
-                .or_else(|| {
-                    factors.iter().find(|factor| {
-                        factor.status == "verified"
-                            && (factor.factor_type.is_empty() || factor.factor_type == "totp")
-                    })
-                })
-                .map(|factor| factor.id.clone())
-        })
-        .ok_or_else(|| {
-            PendingTotpContextError::Local(
-                "Fator do autenticador não encontrado. Gere um novo código de acesso.".to_string(),
-            )
-        })?;
-
-    *auth_state.pending_totp_factor_id.lock().map_err(|_| {
-        PendingTotpContextError::Local("Não foi possível atualizar o desafio MFA.".to_string())
-    })? = Some(factor_id.clone());
-
-    Ok((session, factor_id))
 }
 
 #[tauri::command]
@@ -1012,7 +848,7 @@ fn auth_poll_blocking(
         Ok(remote) => remote,
         Err(error) => {
             let response = api_error_flow(&error, Some(current.email));
-            if error.is_definitive_license_denial() {
+            if error.should_erase_credential() {
                 forget_secure_auth(app, auth_state, bridge)?;
             }
             apply_auth_flow_ui(app, auth_state, bridge, &response)?;
@@ -1079,66 +915,12 @@ fn continue_remote_auth(
         return auth_flow("error", Some("local_auth_error"), Some(error));
     }
 
-    let factors = match auth::factors(&remote.access_token) {
-        Ok(factors) => factors,
-        Err(error) => return api_error_flow(&error, Some(email)),
-    };
-    let verified_factor = factors.iter().find(|factor| {
-        factor.status == "verified"
-            && (factor.factor_type.is_empty() || factor.factor_type == "totp")
-    });
-
-    if verified_factor.is_none() {
-        if let Err(error) = store_auth_session(auth_state, base_session.clone()) {
-            return auth_flow("error", Some("local_auth_error"), Some(error));
-        }
-
-        let reusable_enrollment = match auth_state.pending_totp_enrollment.lock() {
-            Ok(mut pending) => {
-                let reusable = reusable_totp_enrollment(pending.as_ref(), &factors);
-                if reusable.is_none() {
-                    *pending = None;
-                }
-                reusable
-            }
-            Err(_) => {
-                return auth_flow(
-                    "error",
-                    Some("local_auth_error"),
-                    Some("Não foi possível ler o cadastro MFA pendente.".to_string()),
-                );
-            }
-        };
-        if let Some(enrollment) = reusable_enrollment {
-            if let Ok(mut pending) = auth_state.pending_totp_factor_id.lock() {
-                *pending = Some(enrollment.factor_id.clone());
-            }
-            return totp_enrollment_flow(email, enrollment);
-        }
-
-        for factor in factors.iter().filter(|factor| factor.status != "verified") {
-            let _ = auth::delete_factor(&remote.access_token, &factor.id);
-        }
-        let enrollment = match auth::enroll_totp(&remote.access_token) {
-            Ok(enrollment) => enrollment,
-            Err(error) => return api_error_flow(&error, Some(email)),
-        };
-        if let Ok(mut pending) = auth_state.pending_totp_factor_id.lock() {
-            *pending = Some(enrollment.factor_id.clone());
-        }
-        if let Ok(mut pending) = auth_state.pending_totp_enrollment.lock() {
-            *pending = Some(enrollment.clone());
-        }
-        return totp_enrollment_flow(email, enrollment);
+    // Sending an empty fingerprint would be answered with a credential-erasing
+    // denial; failing locally keeps the stored session for when the machine
+    // becomes identifiable again.
+    if let Some(response) = unidentifiable_machine_flow() {
+        return response;
     }
-
-    if let Ok(mut pending) = auth_state.pending_totp_factor_id.lock() {
-        *pending = verified_factor.map(|factor| factor.id.clone());
-    }
-    if let Ok(mut pending) = auth_state.pending_totp_enrollment.lock() {
-        *pending = None;
-    }
-
     let device_body = match device_request_body(app, app_version) {
         Ok(body) => body,
         Err(error) => return auth_flow("error", Some("device_identity_error"), Some(error)),
@@ -1159,14 +941,7 @@ fn continue_remote_auth(
 
     let license = match license {
         Ok(license) => license,
-        Err(error) => {
-            if matches!(error.code.as_str(), "daily_mfa_required" | "mfa_required") {
-                if let Err(store_error) = store_auth_session(auth_state, base_session) {
-                    return auth_flow("error", Some("local_auth_error"), Some(store_error));
-                }
-            }
-            return api_error_flow(&error, Some(email));
-        }
+        Err(error) => return api_error_flow(&error, Some(email)),
     };
     match authenticated_session_from_license(base_session, &license) {
         Ok(session) => {
@@ -1186,40 +961,10 @@ fn continue_remote_auth(
                 message: None,
                 retry_after_seconds: None,
                 email: Some(session.email.clone()),
-                enrollment: None,
                 session: Some(public_session(&session)),
             }
         }
         Err(error) => auth_flow("error", Some("invalid_license_response"), Some(error)),
-    }
-}
-
-fn reusable_totp_enrollment(
-    pending: Option<&auth::TotpEnrollment>,
-    factors: &[auth::Factor],
-) -> Option<auth::TotpEnrollment> {
-    let pending = pending?;
-    factors
-        .iter()
-        .any(|factor| {
-            factor.id == pending.factor_id
-                && factor.status != "verified"
-                && (factor.factor_type.is_empty() || factor.factor_type == "totp")
-        })
-        .then(|| pending.clone())
-}
-
-fn totp_enrollment_flow(email: String, enrollment: auth::TotpEnrollment) -> AuthFlowResponse {
-    AuthFlowResponse {
-        state: "totp_enrollment_required",
-        code: None,
-        message: Some(
-            "Escaneie o QR Code no autenticador e confirme o código de 6 dígitos.".to_string(),
-        ),
-        retry_after_seconds: None,
-        email: Some(email),
-        enrollment: Some(enrollment),
-        session: None,
     }
 }
 
@@ -1248,6 +993,23 @@ fn persist_refreshed_token(email: &str, refresh_token: &str) -> Result<(), Strin
     write_secure_auth_record(&record)
 }
 
+// None when the machine can identify itself; a ready-to-return flow otherwise.
+// device_identity_required is outside the credential-erasing set, so hitting
+// this repeatedly never destroys the stored session.
+fn unidentifiable_machine_flow() -> Option<AuthFlowResponse> {
+    if !device_identity::device_fingerprint_hash().is_empty() {
+        return None;
+    }
+    Some(auth_flow(
+        "error",
+        Some("device_identity_required"),
+        Some(
+            "Não foi possível identificar esta máquina. Contate o suporte e, depois da correção, feche e abra o app novamente."
+                .to_string(),
+        ),
+    ))
+}
+
 fn device_request_body(app: &AppHandle, app_version: &str) -> Result<serde_json::Value, String> {
     let install_id = load_or_create_install_id(app)?;
     let stored = read_secure_auth_record(&secure_auth_entry()?)?;
@@ -1255,7 +1017,7 @@ fn device_request_body(app: &AppHandle, app_version: &str) -> Result<serde_json:
         "installId": install_id,
         "appVersion": app_version.trim(),
         "deviceLabel": std::env::var("COMPUTERNAME").unwrap_or_else(|_| "Windows".to_string()),
-        "deviceFingerprintHash": "",
+        "deviceFingerprintHash": device_identity::device_fingerprint_hash(),
         "clientLocalTime": now_iso(),
         "lastServerTimeSeen": stored.as_ref().and_then(|record| record.server_time.clone()),
         "lastLocalTimeSeen": stored.as_ref().and_then(|record| record.local_time.clone()),
@@ -1449,18 +1211,14 @@ fn apply_auth_flow_ui(
         return Ok(());
     }
 
-    if matches!(
-        response.code.as_deref(),
-        Some(
-            "member_not_authorized"
-                | "organization_not_active"
-                | "license_expired"
-                | "device_revoked"
-                | "device_not_active"
-                | "invalid_user_token"
-        )
-    ) {
+    let denial_code = response.code.as_deref();
+    if denial_code.is_some_and(auth::should_erase_credential) {
         forget_secure_auth(app, auth_state, bridge)?;
+    } else if denial_code.is_some_and(auth::is_blocking_denial) {
+        // license_expired / organization_not_active: the app still hides and
+        // the runtime session is dropped, but the Credential Manager record
+        // survives so the login window can silently resume after renewal.
+        clear_runtime_auth_session(auth_state, bridge)?;
     }
 
     clear_cep_license_receipt(app)?;
@@ -1475,8 +1233,13 @@ fn apply_auth_flow_ui(
             "window.dispatchEvent(new CustomEvent('arizona-auth:flow', {{ detail: {response_json} }}));"
         );
         let _ = login_window.eval(script);
-        let _ = login_window.show();
-        let _ = login_window.set_focus();
+        // The 60s renewal retry re-enters here while blocked; stealing the OS
+        // focus every cycle would make the machine unusable for other work, so
+        // an already visible login window is only updated, never re-focused.
+        if !login_window.is_visible().unwrap_or(false) {
+            let _ = login_window.show();
+            let _ = login_window.set_focus();
+        }
     }
 
     if response.state == "activation_required" {
@@ -1502,7 +1265,6 @@ fn auth_flow(state: &'static str, code: Option<&str>, message: Option<String>) -
         message,
         retry_after_seconds: None,
         email: None,
-        enrollment: None,
         session: None,
     }
 }
@@ -1510,10 +1272,10 @@ fn auth_flow(state: &'static str, code: Option<&str>, message: Option<String>) -
 fn api_error_flow(error: &auth::ApiError, email: Option<String>) -> AuthFlowResponse {
     let code = canonical_auth_error_code(&error.code);
     let state = match code {
-        "daily_mfa_required" | "mfa_required" => "totp_required",
-        "invalid_refresh_token" | "refresh_token_not_found" | "invalid_grant" => {
-            "activation_required"
-        }
+        "invalid_refresh_token"
+        | "refresh_token_not_found"
+        | "invalid_grant"
+        | "device_activation_expired" => "activation_required",
         _ => "error",
     };
     let message = match code {
@@ -1522,21 +1284,31 @@ fn api_error_flow(error: &auth::ApiError, email: Option<String>) -> AuthFlowResp
             "Não foi possível concluir a ativação agora. Tente o mesmo código novamente."
         }
         "daily_mfa_required" | "mfa_required" => {
-            "Confirme o código do autenticador para liberar o acesso de hoje."
+            "O servidor ainda exige o autenticador. Backend desatualizado — contate o suporte."
         }
         "device_limit_reached" => {
-            "Este usuário já está ativo em outra máquina. Libere o acesso pela Gestão."
+            "Este usuário já está ativo em outra máquina. Peça a liberação a quem enviou o código de ativação."
         }
-        "device_revoked" | "device_not_active" => "Este dispositivo foi liberado pela Gestão.",
+        "device_revoked" => {
+            "O acesso desta máquina foi liberado pelo administrador. Solicite um novo código de ativação."
+        }
+        "device_not_active" => {
+            "Esta máquina precisa ser reativada. Atualize o Arizona App para a versão mais recente e solicite um novo código de ativação."
+        }
+        "device_activation_expired" => {
+            "Esta sessão é antiga demais para cadastrar a máquina. Solicite um novo código de ativação."
+        }
         "device_cooldown" => "Aguarde antes de cadastrar outra máquina.",
-        "organization_not_active" => "A licença da empresa não está ativa.",
-        "license_expired" => "A licença da empresa expirou.",
+        "device_identity_required" => "Não foi possível identificar esta máquina. Contate o suporte.",
+        "organization_not_active" => {
+            "A licença da empresa está suspensa. O acesso volta automaticamente quando ela for reativada."
+        }
+        "license_expired" => {
+            "A licença da empresa expirou. O acesso volta automaticamente quando ela for renovada."
+        }
         "member_not_authorized" => "Este usuário não está autorizado.",
         "rate_limited" => "Muitas tentativas. Aguarde antes de tentar novamente.",
         "network_error" => "Não foi possível conectar ao Supabase.",
-        "invalid_totp" | "challenge_expired" | "mfa_verification_failed" => {
-            "Código do autenticador inválido ou expirado."
-        }
         _ => "Não foi possível confirmar o acesso.",
     };
     AuthFlowResponse {
@@ -1545,14 +1317,12 @@ fn api_error_flow(error: &auth::ApiError, email: Option<String>) -> AuthFlowResp
         message: Some(message.to_string()),
         retry_after_seconds: error.retry_after_seconds,
         email,
-        enrollment: None,
         session: None,
     }
 }
 
 fn canonical_auth_error_code(code: &str) -> &str {
     match code {
-        "mfa_challenge_expired" => "challenge_expired",
         "over_request_rate_limit" => "rate_limited",
         _ => code,
     }
@@ -1692,19 +1462,21 @@ async fn release_current_device(app: AppHandle) -> Result<ActionResponse, String
         let auth_state = app.state::<AuthState>();
         let bridge = app.state::<CepBridgeState>();
         let _operation = auth_state.lock_operation()?;
-        let (_, access_token, _) = admin_access(&auth_state).or_else(|_| {
-            let session = authenticated_session(&auth_state)?;
-            let access_token = session
-                .access_token
-                .clone()
-                .filter(|value| !value.trim().is_empty())
-                .ok_or_else(|| "Sessão incompleta.".to_string())?;
-            Ok::<_, String>((session, access_token, String::new()))
-        })?;
+        let session = authenticated_session(&auth_state)?;
+        let access_token = session
+            .access_token
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "Sessão incompleta.".to_string())?;
+        // The install id proves the caller is the machine holding the seat, so a
+        // copied credential cannot release someone else's device.
         auth::function_value(
             "app-release-device",
             &access_token,
-            serde_json::json!({ "source": "tauri_settings" }),
+            serde_json::json!({
+                "source": "tauri_settings",
+                "installId": load_or_create_install_id(&app)?,
+            }),
         )
         .map_err(release_device_api_error)?;
         forget_secure_auth(&app, &auth_state, &bridge)?;
@@ -1773,25 +1545,135 @@ mod device_release_tests {
 
 #[cfg(test)]
 mod auth_flow_tests {
-    use super::{api_error_flow, reusable_totp_enrollment, AuthState};
-    use crate::auth::{ApiError, Factor, TotpEnrollment};
+    use super::{api_error_flow, should_forget_secure_auth_on_resume_error, AuthState};
+    use crate::auth::{self, ApiError};
+
+    fn api_error(code: &str) -> ApiError {
+        ApiError {
+            code: code.to_string(),
+            message: "test".to_string(),
+            retry_after_seconds: None,
+        }
+    }
 
     #[test]
-    fn canonicalizes_current_supabase_mfa_challenge_expiration() {
-        let flow = api_error_flow(
-            &ApiError {
-                code: "mfa_challenge_expired".to_string(),
-                message: "MFA challenge has expired".to_string(),
-                retry_after_seconds: None,
-            },
-            None,
+    fn maps_server_mfa_demands_to_an_outdated_backend_error() {
+        for code in ["daily_mfa_required", "mfa_required"] {
+            let flow = api_error_flow(&api_error(code), None);
+
+            assert_eq!(flow.state, "error");
+            assert_eq!(flow.code.as_deref(), Some(code));
+            assert_eq!(
+                flow.message.as_deref(),
+                Some(
+                    "O servidor ainda exige o autenticador. Backend desatualizado — contate o suporte."
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn forgets_the_stored_session_only_on_credential_erasing_resume_errors() {
+        for code in [
+            "member_not_authorized",
+            "device_revoked",
+            "device_not_active",
+            "device_activation_expired",
+            "invalid_user_token",
+            "invalid_grant",
+            "refresh_token_not_found",
+            "invalid_refresh_token",
+        ] {
+            assert!(
+                should_forget_secure_auth_on_resume_error(&api_error(code)),
+                "{code} should wipe the stored session"
+            );
+        }
+
+        // Reversible org-wide blocks hide the app but keep the credential so
+        // resume can silently retry once the license returns.
+        for code in ["license_expired", "organization_not_active"] {
+            assert!(
+                !should_forget_secure_auth_on_resume_error(&api_error(code)),
+                "{code} should keep the stored session"
+            );
+            assert!(
+                !auth::should_erase_credential(code),
+                "{code} should keep the stored session"
+            );
+            assert!(
+                auth::is_blocking_denial(code),
+                "{code} should still block the app"
+            );
+        }
+
+        for code in [
+            "network_error",
+            "rate_limited",
+            "over_request_rate_limit",
+            "request_failed",
+            "invalid_server_response",
+            "internal_error",
+        ] {
+            assert!(
+                !should_forget_secure_auth_on_resume_error(&api_error(code)),
+                "{code} should keep the stored session"
+            );
+            assert!(
+                !auth::is_blocking_denial(code),
+                "{code} should not block the app"
+            );
+        }
+    }
+
+    #[test]
+    fn reversible_org_blocks_explain_that_access_returns_automatically() {
+        let expired = api_error_flow(&api_error("license_expired"), None);
+        assert_eq!(expired.state, "error");
+        assert_eq!(
+            expired.message.as_deref(),
+            Some("A licença da empresa expirou. O acesso volta automaticamente quando ela for renovada.")
         );
 
+        let paused = api_error_flow(&api_error("organization_not_active"), None);
+        assert_eq!(paused.state, "error");
+        assert_eq!(
+            paused.message.as_deref(),
+            Some("A licença da empresa está suspensa. O acesso volta automaticamente quando ela for reativada.")
+        );
+    }
+
+    #[test]
+    fn an_unidentifiable_machine_reports_support_without_wiping_the_credential() {
+        let flow = api_error_flow(&api_error("device_identity_required"), None);
+
         assert_eq!(flow.state, "error");
-        assert_eq!(flow.code.as_deref(), Some("challenge_expired"));
         assert_eq!(
             flow.message.as_deref(),
-            Some("Código do autenticador inválido ou expirado.")
+            Some("Não foi possível identificar esta máquina. Contate o suporte.")
+        );
+        assert!(!auth::should_erase_credential("device_identity_required"));
+        assert!(!auth::is_blocking_denial("device_identity_required"));
+    }
+
+    // The denial may also surface after a successful refresh, when only the
+    // flow response reaches `apply_auth_flow_ui`.
+    #[test]
+    fn an_expired_activation_window_wipes_the_credential_and_reopens_the_activation_form() {
+        let flow = api_error_flow(&api_error("device_activation_expired"), None);
+
+        assert_eq!(flow.state, "activation_required");
+        assert_eq!(
+            flow.message.as_deref(),
+            Some(
+                "Esta sessão é antiga demais para cadastrar a máquina. Solicite um novo código de ativação."
+            )
+        );
+        assert!(
+            flow.code
+                .as_deref()
+                .is_some_and(auth::should_erase_credential),
+            "an expired activation window must wipe the stored credential"
         );
     }
 
@@ -1821,34 +1703,6 @@ mod auth_flow_tests {
         assert!(state.operation.try_lock().is_err());
         drop(operation);
         assert!(state.operation.try_lock().is_ok());
-    }
-
-    #[test]
-    fn reuses_only_the_pending_enrollment_still_present_in_gotrue() {
-        let enrollment = TotpEnrollment {
-            factor_id: "factor-a".to_string(),
-            qr_code: "qr-a".to_string(),
-            secret: "secret-a".to_string(),
-            uri: "uri-a".to_string(),
-        };
-        let matching_factors = vec![Factor {
-            id: "factor-a".to_string(),
-            factor_type: "totp".to_string(),
-            status: "unverified".to_string(),
-        }];
-
-        let reused = reusable_totp_enrollment(Some(&enrollment), &matching_factors)
-            .expect("matching unverified factor should reuse the same QR and secret");
-        assert_eq!(reused.factor_id, enrollment.factor_id);
-        assert_eq!(reused.qr_code, enrollment.qr_code);
-        assert_eq!(reused.secret, enrollment.secret);
-
-        let replaced_factors = vec![Factor {
-            id: "factor-b".to_string(),
-            factor_type: "totp".to_string(),
-            status: "unverified".to_string(),
-        }];
-        assert!(reusable_totp_enrollment(Some(&enrollment), &replaced_factors).is_none());
     }
 }
 
@@ -2595,14 +2449,6 @@ fn clear_runtime_auth_session(
         .map_err(|_| "Nao foi possivel limpar a sessao.".to_string())?;
     *stored_session = None;
     drop(stored_session);
-    *auth
-        .pending_totp_factor_id
-        .lock()
-        .map_err(|_| "Nao foi possivel limpar o desafio MFA.".to_string())? = None;
-    *auth
-        .pending_totp_enrollment
-        .lock()
-        .map_err(|_| "Nao foi possivel limpar o cadastro MFA pendente.".to_string())? = None;
     bridge.set_license_status(LicenseStatus::no_session());
     Ok(())
 }

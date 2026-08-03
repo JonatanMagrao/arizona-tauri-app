@@ -89,3 +89,32 @@ export function currentAuthDayStart(value: Date, resetHour: number): Date {
   const boundaryDate = calendarDateParts(value, parts.hour < resetHour ? -1 : 0);
   return zonedDateTime(boundaryDate.year, boundaryDate.month, boundaryDate.day, resetHour);
 }
+
+// license_expires_on marks the last FULL valid day: access ends at the daily
+// reset hour (America/Sao_Paulo) of the following day.
+export function licenseExpiryInstant(
+  licenseExpiresOn: string | null | undefined,
+  resetHour: unknown,
+): Date | null {
+  if (typeof licenseExpiresOn !== "string") return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(licenseExpiresOn.trim());
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const base = new Date(Date.UTC(year, month - 1, day));
+  if (
+    base.getUTCFullYear() !== year
+    || base.getUTCMonth() !== month - 1
+    || base.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  const dayAfter = new Date(Date.UTC(year, month - 1, day + 1));
+  return zonedDateTime(
+    dayAfter.getUTCFullYear(),
+    dayAfter.getUTCMonth() + 1,
+    dayAfter.getUTCDate(),
+    normalizeDailyAuthResetHour(resetHour),
+  );
+}

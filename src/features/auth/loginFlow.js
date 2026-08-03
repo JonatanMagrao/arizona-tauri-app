@@ -1,15 +1,14 @@
-export const AUTH_MODES = Object.freeze({
-  ACTIVATION: "activation",
-  TOTP: "totp",
-  ENROLLMENT: "enrollment",
-});
-
 export const DEFAULT_RATE_LIMIT_RETRY_SECONDS = 60;
+
+export const RESUME_NETWORK_RETRY_MS = 15000;
+export const RESUME_BLOCKED_RETRY_MS = 60000;
+
+export const OUTDATED_BACKEND_MESSAGE =
+  "O servidor ainda exige o autenticador. Backend desatualizado — contate o suporte.";
 
 const RATE_LIMIT_CODES = new Set([
   "rate_limited",
   "over_request_rate_limit",
-  "over_mfa_requests_rate_limit",
 ]);
 
 const RETRY_BLOCK_CODES = new Set([
@@ -17,11 +16,16 @@ const RETRY_BLOCK_CODES = new Set([
   "device_cooldown",
 ]);
 
-const INVALID_TOTP_CODES = new Set([
-  "invalid_totp",
-  "mfa_verification_failed",
-  "mfa_challenge_expired",
-  "challenge_expired",
+const OUTDATED_BACKEND_SIGNALS = new Set([
+  "daily_mfa_required",
+  "mfa_required",
+]);
+
+// Reversible org-wide blocks: the stored credential is kept, so the login
+// window silently retries resume until the license returns.
+const RESUME_BLOCKED_RETRY_CODES = new Set([
+  "license_expired",
+  "organization_not_active",
 ]);
 
 export function acquireSubmission(lockRef) {
@@ -32,6 +36,16 @@ export function acquireSubmission(lockRef) {
 
 export function releaseSubmission(lockRef) {
   if (lockRef) lockRef.current = false;
+}
+
+export function normalizeAuthFlow(flow) {
+  if (!flow) return flow;
+  const state = String(flow.state || "").trim().toLowerCase();
+  const code = String(flow.code || "").trim().toLowerCase();
+  if (OUTDATED_BACKEND_SIGNALS.has(state) || OUTDATED_BACKEND_SIGNALS.has(code)) {
+    return { ...flow, state: "error", message: OUTDATED_BACKEND_MESSAGE };
+  }
+  return flow;
 }
 
 export function authRetryState(flow) {
@@ -52,33 +66,21 @@ export function authRetryState(flow) {
   };
 }
 
-export function authFlowInstruction(state) {
-  if (state === "totp_enrollment_required") {
-    return "Este QR Code cria uma nova entrada. Escaneie-o antes de informar o código; não use uma entrada antiga.";
-  }
-  if (state === "totp_required") {
-    return "Use o código atual da entrada Arizona App já cadastrada no seu autenticador.";
-  }
-  return "";
+// Delay before the login window silently retries resume for the given flow
+// code, or null when the code does not auto-recover.
+export function resumeRetryDelayMs(code) {
+  const normalized = String(code || "").trim().toLowerCase();
+  if (normalized === "network_error") return RESUME_NETWORK_RETRY_MS;
+  if (RESUME_BLOCKED_RETRY_CODES.has(normalized)) return RESUME_BLOCKED_RETRY_MS;
+  return null;
 }
 
-export function authFlowErrorMessage(flow, mode) {
+export function authFlowErrorMessage(flow) {
   const code = String(flow?.code || "").trim().toLowerCase();
   if (RATE_LIMIT_CODES.has(code)) {
     return "Muitas tentativas. Aguarde o tempo indicado antes de tentar novamente.";
   }
-  if (INVALID_TOTP_CODES.has(code)) {
-    if (mode === AUTH_MODES.ENROLLMENT) {
-      return "Código inválido ou expirado. Escaneie o QR Code acima e use o código da nova entrada; a entrada antiga não funciona nesta recuperação.";
-    }
-    return "Código inválido ou expirado. Use o código atual da entrada Arizona App já cadastrada.";
-  }
   return String(flow?.message || "").trim() || "Não foi possível confirmar o acesso.";
-}
-
-export function shouldResetTotp(flow) {
-  const code = String(flow?.code || "").trim().toLowerCase();
-  return INVALID_TOTP_CODES.has(code) || RATE_LIMIT_CODES.has(code);
 }
 
 function positiveSeconds(value) {

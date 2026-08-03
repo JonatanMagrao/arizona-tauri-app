@@ -7,7 +7,6 @@ export const commandNames = Object.freeze({
   authActivate: "auth_activate",
   authPoll: "auth_poll",
   authResume: "auth_resume",
-  authVerifyTotp: "auth_verify_totp",
   cepBridgeStatus: "cep_bridge_status",
   clearSecureAuth: "clear_secure_auth",
   duplicateIdenticalMp4: "duplicate_identical_mp4",

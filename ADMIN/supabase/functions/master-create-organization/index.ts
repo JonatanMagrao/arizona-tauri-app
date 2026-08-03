@@ -187,6 +187,9 @@ function knownError(error: unknown): Response | null {
   if (normalized.includes("email_domain_not_allowed")) {
     return errorResponse("email_domain_not_allowed", "User email must use the allowed organization domain.", 400);
   }
+  if (normalized.includes("organization_not_active")) {
+    return errorResponse("organization_not_active", "Organization is not active.", 403);
+  }
 
   return null;
 }
@@ -312,24 +315,34 @@ Deno.serve(async (req) => {
       }
     }
 
-    const { data: organization, error: orgError } = await admin
-      .schema("licensing")
-      .from("organizations")
-      .upsert({
-        name,
-        slug,
-        seats_allowed: seatsAllowed,
-        allowed_email_domain: allowedEmailDomain,
-        license_expires_on: licenseExpiresOn,
-        daily_auth_reset_hour: dailyAuthResetHour,
-        ...accessPolicyColumns(policy),
-        status: "active",
-        created_by_master_id: master.id,
-      }, { onConflict: "slug" })
-      .select(
-        `id,name,slug,seats_allowed,allowed_email_domain,license_expires_on,daily_auth_reset_hour,status,${ACCESS_POLICY_SELECT}`,
-      )
-      .single();
+    // Saving the license must never touch the status: it is owned by
+    // master-set-organization-status, and writing it back here — even with the
+    // value read moments ago — could silently lift a concurrent suspension.
+    const organizationColumns = {
+      name,
+      seats_allowed: seatsAllowed,
+      allowed_email_domain: allowedEmailDomain,
+      license_expires_on: licenseExpiresOn,
+      daily_auth_reset_hour: dailyAuthResetHour,
+      ...accessPolicyColumns(policy),
+      created_by_master_id: master.id,
+    };
+    const organizationSelect =
+      `id,name,slug,seats_allowed,allowed_email_domain,license_expires_on,daily_auth_reset_hour,status,${ACCESS_POLICY_SELECT}`;
+    const { data: organization, error: orgError } = existingOrganization
+      ? await admin
+        .schema("licensing")
+        .from("organizations")
+        .update(organizationColumns)
+        .eq("id", existingOrganization.id)
+        .select(organizationSelect)
+        .single()
+      : await admin
+        .schema("licensing")
+        .from("organizations")
+        .insert({ ...organizationColumns, slug, status: "active" })
+        .select(organizationSelect)
+        .single();
 
     if (orgError) {
       const response = knownError(orgError);

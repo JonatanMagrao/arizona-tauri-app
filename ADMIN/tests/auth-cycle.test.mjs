@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   currentAuthDayStart,
+  licenseExpiryInstant,
   nextAuthDayStart,
   normalizeDailyAuthResetHour,
   serverAuthDay,
@@ -46,4 +47,49 @@ test("returns yesterday's reset boundary before 04:00", () => {
     currentAuthDayStart(beforeReset, 4).toISOString(),
     "2026-07-22T07:00:00.000Z",
   );
+});
+
+test("license expires at 04:00 Sao Paulo of the day after the last valid day", () => {
+  assert.equal(
+    licenseExpiryInstant("2026-07-29", 4).toISOString(),
+    "2026-07-30T07:00:00.000Z",
+  );
+  assert.equal(
+    licenseExpiryInstant("2026-07-29", undefined).toISOString(),
+    "2026-07-30T07:00:00.000Z",
+  );
+});
+
+test("license expiry follows the per-license reset hour", () => {
+  assert.equal(
+    licenseExpiryInstant("2026-07-29", 0).toISOString(),
+    "2026-07-30T03:00:00.000Z",
+  );
+  assert.equal(
+    licenseExpiryInstant("2026-07-29", 12).toISOString(),
+    "2026-07-30T15:00:00.000Z",
+  );
+});
+
+test("license expiry rolls over months and years", () => {
+  assert.equal(
+    licenseExpiryInstant("2026-07-31", 4).toISOString(),
+    "2026-08-01T07:00:00.000Z",
+  );
+  assert.equal(
+    licenseExpiryInstant("2026-12-31", 4).toISOString(),
+    "2027-01-01T07:00:00.000Z",
+  );
+});
+
+test("license expiry accepts a timestamp prefix and rejects bad input", () => {
+  assert.equal(
+    licenseExpiryInstant("2026-07-29T00:00:00+00:00", 4).toISOString(),
+    "2026-07-30T07:00:00.000Z",
+  );
+  assert.equal(licenseExpiryInstant(null, 4), null);
+  assert.equal(licenseExpiryInstant(undefined, 4), null);
+  assert.equal(licenseExpiryInstant("", 4), null);
+  assert.equal(licenseExpiryInstant("29/07/2026", 4), null);
+  assert.equal(licenseExpiryInstant("2026-02-30", 4), null);
 });

@@ -16,6 +16,7 @@ import {
   accessPolicy,
 } from "../_shared/access-policy.ts";
 import { deviceSwitchLock } from "../_shared/device-switch.ts";
+import { clearDeviceBindGrant } from "../_shared/device-bind-grant.ts";
 import {
   enforceRateLimit,
   rateLimitResponse,
@@ -23,10 +24,15 @@ import {
 
 type ReleaseDeviceBody = {
   source?: unknown;
+  installId?: unknown;
 };
 
 function cleanSource(value: unknown): string {
   return typeof value === "string" ? value.trim().slice(0, 64) : "";
+}
+
+function cleanInstallId(value: unknown): string {
+  return typeof value === "string" ? value.trim().slice(0, 128) : "";
 }
 
 Deno.serve(async (req) => {
@@ -41,6 +47,7 @@ Deno.serve(async (req) => {
 
     const body = await readJsonBody<ReleaseDeviceBody>(req);
     const source = cleanSource(body.source) || "app_self_release";
+    const requestedInstallId = cleanInstallId(body.installId);
     const admin = createAdminClient();
     const user = await getAuthUser(req);
     const member = await resolveMember(admin, user);
@@ -73,6 +80,37 @@ Deno.serve(async (req) => {
     if (!activeDeviceIds.length) {
       return jsonResponse({ ok: true, released: false, devices: [] });
     }
+
+    // The deployed v2.1.1 client posts only { source }, so an absent installId
+    // has to keep working; this becomes a real control — a release can only be
+    // asked for by the machine that holds the seat — once the fleet sends it.
+    if (
+      requestedInstallId
+      && !(activeDevices || []).some((device) => device.install_id === requestedInstallId)
+    ) {
+      const { error: rejectedAuditError } = await admin
+        .schema("licensing")
+        .from("audit_log")
+        .insert({
+          organization_id: member.organizationId,
+          actor_member_id: member.id,
+          action: "device.self_release_rejected",
+          target_table: "devices",
+          target_id: activeDeviceIds[0],
+          metadata: {
+            source,
+            reason: "install_id_mismatch",
+            requestedInstallId,
+          },
+        });
+      if (rejectedAuditError) console.error(rejectedAuditError);
+      return errorResponse(
+        "device_not_active",
+        "This installation does not hold the active seat.",
+        403,
+      );
+    }
+
     const switchLock = (activeDevices || [])
       .map((device) => deviceSwitchLock(
         device.activated_at,
@@ -96,6 +134,10 @@ Deno.serve(async (req) => {
     );
 
     const now = new Date().toISOString();
+    // Before the revocation, so a failure here leaves the seat untouched and
+    // the call retryable instead of reporting an error for work already done.
+    await clearDeviceBindGrant(admin, member.id, now);
+
     const { data: releasedDevices, error: releaseError } = await admin
       .schema("licensing")
       .from("devices")

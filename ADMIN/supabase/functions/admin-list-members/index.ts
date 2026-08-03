@@ -1,4 +1,4 @@
-import {
+﻿import {
   errorResponse,
   handleOptions,
   jsonResponse,
@@ -11,8 +11,12 @@ import {
   requirePublishableKey,
 } from "../_shared/supabase.ts";
 import { resolveMaster, resolveMember } from "../_shared/actors.ts";
-import { currentAuthDayStart, normalizeDailyAuthResetHour } from "../_shared/auth-cycle.ts";
-import { enforceRateLimit, requireRecentTotp } from "../_shared/security.ts";
+import {
+  adminGoogleOAuthNotBefore,
+  enforceRateLimit,
+  hasOAuthSignIn,
+  requireRecentGoogleOAuth,
+} from "../_shared/security.ts";
 
 type ListMembersBody = {
   organizationId?: unknown;
@@ -38,7 +42,7 @@ Deno.serve(async (req) => {
 
     const admin = createAdminClient();
     const user = await getAuthUser(req);
-    const master = await resolveMaster(admin, user);
+    const master = hasOAuthSignIn(req) ? await resolveMaster(admin, user) : null;
     const actor = master ?? await resolveMember(admin, user, organizationId);
 
     if (!actor || (actor.kind === "member" && actor.role !== "admin")) {
@@ -56,13 +60,13 @@ Deno.serve(async (req) => {
     if (!organization || organization.status !== "active") {
       return errorResponse("organization_not_active", "Organization is not active.", 403);
     }
-    requireRecentTotp(
-      req,
-      currentAuthDayStart(
-        new Date(),
-        normalizeDailyAuthResetHour(organization.daily_auth_reset_hour),
-      ),
-    );
+    if (actor.kind === "master") {
+      requireRecentGoogleOAuth(
+        req,
+        adminGoogleOAuthNotBefore(),
+        user.providers,
+      );
+    }
     await enforceRateLimit(admin, "admin.list.actor", `${actor.kind}:${actor.id}`, 360, 3600);
 
     const { data: members, error: membersError } = await admin
@@ -128,8 +132,12 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error(error);
     const message = String((error as { message?: unknown })?.message || error || "");
-    if (message === "mfa_required" || message === "daily_mfa_required") {
-      return errorResponse("daily_mfa_required", "Confirm MFA to continue.", 401);
+    if (message === "google_oauth_required" || message === "daily_google_oauth_required") {
+      return errorResponse(
+        "admin_google_oauth_required",
+        "Sign in with Google to continue.",
+        401,
+      );
     }
     if (message === "rate_limited") {
       return errorResponse("rate_limited", "Try again later.", 429);

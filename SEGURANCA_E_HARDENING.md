@@ -20,7 +20,8 @@ do código já inclui:
   minutos, tentativas limitadas, uso único e resposta não enumerável;
 - emissão do código por master/gestor no Tauri, com segregação de papéis,
   proteção de identidades master e cópia pelo ícone `file_copy`;
-- TOTP obrigatório no primeiro acesso e em cada ciclo diário após as 04:00;
+- TOTP obrigatório no primeiro acesso e em cada ciclo diário após as 04:00
+  (substituído em agosto de 2026 — ver a atualização abaixo);
 - tokens e recibo sob autoridade do Rust/Windows Credential Manager, sem
   exposição para o JavaScript do Tauri;
 - signup público desabilitado na configuração versionada e endpoint antigo de
@@ -31,7 +32,9 @@ do código já inclui:
   relógio limitada;
 - CSP ativa, capabilities separadas, Asset Protocol restrito e abertura de
   arquivos sem `cmd.exe`;
-- Admin master com senha + TOTP e tokens somente em memória;
+- Admin master com senha + TOTP e tokens somente em memória (hoje o master
+  entra apenas por Google OAuth e a sessão fica em `sessionStorage`, presa à
+  aba — ver a atualização abaixo);
 - rate limiting no banco, respostas genéricas e função de retenção;
 - payload CEP de produção sem `.debug` e sem source maps;
 - validação de caminhos do instalador, PowerShell invisível e desinstalação
@@ -43,8 +46,79 @@ As únicas etapas que dependem de acesso/decisão externa estão em
 [`ACOES_MANUAIS_SEGURANCA.md`](./ACOES_MANUAIS_SEGURANCA.md): opções do
 Dashboard, agendamento `pg_cron`, controles operacionais, teste coordenado e o
 build final. As migrations e Edge Functions foram publicadas no Supabase em
-23/07/2026. Assinatura de distribuição, SMTP e OAuth continuam fora do escopo
+23/07/2026 e atualizadas em 03/08/2026 com a confiança de máquina (ver a
+atualização abaixo). Assinatura de distribuição e SMTP continuam fora do escopo
 por decisão do responsável.
+
+## Atualização de 03/08/2026: confiança de máquina no lugar do TOTP
+
+O autenticador TOTP foi removido do Arizona App. A prova diária deixou de ser
+um código de 6 dígitos e passou a ser a identidade do hardware:
+
+- `validate-license` e `app-activate-device` não exigem mais AAL2 nem um AMR
+  `totp` do ciclo do dia; a janela de login do Tauri é só de ativação, com
+  e-mail e código de 12 caracteres;
+- o Tauri envia `deviceFingerprintHash`, o SHA-256 de
+  `arizona-device-fp:v1:{MachineGuid}`; a classificação do valor fica em
+  `ADMIN/supabase/functions/_shared/device-fingerprint.ts`. Fingerprint
+  divergente — e também o device que já gravou um e para de enviá-lo — devolve
+  `403 device_not_active` e grava `device.fingerprint_mismatch` em
+  `licensing.audit_log`, com apenas 12 caracteres de cada hash;
+- o fingerprint só é gravado por uma ativação respaldada por código.
+  `validate-license` não grava mais nada; `app-activate-device` grava apenas
+  com a concessão de vínculo. Gravar o primeiro valor que aparecesse deixaria
+  uma credencial copiada reivindicar a máquina e trancar o dono para fora;
+- vincular hardware exige essa concessão de uso único, emitida por
+  `app-activate` ao consumir um código (`device_bind_not_before` e
+  `device_bind_expires_at` em `licensing.members`, migration
+  `20260803120000_device_bind_grant.sql`, 30 minutos). Ela só é aceita de uma
+  sessão criada em ou depois de `device_bind_not_before`, é gasta por um UPDATE
+  condicional antes de o device ser gravado, é restaurada se essa gravação
+  falhar e é apagada pelo rollback se a ativação falhar. É esse requisito que
+  impede um registro copiado do Windows Credential Manager de cadastrar outra
+  máquina; a validação na máquina para onde ele foi copiado é recusada pela
+  divergência de fingerprint — e um device sem fingerprint gravado nem valida,
+  como descrito no parágrafo seguinte;
+- sem concessão, a resposta é `device_activation_expired` para uma instalação
+  que nunca foi cadastrada e `device_revoked` para uma instalação já liberada
+  que tenta voltar sozinha; nos dois casos a saída é um código novo;
+- a expiração da licença passou de `23:59:59.999Z` para a hora da renovação
+  diária do dia seguinte a `license_expires_on`, em `America/Sao_Paulo`;
+- a Gestão saiu do Tauri e o master autentica apenas por Google OAuth.
+
+Esse risco residual foi fechado no próprio deploy de 03/08/2026:
+`validate-license` recusa toda validação sem fingerprint (`device_not_active`,
+"Update the app to continue." — é o que a v2.1.1 aposentada sempre envia) e
+também o device que **não tem** fingerprint gravado (`device_not_active`,
+"Reactivate this machine.", auditoria `device.fingerprint_mismatch` com
+`outcome: "unbound"`). Um cliente adulterado que envie o valor vazio não passa
+em nenhum caso.
+
+Consequência que precisa ser dita sem eufemismo: **o vínculo de máquina vale
+para a frota inteira desde o primeiro dia**. Como só a ativação com código
+grava o fingerprint e o servidor recusa quem não o tem gravado, todo device que
+estava em campo é forçado a uma rodada de reativação: instalar a 2.2.0 e
+consumir um código de ativação novo. Não existe mais gravação de valor vazio:
+`app-activate-device` recusa a máquina que não se identifica com
+`device_identity_required` antes de gastar a concessão, e o cliente 2.2.0 falha
+localmente, sem consumir código nem chamar a rede, quando o `MachineGuid` não
+pode ser lido.
+
+A ordem de publicação é parte do controle: a migration precisa estar aplicada e
+visível pelo PostgREST antes das Functions, sob pena de derrubar toda ativação e
+toda recuperação (`docs/impacto-mudancas-backend-e-versoes.md`, seção 8).
+
+Consequência operacional deliberada: o papel de gestor saiu das Functions. Em
+03/08/2026, `admin-add-member`, `admin-list-members` e
+`master-reset-member-totp` foram apagadas do projeto Supabase e do repositório,
+junto com `_shared/mfa-recovery.ts`; as Functions `admin-*` restantes aceitam
+somente o master, com `forbidden` para qualquer outro ator. Quem administrava
+pela Gestão do Tauri precisa recorrer ao master.
+
+O MFA do Supabase Auth pode ser desligado no painel do projeto: nenhum fluxo o
+utiliza mais. O backend não consulta fatores e a v2.1.1 — a única que cadastrava
+o fator sozinha durante a ativação — está bloqueada na validação. Desligar é
+opcional e apenas remove um resíduo cosmético.
 
 > Antes de alterar ou remover qualquer chave, leia
 > `LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md`. Não apague, regenere ou substitua
@@ -154,9 +228,11 @@ recuperação hoje:
   Isso permite que qualquer pessoa com a publishable key (pública, embutida no
   app) crie uma conta válida direto em `/auth/v1/signup` com qualquer e-mail,
   sem provar posse da caixa de entrada.
-- `admin-add-member` insere o membro com `status: "invited"` e sem
-  `auth_user_id`, sem gerar convite
-  (`ADMIN/supabase/functions/admin-add-member/index.ts:178-193`).
+- `admin-add-member` inseria o membro com `status: "invited"` e sem
+  `auth_user_id`, sem gerar convite. A Function foi removida em 03/08/2026,
+  mas o upsert de usuários de `master-create-organization` continua criando o
+  membro do mesmo jeito (`status: "invited"`, sem `auth_user_id`), então este
+  ponto do vetor permanece.
 - `resolveMember`/`resolveMaster`
   (`ADMIN/supabase/functions/_shared/actors.ts:77-91` e `:28-38`) fazem
   fallback por e-mail quando não encontram o membro por `auth_user_id` e, ao

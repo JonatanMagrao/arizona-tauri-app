@@ -1,4 +1,4 @@
-import {
+﻿import {
   errorResponse,
   handleOptions,
   jsonResponse,
@@ -11,12 +11,12 @@ import {
   requirePublishableKey,
 } from "../_shared/supabase.ts";
 import { resolveMaster, resolveMember } from "../_shared/actors.ts";
-import { currentAuthDayStart, normalizeDailyAuthResetHour } from "../_shared/auth-cycle.ts";
+import { clearDeviceBindGrant } from "../_shared/device-bind-grant.ts";
 import {
   adminGoogleOAuthNotBefore,
   enforceRateLimit,
-  requireRecentMasterAuthentication,
-  requireRecentTotp,
+  hasOAuthSignIn,
+  requireRecentGoogleOAuth,
 } from "../_shared/security.ts";
 
 type RemoveMemberBody = {
@@ -47,7 +47,7 @@ Deno.serve(async (req) => {
 
     const admin = createAdminClient();
     const user = await getAuthUser(req);
-    const master = await resolveMaster(admin, user);
+    const master = hasOAuthSignIn(req) ? await resolveMaster(admin, user) : null;
     const actor = master ?? await resolveMember(admin, user, organizationId);
 
     if (!actor || (actor.kind === "member" && actor.role !== "admin")) {
@@ -57,26 +57,23 @@ Deno.serve(async (req) => {
     const { data: organization, error: organizationError } = await admin
       .schema("licensing")
       .from("organizations")
-      .select("status,daily_auth_reset_hour")
+      .select("status")
       .eq("id", organizationId)
       .maybeSingle();
     if (organizationError) throw organizationError;
-    if (!organization || organization.status !== "active") {
+    // A suspension blocks users, not the master's management of them.
+    if (!organization || !["active", "paused"].includes(organization.status)) {
       return errorResponse("organization_not_active", "Organization is not active.", 403);
     }
-    const authBoundary = currentAuthDayStart(
-      new Date(),
-      normalizeDailyAuthResetHour(organization.daily_auth_reset_hour),
-    );
+    if (actor.kind === "member" && organization.status !== "active") {
+      return errorResponse("organization_not_active", "Organization is not active.", 403);
+    }
     if (actor.kind === "master") {
-      requireRecentMasterAuthentication(
+      requireRecentGoogleOAuth(
         req,
-        authBoundary,
-        user.providers,
         adminGoogleOAuthNotBefore(),
+        user.providers,
       );
-    } else {
-      requireRecentTotp(req, authBoundary);
     }
     await enforceRateLimit(admin, "admin.remove.actor", `${actor.kind}:${actor.id}`, 20, 3600);
 
@@ -98,8 +95,23 @@ Deno.serve(async (req) => {
     if (actor.kind === "member" && member.role === "admin") {
       return errorResponse("forbidden", "Organization admins cannot remove managers.", 403);
     }
+    if (actor.kind === "member") {
+      const { data: masterIdentity, error: masterIdentityError } = await admin
+        .schema("licensing")
+        .from("master_accounts")
+        .select("id")
+        .eq("email", member.email)
+        .maybeSingle();
+      if (masterIdentityError) throw masterIdentityError;
+      if (masterIdentity) {
+        return errorResponse("protected_identity", "This account belongs to a master.", 403);
+      }
+    }
 
     const now = new Date().toISOString();
+    // Before the revocations, so a failure here changes nothing and the call
+    // stays retryable.
+    await clearDeviceBindGrant(admin, memberId, now);
 
     const { data: removedMember, error: removeError } = await admin
       .schema("licensing")
@@ -179,9 +191,6 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error(error);
     const message = String((error as { message?: unknown })?.message || error || "");
-    if (message === "mfa_required" || message === "daily_mfa_required") {
-      return errorResponse("daily_mfa_required", "Confirm MFA to continue.", 401);
-    }
     if (message === "google_oauth_required" || message === "daily_google_oauth_required") {
       return errorResponse(
         "admin_google_oauth_required",
