@@ -29,6 +29,8 @@ const DEFAULT_SECONDARY_STATE = {
   mediaPath: "",
   mediaKind: "video",
   mediaTitle: "",
+  mediaLoading: false,
+  mediaError: "",
   productReport: null,
   adminAuth: null,
   sessionAuth: null,
@@ -1490,11 +1492,18 @@ function MediaView({ state, showError }) {
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isMediaReady, setIsMediaReady] = useState(false);
+  const [isBuffering, setIsBuffering] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const mediaKind = state.mediaKind === "audio" ? "audio" : "video";
   const mediaPath = state.mediaPath;
   const mediaTitle = state.mediaTitle || fileNameFromPath(mediaPath) || "Mídia";
   const mediaSrc = useMemo(() => pathToMediaSrc(mediaPath), [mediaPath]);
+  const isLoading = state.mediaLoading
+    || (Boolean(mediaSrc) && !mediaError && (!isMediaReady || isBuffering));
+  const loadingMessage = state.mediaLoading
+    ? mediaTitle
+    : `Carregando ${mediaKind === "audio" ? "áudio" : "vídeo"}...`;
   const progress = duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
   const controlsClass = mediaKind === "video" && !controlsVisible
     ? "media-controls--hidden"
@@ -1507,6 +1516,8 @@ function MediaView({ state, showError }) {
     setDuration(0);
     setCurrentTime(0);
     setIsPlaying(false);
+    setIsMediaReady(false);
+    setIsBuffering(Boolean(mediaPath));
     setControlsVisible(true);
   }, [mediaPath]);
 
@@ -1530,7 +1541,7 @@ function MediaView({ state, showError }) {
   });
 
   useEffect(() => {
-    if (mediaKind === "video" && mediaSrc) {
+    if (mediaKind === "video" && mediaSrc && isMediaReady && !isBuffering) {
       scheduleControlsHide();
     } else {
       clearControlsHideTimer();
@@ -1538,7 +1549,7 @@ function MediaView({ state, showError }) {
     }
 
     return clearControlsHideTimer;
-  }, [mediaKind, mediaSrc]);
+  }, [mediaKind, mediaSrc, isMediaReady, isBuffering]);
 
   const clearControlsHideTimer = () => {
     if (!controlsHideTimerRef.current) return;
@@ -1567,6 +1578,12 @@ function MediaView({ state, showError }) {
     setDuration(Number.isFinite(media.duration) ? media.duration : 0);
     setCurrentTime(Number.isFinite(media.currentTime) ? media.currentTime : 0);
     setIsPlaying(!media.paused && !media.ended);
+  };
+
+  const markMediaReady = () => {
+    setIsMediaReady(true);
+    setIsBuffering(false);
+    syncMediaState();
   };
 
   const togglePlayback = async () => {
@@ -1642,17 +1659,31 @@ function MediaView({ state, showError }) {
     ref: mediaRef,
     autoPlay: true,
     preload: "metadata",
+    onLoadStart: () => {
+      setIsMediaReady(false);
+      setIsBuffering(true);
+    },
     onLoadedMetadata: syncMediaState,
+    onLoadedData: markMediaReady,
     onCanPlay: () => {
-      syncMediaState();
+      markMediaReady();
       attemptAutoplay();
     },
     onDurationChange: syncMediaState,
     onTimeUpdate: syncMediaState,
     onPlay: syncMediaState,
+    onPlaying: () => {
+      setIsBuffering(false);
+      syncMediaState();
+    },
     onPause: syncMediaState,
     onEnded: syncMediaState,
+    onWaiting: () => setIsBuffering(true),
+    onStalled: () => setIsBuffering(true),
+    onSeeking: () => setIsBuffering(true),
+    onSeeked: () => setIsBuffering(false),
     onError: () => {
+      setIsBuffering(false);
       openNativeMediaFallback();
     },
   };
@@ -1660,7 +1691,19 @@ function MediaView({ state, showError }) {
   return (
     <main className={`media-view media-view--${mediaKind}`} aria-label={mediaTitle}>
       <section className="media-stage" onPointerMove={mediaKind === "video" ? showControls : undefined}>
-        {!mediaSrc && <div className="media-empty">Mídia não encontrada.</div>}
+        {!mediaSrc && !state.mediaLoading && !state.mediaError && (
+          <div className="media-empty">Mídia não encontrada.</div>
+        )}
+        {state.mediaError && (
+          <div className="media-load-error" role="alert">{state.mediaError}</div>
+        )}
+        {isLoading && (
+          <div className="media-loading" role="status" aria-live="polite">
+            <span className="media-loading__spinner" aria-hidden="true"></span>
+            <strong>{loadingMessage}</strong>
+            <span>Isso pode levar alguns segundos se o arquivo estiver somente on-line.</span>
+          </div>
+        )}
         {mediaError && <div className="media-error">{mediaError}</div>}
 
         {mediaSrc && mediaKind === "video" && (
@@ -1699,7 +1742,7 @@ function MediaView({ state, showError }) {
           type="button"
           className="media-play-btn"
           onClick={togglePlayback}
-          disabled={!mediaSrc}
+          disabled={!mediaSrc || !isMediaReady}
           aria-label={isPlaying ? "Pausar" : "Reproduzir"}
           title={isPlaying ? "Pausar" : "Reproduzir"}
         >
@@ -1743,6 +1786,8 @@ function normalizeSecondaryState(payload) {
   const jobaoCod = String(payload?.jobaoCod || payload?.jobao_cod || "").trim();
   const mediaPath = String(payload?.mediaPath || payload?.media_path || "").trim();
   const mediaTitle = String(payload?.mediaTitle || payload?.media_title || "").trim();
+  const mediaLoading = Boolean(payload?.mediaLoading ?? payload?.media_loading);
+  const mediaError = String(payload?.mediaError || payload?.media_error || "").trim();
   const rawMediaKind = String(payload?.mediaKind || payload?.media_kind || "").trim().toLowerCase();
   const mediaKind = rawMediaKind === "audio" ? "audio" : "video";
   const productReport = normalizeProductReport(payload?.productReport || payload?.product_report);
@@ -1755,6 +1800,8 @@ function normalizeSecondaryState(payload) {
     mediaPath,
     mediaKind,
     mediaTitle,
+    mediaLoading,
+    mediaError,
     productReport,
     adminAuth,
     sessionAuth,

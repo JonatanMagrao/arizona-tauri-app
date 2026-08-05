@@ -1,7 +1,7 @@
 # Revisão do visualizador de mídia — MP4 e MOV
 
-**Status:** proposta para implementação
-**Última revisão:** 04/08/2026
+**Status:** implementação parcial — escopo dinâmico concluído
+**Última revisão:** 05/08/2026
 **Escopo:** Arizona App (Tauri)
 
 Esta revisão não altera o render do After Effects, não instala codecs e não
@@ -21,20 +21,61 @@ apresentadas ao usuário.
 - Sem prévia compatível, o arquivo será aberto no aplicativo padrão do Windows.
 - Um erro produzirá somente uma mensagem visível, escrita em linguagem humana.
 
+## Estado da implementação
+
+Concluído em 05/08/2026:
+
+- o caminho fixo `I:\...` foi removido do `assetProtocol.scope`;
+- cada mídia é canonicalizada e validada contra o Carrefour Drive ou Fotos Flow
+  configurado;
+- somente o caminho existente, canonicalizado e com extensão permitida é
+  adicionado em runtime ao Asset Protocol com `allow_file`;
+- o mesmo caminho canonicalizado é enviado ao player;
+- a janela de mídia aparece imediatamente em estado de carregamento; busca,
+  validação e leitura do Drive são executadas em uma tarefa bloqueante separada,
+  sem ocupar a thread da interface;
+- antes de entregar o caminho ao WebView, o backend aquece em segundo plano até
+  1 MiB do início e 1 MiB do final do arquivo. São os trechos normalmente
+  consultados primeiro pelo player para conteúdo e metadados, evitando que a
+  primeira leitura do Asset Protocol hidrate um arquivo on-line na thread da
+  janela;
+- o player mantém um indicador visível enquanto aguarda dados, inclusive em
+  buffering e seek;
+- tela principal, histórico e histórico de cópias passam pela mesma preparação
+  antes de abrir a janela de mídia;
+- os caminhos MP4/MOV encontrados ao abrir um projeto ficam em cache durante a
+  sessão e são reutilizados no clique seguinte; cache obsoleto é descartado;
+- uma abertura solicitada procura somente o formato clicado, sem varrer também
+  a pasta do outro formato;
+- testes Rust cobrem caminho permitido com caracteres especiais, extensão
+  inválida, pasta irmã com prefixo semelhante, pré-aquecimento e arquivo vazio.
+
+Continuam pendentes nesta proposta: seleção determinística em todos os fallbacks,
+prévia MP4 para MOV, classificação completa dos erros, mensagens sem duplicação
+e a matriz manual de reprodução em instalações reais do Windows/After Effects.
+
 ## Fluxo atual
 
-1. O backend procura o vídeo em `OUT/RENDER/MP4` ou `OUT/RENDER/MOV`.
-2. O Rust tenta abrir a janela secundária e, se nem isso for possível, abre o
-   arquivo diretamente no aplicativo padrão do Windows.
-3. Na janela interna, o frontend transforma o caminho com `convertFileSrc()`.
-4. Um elemento `<video>` do WebView2 tenta reproduzir o arquivo.
-5. O evento de erro do player mostra uma mensagem genérica e tenta abrir o
+1. O Rust abre imediatamente a janela secundária no estado **Preparando**.
+2. Em uma thread de trabalho, o backend procura o vídeo em `OUT/RENDER/MP4` ou
+   `OUT/RENDER/MOV`.
+3. Ainda fora da thread da interface, o Rust canonicaliza o arquivo, confirma
+   que ele está dentro das raízes configuradas, aquece seus trechos inicial e
+   final e adiciona somente esse arquivo ao Asset Protocol.
+4. Na janela interna, o frontend transforma o mesmo caminho canonicalizado com
+   `convertFileSrc()`.
+5. Um elemento `<video>` do WebView2 tenta reproduzir o arquivo.
+6. A tela continua indicando carregamento até o player sinalizar que possui
+   dados suficientes; durante buffering ou seek, o indicador reaparece.
+7. O evento de erro do player mostra uma mensagem genérica e tenta abrir o
    visualizador do Windows. Uma falha após o usuário acionar **Reproduzir**
    também usa esse fallback.
 
-As ações principais de vídeo e áudio possuem ainda um fallback no Rust quando a
-janela interna nem chega a abrir. Os comandos vindos do histórico não passam
-por esse mesmo caminho. A implementação futura deve unificar essas entradas.
+Todos os pontos de entrada usam a mesma preparação. Se a janela interna nem
+chegar a abrir, o Rust tenta abrir a mídia já validada no aplicativo padrão do
+Windows. Se a janela abrir, mas o player rejeitar o conteúdo, o frontend executa
+o fallback nativo. A revisão futura deve terminar de uniformizar as mensagens
+apresentadas nesses resultados.
 
 O aplicativo não distribui `ffmpeg.exe`, mpv, VLC ou outro motor próprio de
 decodificação. Um MP4 em H.264/AVC com áudio AAC deve funcionar usando os
@@ -46,23 +87,18 @@ não muda a decisão de não exigir FFmpeg externo para o MP4 padrão.
 
 ## Problemas confirmados
 
-### Caminho configurável, permissão fixa
+### Caminho configurável e permissão do player — resolvido
 
-O Carrefour Drive pode ser alterado nas configurações, mas o
-`assetProtocol.scope` atual permite apenas a pasta local específica do Arizona
-(`$APPLOCALDATA/**`) e o caminho fixo:
+O Carrefour Drive continua configurável, mas não é mais copiado para um glob
+estático. O escopo inicial conserva somente `$APPLOCALDATA/**`; antes de abrir a
+janela, o Rust canonicaliza a mídia, confirma que ela pertence ao Drive ou ao
+Fotos Flow configurado e chama `asset_protocol_scope().allow_file()` para aquele
+arquivo. O caminho canonicalizado liberado é o mesmo entregue ao frontend.
 
-```text
-I:\Drives compartilhados\Phx CRF Copa\**
-```
-
-Isso cria uma divergência:
-
-1. o backend encontra o MP4 em outra letra ou pasta configurada;
-2. a janela interna recebe o caminho correto;
-3. o Asset Protocol pode recusar esse caminho;
-4. o player informa apenas que não conseguiu reproduzir;
-5. o visualizador do Windows pode abrir o mesmo arquivo normalmente.
+Assim, trocar a letra ou a pasta do Drive não exige reiniciar o aplicativo e não
+libera a pasta inteira ao WebView. Ainda é necessário validar manualmente letras
+alternativas, Google Drive somente on-line e caminhos de rede nas instalações
+oficialmente suportadas.
 
 ### Falhas diferentes recebem mensagens insuficientes ou inconsistentes
 
@@ -121,16 +157,15 @@ preservado: uma política de autoplay não comprova incompatibilidade do arquivo
 não deve abrir outro aplicativo. Uma rejeição depois de clique ou tecla também
 só deve acionar o fallback quando houver evidência de falha da mídia.
 
-## Diagnóstico enquanto a correção não é implementada
+## Diagnóstico das pendências restantes
 
 Para um relato de MP4 que não abre:
 
 1. conferir o caminho exato salvo em **Carrefour Drive**;
-2. se ele não estiver dentro do caminho fixo `I:\...`, considerar primeiro a
-   divergência do Asset Protocol;
+2. confirmar que o arquivo pertence ao Drive atual e está disponível localmente;
 3. arrastar o mesmo arquivo para uma aba do Microsoft Edge;
-4. se funcionar no Edge e falhar no Arizona, priorizar a investigação de caminho
-   e permissão do app;
+4. se funcionar no Edge e falhar no Arizona, priorizar a investigação de acesso
+   ao arquivo e registrar o caminho exato usado;
 5. se também falhar no Edge, conferir o formato com uma ferramenta como
    MediaInfo; H.264/AVC com AAC é a combinação preferencial;
 6. verificar se outro MP4 conhecido funciona na mesma máquina.

@@ -34,7 +34,7 @@ impl Arizona {
         let media_type =
             MediaType::parse(media_type).ok_or_else(|| "Tipo de vÃ­deo invÃ¡lido.".to_string())?;
 
-        match self.project_open_info(jobao_cod, cod_jobinho) {
+        match self.project_open_info_for_media(jobao_cod, cod_jobinho, media_type) {
             Ok(project) => {
                 let video = match media_type {
                     MediaType::Mp4 => project.mp4_path,

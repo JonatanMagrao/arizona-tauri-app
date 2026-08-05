@@ -112,6 +112,24 @@ impl Arizona {
         jobao_cod: &str,
         jobinho_cod: &str,
     ) -> Result<OpenedProject, String> {
+        self.project_open_info_impl(jobao_cod, jobinho_cod, None)
+    }
+
+    pub(super) fn project_open_info_for_media(
+        &self,
+        jobao_cod: &str,
+        jobinho_cod: &str,
+        media_type: MediaType,
+    ) -> Result<OpenedProject, String> {
+        self.project_open_info_impl(jobao_cod, jobinho_cod, Some(media_type))
+    }
+
+    fn project_open_info_impl(
+        &self,
+        jobao_cod: &str,
+        jobinho_cod: &str,
+        requested_media: Option<MediaType>,
+    ) -> Result<OpenedProject, String> {
         let jobinho_cod = jobinho_cod.trim();
         let jobao_path = self.get_jobao_path(jobao_cod)?;
         let ae_folder = jobao_path.join("PROJETOS").join("AE");
@@ -140,8 +158,16 @@ impl Arizona {
                     jobao_cod: jobao_cod.trim().to_string(),
                     jobinho_cod: jobinho_cod.trim().to_string(),
                     region: region_from_aep_name(&name),
-                    mp4_path: find_video_path(&jobao_path, &project_stem, MediaType::Mp4),
-                    mov_path: find_video_path(&jobao_path, &project_stem, MediaType::Mov),
+                    mp4_path: if requested_media != Some(MediaType::Mov) {
+                        find_video_path(&jobao_path, &project_stem, MediaType::Mp4)
+                    } else {
+                        None
+                    },
+                    mov_path: if requested_media != Some(MediaType::Mp4) {
+                        find_video_path(&jobao_path, &project_stem, MediaType::Mov)
+                    } else {
+                        None
+                    },
                     jobao_path,
                     ae_project_path,
                     project_title,

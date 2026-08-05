@@ -11,14 +11,19 @@ mod settings;
 mod uninstall;
 
 use after_effects::AfterEffectsAction;
-use arizona::{ActionResponse, Arizona, MediaFile, ProductImportReport};
+use arizona::{ActionResponse, Arizona, MediaFile, OpenedProject, ProductImportReport};
 use cep_bridge::CepBridgeState;
 use chrono::{SecondsFormat, Utc};
 use license::{LicenseInput, LicenseStatus};
 use settings::AppConfig;
+use std::collections::HashMap;
 use std::fs;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Mutex,
+};
 use tauri::{
     AppHandle, LogicalSize, Manager, PhysicalPosition, PhysicalSize, State, WebviewWindow, Window,
     WindowEvent,
@@ -75,6 +80,16 @@ struct AfterShortcutState {
 #[derive(Default)]
 struct SecondaryWindowRuntimeState {
     active_view: Mutex<Option<String>>,
+}
+
+#[derive(Default)]
+struct MediaPathCache {
+    paths: Mutex<HashMap<String, PathBuf>>,
+}
+
+#[derive(Default)]
+struct MediaLoadRuntimeState {
+    generation: AtomicU64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -194,6 +209,8 @@ pub fn run() {
         .manage(CepBridgeState::new())
         .manage(AfterShortcutState::default())
         .manage(SecondaryWindowRuntimeState::default())
+        .manage(MediaPathCache::default())
+        .manage(MediaLoadRuntimeState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -2163,6 +2180,7 @@ fn abrir_ae(
 
     Ok(match arizona.abrir_jobinho(&jobao_cod, &jobinho_cod) {
         Ok(project) => {
+            cache_project_media_paths(&app, &project);
             history::record_project_opened(&app, &project)?;
             ActionResponse::ok_message(project.project_title)
         }
@@ -2224,9 +2242,50 @@ struct SecondaryWindowState {
     media_path: Option<String>,
     media_kind: Option<String>,
     media_title: Option<String>,
+    media_loading: Option<bool>,
+    media_error: Option<String>,
     product_report: Option<ProductImportReport>,
     admin_auth: Option<AdminWindowAuth>,
     session_auth: Option<SessionWindowAuth>,
+}
+
+fn begin_pending_media_load(app: &AppHandle) -> u64 {
+    app.state::<MediaLoadRuntimeState>()
+        .generation
+        .fetch_add(1, Ordering::AcqRel)
+        .wrapping_add(1)
+}
+
+fn cancel_pending_media_load(app: &AppHandle) {
+    app.state::<MediaLoadRuntimeState>()
+        .generation
+        .fetch_add(1, Ordering::AcqRel);
+}
+
+fn pending_media_load_is_current(app: &AppHandle, request_id: u64) -> bool {
+    if app
+        .state::<MediaLoadRuntimeState>()
+        .generation
+        .load(Ordering::Acquire)
+        != request_id
+    {
+        return false;
+    }
+
+    let media_view_is_active = app
+        .state::<SecondaryWindowRuntimeState>()
+        .active_view
+        .lock()
+        .ok()
+        .and_then(|view| view.clone())
+        .as_deref()
+        == Some("media");
+    let media_window_is_visible = app
+        .get_webview_window(SECONDARY_WINDOW_LABEL)
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false);
+
+    media_view_is_active && media_window_is_visible
 }
 
 #[tauri::command]
@@ -2270,6 +2329,8 @@ fn open_secondary_window(
         media_path: None,
         media_kind: None,
         media_title: None,
+        media_loading: None,
+        media_error: None,
         product_report: None,
         admin_auth,
         session_auth,
@@ -2278,6 +2339,14 @@ fn open_secondary_window(
 }
 
 fn show_secondary_window(
+    app: AppHandle,
+    state: SecondaryWindowState,
+) -> Result<ActionResponse, String> {
+    cancel_pending_media_load(&app);
+    show_secondary_window_preserving_media_load(app, state)
+}
+
+fn show_secondary_window_preserving_media_load(
     app: AppHandle,
     state: SecondaryWindowState,
 ) -> Result<ActionResponse, String> {
@@ -2323,8 +2392,36 @@ fn show_secondary_window(
     Ok(ActionResponse::ok())
 }
 
+fn update_pending_media_window(
+    app: &AppHandle,
+    request_id: u64,
+    state: &SecondaryWindowState,
+) -> Result<bool, String> {
+    if !pending_media_load_is_current(app, request_id) {
+        return Ok(false);
+    }
+
+    let window = app
+        .get_webview_window(SECONDARY_WINDOW_LABEL)
+        .ok_or_else(|| "Janela secundária não foi inicializada.".to_string())?;
+    let state_json = serde_json::to_string(state).map_err(|err| err.to_string())?;
+    let script = format!(
+        "window.__ARIZONA_SECONDARY_STATE__ = {state_json}; window.dispatchEvent(new CustomEvent('arizona-secondary:set-view', {{ detail: {state_json} }}));"
+    );
+
+    window
+        .eval(script)
+        .map_err(|err| format!("Não foi possível atualizar o visualizador: {err}"))?;
+    if let Err(err) = window.set_title(&secondary_window_state_title(state)) {
+        eprintln!("Nao foi possivel atualizar o titulo da janela secundaria: {err}");
+    }
+
+    Ok(true)
+}
+
 #[tauri::command]
 fn close_secondary_window(app: AppHandle) -> Result<ActionResponse, String> {
+    cancel_pending_media_load(&app);
     if let Some(window) = app.get_webview_window(SECONDARY_WINDOW_LABEL) {
         let _ = window.hide();
     }
@@ -2587,32 +2684,43 @@ fn duplicate_identical_mp4(
 }
 
 #[tauri::command]
-fn open_video(
+async fn open_video(
     app: AppHandle,
-    auth: State<AuthState>,
+    auth: State<'_, AuthState>,
     jobao_cod: String,
     jobinho_cod: String,
     media_type: String,
 ) -> Result<ActionResponse, String> {
     require_authenticated(&auth)?;
-    match arizona_from_app(&app)?.video_file(&jobao_cod, &jobinho_cod, &media_type) {
-        Ok(media) => show_media_window_with_native_fallback(app, media),
-        Err(err) => Ok(ActionResponse::err(err)),
-    }
+    let loading_title = format!("Preparando {}...", media_type.trim().to_ascii_uppercase());
+    let task_app = app.clone();
+
+    load_media_window_in_background(app, "video", loading_title, move || {
+        resolve_video_for_window(&task_app, &jobao_cod, &jobinho_cod, &media_type)
+    })
+    .await
 }
 
 #[tauri::command]
-fn open_audio(
+async fn open_audio(
     app: AppHandle,
-    auth: State<AuthState>,
+    auth: State<'_, AuthState>,
     jobao_cod: String,
     jobinho_cod: String,
 ) -> Result<ActionResponse, String> {
     require_authenticated(&auth)?;
-    match arizona_from_app(&app)?.audio_file(&jobao_cod, &jobinho_cod) {
-        Ok(media) => show_media_window_with_native_fallback(app, media),
-        Err(err) => Ok(ActionResponse::err(err)),
-    }
+    let task_app = app.clone();
+
+    load_media_window_in_background(
+        app,
+        "audio",
+        "Preparando áudio...".to_string(),
+        move || {
+            let media = arizona_from_app(&task_app)?.audio_file(&jobao_cod, &jobinho_cod)?;
+            prepare_media_file_for_window(&task_app, media)
+        },
+    )
+    .await
 }
 
 #[tauri::command]
@@ -2622,17 +2730,10 @@ fn open_media_native(
     media_path: String,
 ) -> Result<ActionResponse, String> {
     require_authenticated(&auth)?;
-    let path = PathBuf::from(media_path.trim());
-    if !path.is_file() {
-        return Ok(ActionResponse::err("Mídia não encontrada."));
-    }
-
-    if !is_media_path(&path) {
-        return Ok(ActionResponse::err("Tipo de mídia inválido."));
-    }
-    if !media_path_is_allowed(&app, &path)? {
-        return Ok(ActionResponse::err("Mídia fora das pastas configuradas."));
-    }
+    let path = match validate_configured_media_path(&app, Path::new(media_path.trim())) {
+        Ok(path) => path,
+        Err(message) => return Ok(ActionResponse::err(message)),
+    };
 
     Ok(match arizona::open_start_file(&path) {
         Ok(()) => ActionResponse::ok(),
@@ -2737,15 +2838,29 @@ fn history_copy_reveal_media(
 }
 
 #[tauri::command]
-fn history_copy_open_media(
+async fn history_copy_open_media(
     app: AppHandle,
-    auth: State<AuthState>,
+    auth: State<'_, AuthState>,
     id: i64,
 ) -> Result<ActionResponse, String> {
     require_authenticated(&auth)?;
-    let path = history::copy_media_file(&app, id)?;
-    let title = media_title_from_path(&path);
-    show_media_path_with_title(app, path, "video", title)
+    let task_app = app.clone();
+
+    load_media_window_in_background(
+        app,
+        "video",
+        "Preparando vídeo...".to_string(),
+        move || {
+            let path = history::copy_media_file(&task_app, id)?;
+            let media = MediaFile {
+                title: media_title_from_path(&path),
+                path,
+                kind: "video".to_string(),
+            };
+            prepare_media_file_for_window(&task_app, media)
+        },
+    )
+    .await
 }
 
 #[tauri::command]
@@ -2794,16 +2909,26 @@ fn history_reveal_media(
 }
 
 #[tauri::command]
-fn history_open_media(
+async fn history_open_media(
     app: AppHandle,
-    auth: State<AuthState>,
+    auth: State<'_, AuthState>,
     id: i64,
     media_type: String,
 ) -> Result<ActionResponse, String> {
     require_authenticated(&auth)?;
-    let path = history::media_file(&app, id, &media_type)?;
-    let title = media_title_from_path(&path);
-    show_media_path_with_title(app, path, "video", title)
+    let loading_title = format!("Preparando {}...", media_type.trim().to_ascii_uppercase());
+    let task_app = app.clone();
+
+    load_media_window_in_background(app, "video", loading_title, move || {
+        let path = history::media_file(&task_app, id, &media_type)?;
+        let media = MediaFile {
+            title: media_title_from_path(&path),
+            path,
+            kind: "video".to_string(),
+        };
+        prepare_media_file_for_window(&task_app, media)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -2866,32 +2991,165 @@ fn arizona_from_app(app: &AppHandle) -> Result<Arizona, String> {
     Ok(Arizona::new(settings::load_validated(app)?))
 }
 
-fn show_media_window(app: AppHandle, media: MediaFile) -> Result<ActionResponse, String> {
-    let MediaFile { path, kind, title } = media;
-    show_media_path_with_title(app, path, &kind, title)
+fn media_cache_key(jobao_cod: &str, jobinho_cod: &str, media_type: &str) -> String {
+    format!(
+        "{}\u{1f}{}\u{1f}{}",
+        jobao_cod.trim().to_ascii_lowercase(),
+        jobinho_cod.trim().to_ascii_lowercase(),
+        media_type.trim().to_ascii_lowercase()
+    )
 }
 
-fn show_media_window_with_native_fallback(
+fn cache_project_media_paths(app: &AppHandle, project: &OpenedProject) {
+    if let Some(path) = project.mp4_path.as_deref() {
+        cache_video_path(app, &project.jobao_cod, &project.jobinho_cod, "mp4", path);
+    }
+    if let Some(path) = project.mov_path.as_deref() {
+        cache_video_path(app, &project.jobao_cod, &project.jobinho_cod, "mov", path);
+    }
+}
+
+fn cache_video_path(
+    app: &AppHandle,
+    jobao_cod: &str,
+    jobinho_cod: &str,
+    media_type: &str,
+    path: &Path,
+) {
+    if let Ok(mut paths) = app.state::<MediaPathCache>().paths.lock() {
+        paths.insert(
+            media_cache_key(jobao_cod, jobinho_cod, media_type),
+            path.to_path_buf(),
+        );
+    }
+}
+
+fn remove_cached_video_path(app: &AppHandle, jobao_cod: &str, jobinho_cod: &str, media_type: &str) {
+    if let Ok(mut paths) = app.state::<MediaPathCache>().paths.lock() {
+        paths.remove(&media_cache_key(jobao_cod, jobinho_cod, media_type));
+    }
+}
+
+fn cached_video_file(
+    app: &AppHandle,
+    jobao_cod: &str,
+    jobinho_cod: &str,
+    media_type: &str,
+) -> Option<MediaFile> {
+    let path = app
+        .state::<MediaPathCache>()
+        .paths
+        .lock()
+        .ok()?
+        .get(&media_cache_key(jobao_cod, jobinho_cod, media_type))?
+        .clone();
+    Some(MediaFile {
+        title: media_title_from_path(&path),
+        path,
+        kind: "video".to_string(),
+    })
+}
+
+async fn load_media_window_in_background<F>(
     app: AppHandle,
-    media: MediaFile,
-) -> Result<ActionResponse, String> {
-    let fallback_path = media.path.clone();
-    match show_media_window(app, media) {
-        Ok(response) => Ok(response),
-        Err(window_error) => {
-            eprintln!(
-                "Janela interna de midia indisponivel; abrindo {} no sistema: {window_error}",
-                fallback_path.display()
-            );
-            Ok(match arizona::open_start_file(&fallback_path) {
+    media_kind: &str,
+    loading_title: String,
+    operation: F,
+) -> Result<ActionResponse, String>
+where
+    F: FnOnce() -> Result<MediaFile, String> + Send + 'static,
+{
+    let request_id = begin_pending_media_load(&app);
+    let loading_state = SecondaryWindowState {
+        view: "media".to_string(),
+        jobao_cod: None,
+        media_path: None,
+        media_kind: Some(media_kind.to_string()),
+        media_title: Some(loading_title),
+        media_loading: Some(true),
+        media_error: None,
+        product_report: None,
+        admin_auth: None,
+        session_auth: None,
+    };
+    let window_result = show_secondary_window_preserving_media_load(app.clone(), loading_state);
+
+    let result = match tauri::async_runtime::spawn_blocking(operation).await {
+        Ok(result) => result,
+        Err(error) => Err(format!(
+            "Não foi possível preparar esta mídia em segundo plano: {error}"
+        )),
+    };
+
+    if let Err(window_error) = window_result {
+        return Ok(match result {
+            Ok(media) => match arizona::open_start_file(&media.path) {
                 Ok(()) => ActionResponse::ok(),
                 Err(open_error) => ActionResponse::err(format!(
-                    "A midia existe em {}, mas nao foi possivel abrir a janela interna ({window_error}) nem o visualizador do sistema ({open_error}).",
-                    fallback_path.display()
+                    "A mídia foi encontrada, mas não foi possível abrir o visualizador interno ({window_error}) nem o aplicativo padrão do Windows ({open_error})."
                 )),
-            })
+            },
+            Err(media_error) => ActionResponse::err(format!(
+                "Não foi possível abrir o visualizador ({window_error}) nem preparar a mídia ({media_error})."
+            )),
+        });
+    }
+
+    let final_state = match result {
+        Ok(media) => SecondaryWindowState {
+            view: "media".to_string(),
+            jobao_cod: None,
+            media_path: Some(media.path.to_string_lossy().into_owned()),
+            media_kind: Some(media.kind),
+            media_title: Some(media.title),
+            media_loading: Some(false),
+            media_error: None,
+            product_report: None,
+            admin_auth: None,
+            session_auth: None,
+        },
+        Err(message) => SecondaryWindowState {
+            view: "media".to_string(),
+            jobao_cod: None,
+            media_path: None,
+            media_kind: Some(media_kind.to_string()),
+            media_title: Some("Mídia".to_string()),
+            media_loading: Some(false),
+            media_error: Some(message),
+            product_report: None,
+            admin_auth: None,
+            session_auth: None,
+        },
+    };
+
+    let _ = update_pending_media_window(&app, request_id, &final_state)?;
+    Ok(ActionResponse::ok())
+}
+
+fn resolve_video_for_window(
+    app: &AppHandle,
+    jobao_cod: &str,
+    jobinho_cod: &str,
+    media_type: &str,
+) -> Result<MediaFile, String> {
+    if let Some(media) = cached_video_file(app, jobao_cod, jobinho_cod, media_type) {
+        match prepare_media_file_for_window(app, media) {
+            Ok(media) => return Ok(media),
+            Err(_) => remove_cached_video_path(app, jobao_cod, jobinho_cod, media_type),
         }
     }
+
+    let media = arizona_from_app(app)?.video_file(jobao_cod, jobinho_cod, media_type)?;
+    cache_video_path(app, jobao_cod, jobinho_cod, media_type, &media.path);
+    prepare_media_file_for_window(app, media)
+}
+
+fn prepare_media_file_for_window(
+    app: &AppHandle,
+    mut media: MediaFile,
+) -> Result<MediaFile, String> {
+    media.path = prepare_media_asset(app, &media.path)?;
+    Ok(media)
 }
 
 fn show_product_import_report(
@@ -2904,27 +3162,9 @@ fn show_product_import_report(
         media_path: None,
         media_kind: None,
         media_title: None,
+        media_loading: None,
+        media_error: None,
         product_report: Some(report),
-        admin_auth: None,
-        session_auth: None,
-    };
-
-    show_secondary_window(app, state)
-}
-
-fn show_media_path_with_title(
-    app: AppHandle,
-    path: PathBuf,
-    media_kind: &str,
-    title: String,
-) -> Result<ActionResponse, String> {
-    let state = SecondaryWindowState {
-        view: "media".to_string(),
-        jobao_cod: None,
-        media_path: Some(path.to_string_lossy().into_owned()),
-        media_kind: Some(media_kind.to_string()),
-        media_title: Some(title),
-        product_report: None,
         admin_auth: None,
         session_auth: None,
     };
@@ -2961,22 +3201,80 @@ fn is_media_path(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn media_path_is_allowed(app: &AppHandle, path: &Path) -> Result<bool, String> {
-    let candidate = fs::canonicalize(path)
-        .map_err(|error| format!("Não foi possível validar {}: {error}", path.display()))?;
-    let config = settings::load_validated(app)?;
-    let roots = [config.drive, config.produtos_path];
+fn prepare_media_asset(app: &AppHandle, path: &Path) -> Result<PathBuf, String> {
+    let path = validate_configured_media_path(app, path)?;
+    prewarm_media_for_webview(&path)?;
+    if let Err(error) = app.asset_protocol_scope().allow_file(&path) {
+        eprintln!(
+            "Nao foi possivel liberar {} no Asset Protocol: {error}",
+            path.display()
+        );
+        return Err("Não foi possível preparar esta mídia para reprodução.".to_string());
+    }
+    Ok(path)
+}
 
+const MEDIA_PREWARM_CHUNK_BYTES: u64 = 1024 * 1024;
+
+fn prewarm_media_for_webview(path: &Path) -> Result<(), String> {
+    let mut file = fs::File::open(path)
+        .map_err(|_| "Não foi possível acessar esta mídia no Drive.".to_string())?;
+    let len = file
+        .metadata()
+        .map_err(|_| "Não foi possível consultar esta mídia no Drive.".to_string())?
+        .len();
+    if len == 0 {
+        return Err("Esta mídia está vazia ou ainda não terminou de sincronizar.".to_string());
+    }
+
+    let prefix_len = len.min(MEDIA_PREWARM_CHUNK_BYTES) as usize;
+    let mut buffer = vec![0_u8; prefix_len];
+    file.read_exact(&mut buffer)
+        .map_err(|_| "Não foi possível carregar o início desta mídia.".to_string())?;
+
+    if len > MEDIA_PREWARM_CHUNK_BYTES {
+        let tail_len = len.min(MEDIA_PREWARM_CHUNK_BYTES) as usize;
+        file.seek(SeekFrom::Start(len - tail_len as u64))
+            .map_err(|_| "Não foi possível preparar esta mídia.".to_string())?;
+        buffer.resize(tail_len, 0);
+        file.read_exact(&mut buffer)
+            .map_err(|_| "Não foi possível carregar os metadados desta mídia.".to_string())?;
+    }
+
+    Ok(())
+}
+
+fn validate_configured_media_path(app: &AppHandle, path: &Path) -> Result<PathBuf, String> {
+    let config = settings::load_validated(app)?;
+    let roots = [
+        PathBuf::from(config.drive),
+        PathBuf::from(config.produtos_path),
+    ];
+    validate_media_path_against_roots(path, &roots)
+}
+
+fn validate_media_path_against_roots(path: &Path, roots: &[PathBuf]) -> Result<PathBuf, String> {
+    let candidate = fs::canonicalize(path).map_err(|_| "Mídia não encontrada.".to_string())?;
+
+    if !is_media_path(&candidate) {
+        return Err("Tipo de mídia inválido.".to_string());
+    }
+
+    let mut allowed = false;
     for root in roots {
-        let root = PathBuf::from(root);
         let Ok(root) = fs::canonicalize(root) else {
             continue;
         };
         if path_starts_with_windows_case_insensitive(&candidate, &root) {
-            return Ok(true);
+            allowed = true;
+            break;
         }
     }
-    Ok(false)
+    if !allowed {
+        return Err("Mídia fora das pastas configuradas.".to_string());
+    }
+
+    Ok(candidate)
 }
 
 fn path_starts_with_windows_case_insensitive(path: &Path, root: &Path) -> bool {
@@ -2986,6 +3284,137 @@ fn path_starts_with_windows_case_insensitive(path: &Path, root: &Path) -> bool {
         root.pop();
     }
     path == root || path.starts_with(&format!("{root}\\"))
+}
+
+#[cfg(test)]
+mod media_scope_tests {
+    use super::{
+        media_cache_key, path_starts_with_windows_case_insensitive, prewarm_media_for_webview,
+        validate_media_path_against_roots,
+    };
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new(label: &str) -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "arizona-media-scope-{label}-{}-{nonce}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn accepts_media_inside_the_configured_root_with_special_characters() {
+        let temp = TestDirectory::new("allowed");
+        let drive = temp.path().join("Carrefour Drive");
+        let media_folder = drive.join("Vídeos #1");
+        fs::create_dir_all(&media_folder).unwrap();
+        let media = media_folder.join("Oferta 50%.MP4");
+        fs::write(&media, b"test-media").unwrap();
+
+        let validated = validate_media_path_against_roots(&media, &[drive]).unwrap();
+
+        assert_eq!(validated, fs::canonicalize(media).unwrap());
+    }
+
+    #[test]
+    fn rejects_a_sibling_directory_with_a_similar_prefix() {
+        let temp = TestDirectory::new("sibling");
+        let drive = temp.path().join("Drive");
+        let sibling = temp.path().join("Drive antigo");
+        fs::create_dir_all(&drive).unwrap();
+        fs::create_dir_all(&sibling).unwrap();
+        let media = sibling.join("video.mp4");
+        fs::write(&media, b"test-media").unwrap();
+
+        let error = validate_media_path_against_roots(&media, &[drive]).unwrap_err();
+
+        assert_eq!(error, "Mídia fora das pastas configuradas.");
+    }
+
+    #[test]
+    fn rejects_a_non_media_file_inside_the_configured_root() {
+        let temp = TestDirectory::new("extension");
+        let drive = temp.path().join("Drive");
+        fs::create_dir_all(&drive).unwrap();
+        let file = drive.join("video.txt");
+        fs::write(&file, b"not-media").unwrap();
+
+        let error = validate_media_path_against_roots(&file, &[drive]).unwrap_err();
+
+        assert_eq!(error, "Tipo de mídia inválido.");
+    }
+
+    #[test]
+    fn prewarms_a_non_empty_media_file() {
+        let temp = TestDirectory::new("prewarm");
+        let media = temp.path().join("video.mp4");
+        fs::write(&media, vec![7_u8; 1024 * 1024 + 32]).unwrap();
+
+        prewarm_media_for_webview(&media).unwrap();
+    }
+
+    #[test]
+    fn rejects_an_empty_media_file_during_prewarm() {
+        let temp = TestDirectory::new("prewarm-empty");
+        let media = temp.path().join("video.mp4");
+        fs::write(&media, b"").unwrap();
+
+        let error = prewarm_media_for_webview(&media).unwrap_err();
+
+        assert_eq!(
+            error,
+            "Esta mídia está vazia ou ainda não terminou de sincronizar."
+        );
+    }
+
+    #[test]
+    fn windows_path_comparison_is_case_insensitive_and_segment_aware() {
+        let root = Path::new(r"I:\Drives compartilhados\Phx CRF Copa");
+
+        assert!(path_starts_with_windows_case_insensitive(
+            Path::new(r"i:\DRIVES COMPARTILHADOS\PHX CRF COPA\OUT\video.mp4"),
+            root,
+        ));
+        assert!(!path_starts_with_windows_case_insensitive(
+            Path::new(r"I:\Drives compartilhados\Phx CRF Copa antiga\video.mp4"),
+            root,
+        ));
+    }
+
+    #[test]
+    fn media_cache_key_normalizes_codes_and_media_type() {
+        assert_eq!(
+            media_cache_key(" 123 ", " AbC ", " MP4 "),
+            media_cache_key("123", "abc", "mp4")
+        );
+        assert_ne!(
+            media_cache_key("123", "abc", "mp4"),
+            media_cache_key("123", "abc", "mov")
+        );
+    }
 }
 
 #[cfg(windows)]
