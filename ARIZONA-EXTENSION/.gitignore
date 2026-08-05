@@ -9,3 +9,6 @@ yarn-error.log
 
 script.jsx
 ambiente_teste
+
+# Certificado estavel de assinatura do ZXP (.p12 + senha). Material privado.
+certs

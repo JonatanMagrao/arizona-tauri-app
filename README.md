@@ -16,7 +16,7 @@ build e o instalador atuais não compilam, empacotam nem instalam plugin nativo.
 
 Antes de alterar autenticação, licenciamento, Supabase, extensão CEP, secrets,
 tokens ou chaves, leia
-[LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md](./LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md).
+[LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md](./docs/LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md).
 
 Diagnóstico:
 
@@ -47,13 +47,45 @@ Quando um device é liberado, o código de recuperação revoga o device e as
 sessões de licença. A troca é confirmada pelo próprio código, dentro da janela
 de recuperação configurada na licença.
 
-A gestão de licenças, usuários e devices acontece somente no painel Admin web.
-O Arizona App não tem mais janela de Gestão.
+A janela **Gestão** continua disponível no Arizona App para sessões com papel
+`admin`, usando as Functions administrativas do backend. O painel Admin web é o
+fluxo separado para operações da conta master e da organização.
 
 O Tauri é a autoridade da sessão local: access token, refresh token e recibo
 assinado não são entregues ao JavaScript da interface. O recibo offline da
 extensão CEP dura no máximo 15 minutos e é removido quando o backend revoga o
 acesso e o Tauri consegue sincronizar.
+
+Existe uma segunda identidade criptográfica, independente da chave do recibo: o
+certificado que assina o `.zxp` da extensão CEP. A chave do recibo diz se o
+usuário tem licença; o certificado diz quem publicou a extensão. O `.p12` fica
+em `ARIZONA-EXTENSION/certs/` (gitignored, precisa de backup fora do
+repositório) e a impressão digital pública aceita fica em
+`INSTALLER/cep-trusted-cert.json`, versionada. É essa assinatura que dispensa o
+`PlayerDebugMode` nas máquinas dos clientes.
+
+## Instalação da extensão CEP
+
+O instalador Full oficial é `perMachine` e instala a árvore assinada em:
+
+```text
+%CommonProgramW6432%\Adobe\CEP\extensions\com.arizona-carrefour.cep
+```
+
+O staging e os backups transacionais ficam em
+`%CommonProgramW6432%\Adobe\CEP\.arizona-install-work`, fora da pasta
+`extensions`. Os helpers elevados de assets do Full não escrevem no perfil do
+usuário nem alteram HKCU.
+
+A instalação/atualização manual iniciada pelo Tauri é um fluxo separado e
+continua `per-user` em
+`%APPDATA%\Adobe\CEP\extensions\com.arizona-carrefour.cep`. Ambos os fluxos
+extraem o `.zxp` assinado; nenhum distribui a pasta crua de build.
+
+Essa validação cobre a extensão CEP. Ela não substitui a assinatura Authenticode
+do executável/setup nem o smoke test do Full em uma máquina limpa com After
+Effects e `PlayerDebugMode` desligado; esses dois itens precisam de comprovação
+separada antes de declarar o instalador público aprovado.
 
 ## Comandos do dia a dia
 
@@ -80,6 +112,16 @@ npm run dev
 npm run build
 ```
 
+Pacote assinado da extensão (na raiz):
+
+```powershell
+npm run cep:cert   # uma única vez; ver docs/LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md
+npm run cep:zxp
+npm run cep:verify -- dist-cep/arizona-cep-v2.0.0.zxp
+```
+
+O número no nome do `.zxp` acompanha `ARIZONA-EXTENSION/package.json`.
+
 Admin:
 
 ```powershell
@@ -102,12 +144,13 @@ variante `.jsxbin` por acao e embute somente essas variantes no executavel.
 JSXBIN dificulta a leitura casual do codigo distribuido, mas nao deve ser
 tratado como criptografia ou como uma fronteira de seguranca.
 
-## Roadmap
+## Documentação
 
-Melhorias do app Tauri estão em [roadmap.md](./roadmap.md).
+O índice de documentos operacionais e propostas vigentes está em
+[docs/README.md](./docs/README.md).
 
-Documentos de planejamento:
+Revisões em andamento:
 
+- [Visualizador de MP4 e limitação de MOV](./docs/REVISAO_VISUALIZADOR_MP4_MOV.md)
 - [Privacidade, registros operacionais, diagnóstico e feedback](./docs/roadmap-privacidade-telemetria.md)
-- [Arquitetura futura de atualizações independentes do Tauri e CEP](./docs/arquitetura-atualizacoes-independentes-tauri-cep.md)
-- [Impacto de mudanças de backend e necessidade de nova versão](./docs/impacto-mudancas-backend-e-versoes.md)
+- [Atualizações independentes do Tauri e CEP](./docs/arquitetura-atualizacoes-independentes-tauri-cep.md)

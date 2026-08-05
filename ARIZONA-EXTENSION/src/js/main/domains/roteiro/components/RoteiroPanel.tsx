@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useRoteiro } from "../hooks/useRoteiro";
+import { useRoteiro, type RoteiroToast } from "../hooks/useRoteiro";
 import {
   buildLineSegments,
   mapLinesToOffers,
@@ -11,6 +11,33 @@ type OfferStatus = "correct" | "wrong" | "neutral";
 interface RoteiroPanelProps {
   onOpenOfferInOffers?: (offerLayerIndex: number) => void;
 }
+
+interface RoteiroToastMessageProps {
+  toast: RoteiroToast | null;
+  onDismiss: () => void;
+}
+
+const RoteiroToastMessage = ({
+  toast,
+  onDismiss,
+}: RoteiroToastMessageProps) => {
+  if (!toast) return null;
+
+  return (
+    <div className={`roteiro-toast roteiro-toast--${toast.variant}`}>
+      <span className="roteiro-toast__text">{toast.text}</span>
+      <button
+        type="button"
+        className="roteiro-toast__close"
+        onClick={onDismiss}
+        title="Fechar"
+        aria-label="Fechar"
+      >
+        ×
+      </button>
+    </div>
+  );
+};
 
 const formatOfferNumber = (offerIndex: number): string => {
   const number = offerIndex + 1;
@@ -28,7 +55,9 @@ export const RoteiroPanel = ({ onOpenOfferInOffers }: RoteiroPanelProps) => {
     renderQueueLoading,
     offerActionLoading,
     error,
+    canChooseRoteiroFile,
     load,
+    chooseRoteiroFile,
     updateAudio,
     adjustMarkers,
     queueRender,
@@ -54,8 +83,15 @@ export const RoteiroPanel = ({ onOpenOfferInOffers }: RoteiroPanelProps) => {
     return (
       <div className="roteiro-panel roteiro-panel--state">
         <p className="roteiro-panel__error">{error}</p>
-        <button type="button" onClick={() => void load()}>
-          Tentar novamente
+        <button
+          type="button"
+          onClick={() =>
+            canChooseRoteiroFile
+              ? void chooseRoteiroFile()
+              : void load()
+          }
+        >
+          {canChooseRoteiroFile ? "Escolher arquivo" : "Tentar novamente"}
         </button>
       </div>
     );
@@ -247,20 +283,7 @@ export const RoteiroPanel = ({ onOpenOfferInOffers }: RoteiroPanelProps) => {
         {renderQueueLoading ? "..." : "Render"}
       </button>
 
-      {toast && (
-        <div className={`roteiro-toast roteiro-toast--${toast.variant}`}>
-          <span className="roteiro-toast__text">{toast.text}</span>
-          <button
-            type="button"
-            className="roteiro-toast__close"
-            onClick={dismissToast}
-            title="Fechar"
-            aria-label="Fechar"
-          >
-            ×
-          </button>
-        </div>
-      )}
+      <RoteiroToastMessage toast={toast} onDismiss={dismissToast} />
     </div>
   );
 };

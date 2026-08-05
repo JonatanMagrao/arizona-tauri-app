@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "certificateBase64": "AQIDBA==",
+  "cases": [
+    {
+      "id": "canonical",
+      "shouldPass": true,
+      "expectedSha256": "9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a",
+      "xml": "<signatures><Signature xmlns=\"http://www.w3.org/2000/09/xmldsig#\"><KeyInfo><X509Data><X509Certificate>AQIDBA==</X509Certificate></X509Data></KeyInfo></Signature></signatures>"
+    },
+    {
+      "id": "prefixed",
+      "shouldPass": true,
+      "expectedSha256": "9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a",
+      "xml": "<signatures xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\"><ds:Signature><ds:KeyInfo><ds:X509Data><ds:X509Certificate>AQIDBA==</ds:X509Certificate></ds:X509Data></ds:KeyInfo></ds:Signature></signatures>"
+    },
+    {
+      "id": "certificate-attribute",
+      "shouldPass": true,
+      "expectedSha256": "9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a",
+      "xml": "<signatures><Signature xmlns=\"http://www.w3.org/2000/09/xmldsig#\"><KeyInfo><X509Data><X509Certificate Encoding=\"DER\">AQIDBA==</X509Certificate></X509Data></KeyInfo></Signature></signatures>"
+    },
+    {
+      "id": "crlf-base64",
+      "shouldPass": true,
+      "expectedSha256": "9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a",
+      "xml": "<signatures>\r\n  <Signature xmlns=\"http://www.w3.org/2000/09/xmldsig#\">\r\n    <KeyInfo><X509Data><X509Certificate>AQID\r\nBA==</X509Certificate></X509Data></KeyInfo>\r\n  </Signature>\r\n</signatures>"
+    },
+    {
+      "id": "comment-decoy",
+      "shouldPass": false,
+      "expectedSha256": null,
+      "xml": "<signatures><!-- <Signature><KeyInfo><X509Data><X509Certificate>AQIDBA==</X509Certificate></X509Data></KeyInfo></Signature> --></signatures>"
+    },
+    {
+      "id": "two-certificates",
+      "shouldPass": false,
+      "expectedSha256": null,
+      "xml": "<signatures><Signature xmlns=\"http://www.w3.org/2000/09/xmldsig#\"><KeyInfo><X509Data><X509Certificate>AQIDBA==</X509Certificate><X509Certificate>BQYHCA==</X509Certificate></X509Data></KeyInfo></Signature></signatures>"
+    },
+    {
+      "id": "empty-certificate",
+      "shouldPass": false,
+      "expectedSha256": null,
+      "xml": "<signatures><Signature xmlns=\"http://www.w3.org/2000/09/xmldsig#\"><KeyInfo><X509Data><X509Certificate> \r\n </X509Certificate></X509Data></KeyInfo></Signature></signatures>"
+    },
+    {
+      "id": "invalid-base64",
+      "shouldPass": false,
+      "expectedSha256": null,
+      "xml": "<signatures><Signature xmlns=\"http://www.w3.org/2000/09/xmldsig#\"><KeyInfo><X509Data><X509Certificate>not base64 !!!</X509Certificate></X509Data></KeyInfo></Signature></signatures>"
+    },
+    {
+      "id": "not-xml",
+      "shouldPass": false,
+      "expectedSha256": null,
+      "xml": "not XML <X509Certificate>AQIDBA=="
+    },
+    {
+      "id": "certificate-outside-signature-keyinfo-x509data",
+      "shouldPass": false,
+      "expectedSha256": null,
+      "xml": "<signatures><metadata><X509Certificate>AQIDBA==</X509Certificate></metadata><Signature xmlns=\"http://www.w3.org/2000/09/xmldsig#\"><KeyInfo /></Signature></signatures>"
+    },
+    {
+      "id": "outside-decoy-plus-structural-certificate",
+      "shouldPass": false,
+      "expectedSha256": null,
+      "xml": "<signatures><metadata><X509Certificate>BQYHCA==</X509Certificate></metadata><Signature xmlns=\"http://www.w3.org/2000/09/xmldsig#\"><KeyInfo><X509Data><X509Certificate>AQIDBA==</X509Certificate></X509Data></KeyInfo></Signature></signatures>"
+    },
+    {
+      "id": "two-signatures",
+      "shouldPass": false,
+      "expectedSha256": null,
+      "xml": "<signatures><Signature xmlns=\"http://www.w3.org/2000/09/xmldsig#\"><KeyInfo><X509Data><X509Certificate>AQIDBA==</X509Certificate></X509Data></KeyInfo></Signature><Signature xmlns=\"http://www.w3.org/2000/09/xmldsig#\"><SignedInfo /></Signature></signatures>"
+    },
+    {
+      "id": "alternate-keyvalue",
+      "shouldPass": false,
+      "expectedSha256": null,
+      "xml": "<signatures><Signature xmlns=\"http://www.w3.org/2000/09/xmldsig#\"><KeyInfo><X509Data><X509Certificate>AQIDBA==</X509Certificate></X509Data><KeyValue><RSAKeyValue><Modulus>AQIDBA==</Modulus><Exponent>AQAB</Exponent></RSAKeyValue></KeyValue></KeyInfo></Signature></signatures>"
+    },
+    {
+      "id": "wrong-signature-namespace",
+      "shouldPass": false,
+      "expectedSha256": null,
+      "xml": "<signatures><Signature xmlns=\"urn:not-xmldsig\"><KeyInfo><X509Data><X509Certificate>AQIDBA==</X509Certificate></X509Data></KeyInfo></Signature></signatures>"
+    },
+    {
+      "id": "nested-certificate-element",
+      "shouldPass": false,
+      "expectedSha256": null,
+      "xml": "<signatures><Signature xmlns=\"http://www.w3.org/2000/09/xmldsig#\"><KeyInfo><X509Data><X509Certificate><Chunk>AQID</Chunk>BA==</X509Certificate></X509Data></KeyInfo></Signature></signatures>"
+    },
+    {
+      "id": "extra-keyinfo-outside-signature",
+      "shouldPass": false,
+      "expectedSha256": null,
+      "xml": "<signatures xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\"><metadata><ds:KeyInfo /></metadata><ds:Signature><ds:KeyInfo><ds:X509Data><ds:X509Certificate>AQIDBA==</ds:X509Certificate></ds:X509Data></ds:KeyInfo></ds:Signature></signatures>"
+    },
+    {
+      "id": "extra-x509data-outside-signature",
+      "shouldPass": false,
+      "expectedSha256": null,
+      "xml": "<signatures xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\"><metadata><ds:X509Data /></metadata><ds:Signature><ds:KeyInfo><ds:X509Data><ds:X509Certificate>AQIDBA==</ds:X509Certificate></ds:X509Data></ds:KeyInfo></ds:Signature></signatures>"
+    }
+  ]
+}

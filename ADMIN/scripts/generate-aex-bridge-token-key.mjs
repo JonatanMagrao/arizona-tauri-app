@@ -1,8 +1,8 @@
-// Gera um novo par de chaves para o bridgeToken (plugin AEX / atalhos globais).
+﻿// Gera um novo par de chaves para o bridgeToken (plugin AEX / atalhos globais).
 //
-// ATENCAO: isto e uma ROTACAO DE CHAVE. Leia LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md
+// ATENCAO: isto e uma ROTACAO DE CHAVE. Leia docs/LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md
 // antes de rodar. O plugin AEX precisa ser recompilado com a chave publica
-// nova e reinstalado no After Effects — sem isso, os atalhos param.
+// nova e reinstalado no After Effects â€” sem isso, os atalhos param.
 import { generateKeyPairSync } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";

@@ -2,6 +2,7 @@ mod after_effects;
 mod arizona;
 mod auth;
 mod cep_bridge;
+mod cep_manager;
 mod device_identity;
 mod history;
 mod license;
@@ -304,7 +305,12 @@ pub fn run() {
             release_current_device,
             open_author_site,
             load_app_config,
-            save_app_config
+            save_app_config,
+            cep_manager::cep_debug_mode_status,
+            cep_manager::set_cep_debug_mode,
+            cep_manager::cep_extension_status,
+            cep_manager::inspect_cep_zxp,
+            cep_manager::install_cep_zxp
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,7 +1,7 @@
 # Roadmap de privacidade, registros operacionais e diagnóstico
 
 **Status:** planejamento — nenhuma implementação autorizada por este documento  
-**Atualizado em:** 28/07/2026  
+**Atualizado em:** 04/08/2026
 **Escopo:** Arizona App (Tauri), extensão CEP apenas quando relacionada à licença
 e ao diagnóstico, Admin e Supabase de licenciamento
 
@@ -45,8 +45,7 @@ uma instalação e investigar mudanças de acesso:
 - contadores antifraude e de limitação, com identificadores armazenados como
   hashes quando aplicável;
 - ações administrativas como inclusão ou remoção de membro, geração e consumo
-  de código, ativação ou liberação de dispositivo, redefinição de TOTP e
-  redefinição de limites.
+  de código, ativação ou liberação de dispositivo e redefinição de limites.
 
 Essas ações administrativas já são gravadas em `licensing.audit_log`. A tela
 **Logs de atividade** do Admin apenas consulta esses registros e atualmente é
@@ -603,4 +602,4 @@ testes, compatibilidade, implantação gradual e forma de reversão.
 - [ANPD — Guia dos agentes de tratamento](https://www.gov.br/anpd/pt-br/assuntos/noticias/nova-versao-do-guia-dos-agentes-de-tratamento)
 - [ANPD — Relatório de Impacto à Proteção de Dados Pessoais](https://www.gov.br/anpd/pt-br/canais_atendimento/agente-de-tratamento/relatorio-de-impacto-a-protecao-de-dados-pessoais-ripd)
 - [ANPD — Comunicação de incidente de segurança](https://www.gov.br/anpd/pt-br/canais_atendimento/agente-de-tratamento/comunicado-de-incidente-de-seguranca-cis)
-- [Arquitetura de licenciamento](../LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md)
+- [Arquitetura de licenciamento](./LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md)

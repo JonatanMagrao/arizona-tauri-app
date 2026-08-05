@@ -21,8 +21,11 @@ function Invoke-RepoCommand {
 }
 
 Invoke-RepoCommand @("npm", "run", "license:check")
-Invoke-RepoCommand @("npm", "run", "release:cep")
+Invoke-RepoCommand @("npm", "run", "test:cep-signing")
+Invoke-RepoCommand @("npm", "run", "installer:test")
 
+# collect-artifacts builds a fresh signed ZXP before copying it, so every
+# release entry point uses the same non-stale payload path.
 & "$PSScriptRoot\collect-artifacts.ps1" -RepoRoot $repoRoot
 if ($LASTEXITCODE -ne 0) {
   exit $LASTEXITCODE

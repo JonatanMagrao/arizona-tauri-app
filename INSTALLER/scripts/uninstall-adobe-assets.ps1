@@ -3,6 +3,7 @@ param(
   [string]$CepExtensionsRoot = "",
   [string]$LogRoot = "",
   [string]$StatePath = "",
+  [string]$AfterEffectsProcessName = "AfterFX",
   [string[]]$AdobeRoots = @(),
   [switch]$PreflightOnly,
   [switch]$RemoveUserData
@@ -59,7 +60,8 @@ foreach ($installation in @($afterInstallations)) {
 $legacyAexTargets = @($legacyAexTargets | Sort-Object -Unique)
 $presentLegacyAexTargets = @($legacyAexTargets | Where-Object { $null -ne (Get-PathItem $_) })
 
-if ($presentLegacyAexTargets.Count -gt 0 -and (Test-AfterEffectsRunning)) {
+if ($presentLegacyAexTargets.Count -gt 0 -and
+    (Test-AfterEffectsRunning -ProcessName $AfterEffectsProcessName)) {
   Write-InstallerLog "After Effects is running and a legacy Arizona AEX cannot be removed yet." $logRoot
   exit 20
 }
@@ -69,22 +71,44 @@ if ($PreflightOnly) {
 }
 
 if ([string]::IsNullOrWhiteSpace($CepExtensionsRoot)) {
-  if (![string]::IsNullOrWhiteSpace($env:APPDATA)) {
-    $CepExtensionsRoot = Join-Path $env:APPDATA "Adobe\CEP\extensions"
-  }
+  $systemCommonProgramFiles = Get-SystemCommonProgramFiles
+  $CepExtensionsRoot = Join-Path $systemCommonProgramFiles "Adobe\CEP\extensions"
+  $cepRootTrustAnchor = $systemCommonProgramFiles
+} else {
+  $CepExtensionsRoot = Get-FullPath $CepExtensionsRoot
+  $cepRootTrustAnchor = Split-Path -Parent $CepExtensionsRoot
 }
 
 Write-InstallerLog "Removing Arizona CEP extension and any legacy AEX plugin." $logRoot
+
+$defaultCepDestination = Join-Path $CepExtensionsRoot "com.arizona-carrefour.cep"
+$cepExtensionsRootFull = Assert-ArizonaCepPath `
+  -Path $defaultCepDestination `
+  -ExpectedExtensionsRoot $CepExtensionsRoot
+$cepContainerRoot = Split-Path -Parent $cepExtensionsRootFull
+$cepWorkRoot = Join-Path $cepContainerRoot ".arizona-install-work"
+Assert-PathInside -Path $cepWorkRoot -Parent $cepContainerRoot -Label "CEP installer work root"
+Assert-NoIntermediateReparsePoint `
+  -Path $cepExtensionsRootFull `
+  -TrustedRoot $cepRootTrustAnchor `
+  -IncludePath
+Assert-NoIntermediateReparsePoint `
+  -Path $cepWorkRoot `
+  -TrustedRoot $cepRootTrustAnchor `
+  -IncludePath
 
 $cepTargets = @()
 if ($null -ne $state -and $null -ne $state.cep -and ![string]::IsNullOrWhiteSpace([string]$state.cep.path)) {
   $cepTargets += [string]$state.cep.path
 } elseif (![string]::IsNullOrWhiteSpace($CepExtensionsRoot)) {
-  $cepTargets += (Join-Path $CepExtensionsRoot "com.arizona-carrefour.cep")
+  $cepTargets += $defaultCepDestination
 }
 
 foreach ($cepDestination in @($cepTargets | Sort-Object -Unique)) {
   $validatedCepRoot = Assert-ArizonaCepPath -Path $cepDestination -ExpectedExtensionsRoot $CepExtensionsRoot
+  Assert-NoIntermediateReparsePoint `
+    -Path $cepDestination `
+    -TrustedRoot $cepRootTrustAnchor
   $cepWasPresent = $null -ne (Get-PathItem $cepDestination)
   Remove-PathSafe -Path $cepDestination -AllowedParent $validatedCepRoot -Label "Arizona CEP extension"
   if ($cepWasPresent) {
@@ -93,6 +117,36 @@ foreach ($cepDestination in @($cepTargets | Sort-Object -Unique)) {
     Write-InstallerLog "CEP extension was already absent from $cepDestination" $logRoot
   }
 }
+
+# Remove only Arizona-owned transaction artifacts. New installers keep them in
+# the sibling work root; exact legacy names inside `extensions` are cleaned so
+# uninstall cannot leave a second scannable copy behind.
+foreach ($legacyItem in @(Get-ChildItem -LiteralPath $cepExtensionsRootFull -Force -ErrorAction SilentlyContinue |
+    Where-Object {
+      $_.Name -eq "com.arizona-carrefour.cep.bak" -or
+      $_.Name -like "com.arizona-carrefour.cep.bak-*" -or
+      $_.Name -like "com.arizona-carrefour.cep.tmp-*"
+    })) {
+  Remove-PathSafe `
+    -Path $legacyItem.FullName `
+    -AllowedParent $cepExtensionsRootFull `
+    -Label "legacy CEP working directory"
+  Write-InstallerLog "Removed legacy CEP working directory $($legacyItem.FullName)" $logRoot
+}
+
+foreach ($workItem in @(Get-ChildItem -LiteralPath $cepWorkRoot -Force -ErrorAction SilentlyContinue |
+    Where-Object {
+      $_.Name -eq "com.arizona-carrefour.cep.bak" -or
+      $_.Name -like "com.arizona-carrefour.cep.tmp-*" -or
+      $_.Name -like "com.arizona-carrefour.cep.legacy-recovery-*"
+    })) {
+  Remove-PathSafe -Path $workItem.FullName -AllowedParent $cepWorkRoot -Label "CEP installer work item"
+  Write-InstallerLog "Removed CEP installer work item $($workItem.FullName)" $logRoot
+}
+Remove-DirectoryIfEmptySafe `
+  -Path $cepWorkRoot `
+  -AllowedParent $cepContainerRoot `
+  -Label "CEP installer work root" | Out-Null
 
 foreach ($pluginPath in $legacyAexTargets) {
   $pluginDir = Assert-ArizonaAexPath -Path $pluginPath -AdobeRoots $AdobeRoots

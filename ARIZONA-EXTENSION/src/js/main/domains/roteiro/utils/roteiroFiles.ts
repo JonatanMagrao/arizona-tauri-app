@@ -1,5 +1,6 @@
 import { fs, path as nodePath } from "../../../../lib/cep/node";
 import type { RoteiroFile } from "../types";
+import { getRoteiroMatchTokenKey } from "./regionMatching";
 
 const DOCX_EXTENSION = ".docx";
 
@@ -23,8 +24,47 @@ const isFileMatchingProject = (
   fileRegions: string[],
   projectTokens: string[]
 ): boolean => {
-  const projectTokenSet = new Set(projectTokens);
-  return fileRegions.some((region) => projectTokenSet.has(region));
+  const projectTokenSet = new Set(projectTokens.map(getRoteiroMatchTokenKey));
+  return fileRegions.some((region) =>
+    projectTokenSet.has(getRoteiroMatchTokenKey(region))
+  );
+};
+
+const buildRoteiroFile = (
+  name: string,
+  fullPath: string,
+  projectTokens: string[]
+): RoteiroFile => {
+  const regions = parseRegions(name);
+
+  return {
+    name,
+    fullPath,
+    regions,
+    matched: isFileMatchingProject(regions, projectTokens),
+  };
+};
+
+export const getRoteiroFile = (
+  fullPath: string,
+  projectName: string
+): RoteiroFile | null => {
+  try {
+    if (
+      nodePath.extname(fullPath).toLowerCase() !== DOCX_EXTENSION ||
+      !fs.statSync(fullPath).isFile()
+    ) {
+      return null;
+    }
+
+    return buildRoteiroFile(
+      nodePath.basename(fullPath),
+      fullPath,
+      parseProjectTokens(projectName)
+    );
+  } catch {
+    return null;
+  }
 };
 
 export const scanRoteiroDirectory = (
@@ -42,9 +82,7 @@ export const scanRoteiroDirectory = (
     )
     .map((entry) => {
       const fullPath = nodePath.join(directory, entry.name);
-      const regions = parseRegions(entry.name);
-      const matched = isFileMatchingProject(regions, projectTokens);
-      return { name: entry.name, fullPath, regions, matched };
+      return buildRoteiroFile(entry.name, fullPath, projectTokens);
     })
     .sort((a, b) => {
       if (a.matched && !b.matched) return -1;

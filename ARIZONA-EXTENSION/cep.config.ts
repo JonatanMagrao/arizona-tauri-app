@@ -38,6 +38,12 @@ const config: CEP_Config = {
     jsxBin: "replace",
     sourceMap: false,
   },
+  // ATENCAO: este bloco NAO e usado pela distribuicao oficial. O vite-cep-plugin
+  // apaga e regera um certificado autoassinado descartavel a cada "npm run zxp",
+  // entao o pacote sairia com um publicador diferente a cada build.
+  // O .zxp que vai para o cliente e assinado por scripts/package-cep-zxp.mjs
+  // (raiz do repo: npm run cep:zxp) com o certificado ESTAVEL em
+  // ARIZONA-EXTENSION/certs/. Estes campos ficam so para "npm run zxp" local.
   zxp: {
     country: "US",
     province: "CA",

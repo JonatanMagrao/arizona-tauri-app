@@ -1,4 +1,4 @@
-// Health check de paridade do licenciamento da extensao CEP.
+﻿// Health check de paridade do licenciamento da extensao CEP.
 //
 // Confere se todos os lados usam as mesmas chaves:
 // - env local (chave privada) x manifesto de chaves confiaveis
@@ -166,7 +166,7 @@ if (!existsSync(receiptPath)) {
     const trusted = manifestKeys.find((key) => key.kid === header.kid);
 
     if (!trusted) {
-      fail(`recibo assinado com kid "${header.kid}" que NAO esta no manifesto — secrets remotos fora de sincronia.`);
+      fail(`recibo assinado com kid "${header.kid}" que NAO esta no manifesto â€” secrets remotos fora de sincronia.`);
     } else {
       const publicKey = createPublicKey({
         key: {
@@ -195,7 +195,7 @@ if (!existsSync(receiptPath)) {
       if (verifier.verify(publicKey, derSig)) {
         pass(`recibo assinado com kid ${header.kid} e assinatura valida.`);
       } else {
-        fail(`recibo com kid ${header.kid} mas assinatura INVALIDA — chave remota diverge do manifesto.`);
+        fail(`recibo com kid ${header.kid} mas assinatura INVALIDA â€” chave remota diverge do manifesto.`);
       }
 
       const nowSeconds = Math.floor(Date.now() / 1000);
@@ -265,7 +265,7 @@ if (installedLegacyAex.length === 0) {
 
 console.log("");
 if (failures > 0) {
-  console.log(`RESULTADO: ${failures} problema(s) encontrado(s). Veja LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md.`);
+  console.log(`RESULTADO: ${failures} problema(s) encontrado(s). Veja docs/LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md.`);
   process.exit(1);
 }
 console.log("RESULTADO: tudo em paridade.");

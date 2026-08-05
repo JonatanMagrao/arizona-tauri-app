@@ -1,4 +1,4 @@
-import { crypto, fs, os, path } from "../../lib/cep/node";
+import { child_process, crypto, fs, os, path } from "../../lib/cep/node";
 import {
   LICENSE_TRUSTED_KEYS,
   type LicenseTrustedKey,
@@ -12,6 +12,12 @@ const AE_PANEL_FEATURE = "ae_panel";
 const LICENSE_TOKEN_ALGORITHM = "ES256";
 const LICENSE_TOKEN_ISSUER = "arizona-app";
 const LICENSE_TOKEN_AUDIENCE = "arizona-license";
+
+// Contrato compartilhado com src-tauri/src/device_identity.rs: hex minusculo
+// do SHA-256 de "arizona-device-fp:v1:{MachineGuid}".
+const DEVICE_FINGERPRINT_PREFIX = "arizona-device-fp:v1";
+const MACHINE_GUID_REG_QUERY =
+  'reg query "HKLM\\SOFTWARE\\Microsoft\\Cryptography" /v MachineGuid /reg:64';
 
 // Tolerancia para relogio local levemente atrasado em relacao ao servidor:
 // sem isso, um desvio de poucos segundos bloqueia o painel logo apos a
@@ -52,6 +58,7 @@ type ReceiptClaims = {
   exp?: number;
   nbf?: number;
   server_time_at_issue?: string;
+  deviceFingerprintHash?: string;
 };
 
 export type ArizonaLicense = {
@@ -323,6 +330,8 @@ const receiptBlockReason = (
     reason = claims.reason || "not_licensed";
   } else if (!allowedFeatures.includes(AE_PANEL_FEATURE)) {
     reason = "feature_missing";
+  } else if (deviceFingerprintMismatch(claims)) {
+    reason = "receipt_device_mismatch";
   } else {
     const expiresAt = claims.expiresAt || claims.expires_at;
     if (expiresAt && Date.parse(expiresAt) <= Date.now()) {
@@ -331,6 +340,70 @@ const receiptBlockReason = (
   }
 
   return reason;
+};
+
+// Vinculo do recibo com a maquina: quando o recibo carrega o hash do
+// fingerprint (claim aditiva, receiptVersion continua 2), ele precisa bater
+// com o hash calculado localmente. Falha na LEITURA local nunca bloqueia:
+// uma maquina licenciada sempre tem MachineGuid legivel (o Arizona App exigiu
+// isso para licenciar), entao o fail-open so pula a checagem para leitores
+// quebrados, nunca para divergencias reais.
+const deviceFingerprintMismatch = (claims: ReceiptClaims) => {
+  const expected = String(claims.deviceFingerprintHash || "")
+    .trim()
+    .toLowerCase();
+  if (!expected) return false;
+
+  const local = localDeviceFingerprint();
+  if (!local.hash) return false;
+
+  return local.hash !== expected;
+};
+
+type LocalDeviceFingerprint = {
+  hash: string;
+  failure: string;
+};
+
+let localDeviceFingerprintCache: LocalDeviceFingerprint | null = null;
+
+const localDeviceFingerprint = () => {
+  if (!localDeviceFingerprintCache) {
+    localDeviceFingerprintCache = computeLocalDeviceFingerprint();
+  }
+  return localDeviceFingerprintCache;
+};
+
+const computeLocalDeviceFingerprint = (): LocalDeviceFingerprint => {
+  try {
+    if (os.platform() !== "win32") {
+      return { hash: "", failure: "platform_unsupported" };
+    }
+    if (typeof child_process.execSync !== "function") {
+      return { hash: "", failure: "exec_unavailable" };
+    }
+
+    const output = child_process.execSync(MACHINE_GUID_REG_QUERY, {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 5000,
+    });
+    const match = /MachineGuid\s+REG_SZ\s+(\S+)/i.exec(output);
+    const machineGuid = (match?.[1] || "").trim();
+    if (!machineGuid) {
+      return { hash: "", failure: "machine_guid_missing" };
+    }
+
+    const hash = crypto
+      .createHash("sha256")
+      .update(`${DEVICE_FINGERPRINT_PREFIX}:${machineGuid}`)
+      .digest("hex")
+      .toLowerCase();
+    return { hash, failure: "" };
+  } catch (caught) {
+    const message = caught instanceof Error ? caught.message : String(caught);
+    return { hash: "", failure: `machine_guid_read_failed: ${message}` };
+  }
 };
 
 const normalizeFeatures = (claims: ReceiptClaims) => {
@@ -475,6 +548,12 @@ const writeDebugSnapshot = (
       receiptExists:
         typeof fs.existsSync === "function" && fs.existsSync(receiptPath),
       nowSeconds: Math.floor(Date.now() / 1000),
+      localFingerprint: localDeviceFingerprintCache
+        ? {
+            computed: Boolean(localDeviceFingerprintCache.hash),
+            failure: localDeviceFingerprintCache.failure || null,
+          }
+        : null,
     };
     fs.writeFileSync(debugPath, JSON.stringify(snapshot, null, 2), "utf8");
   } catch {

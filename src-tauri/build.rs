@@ -7,6 +7,9 @@ use std::{
 fn main() {
     println!("cargo:rerun-if-changed=src/after_effects/arizona_actions.jsx");
     println!("cargo:rerun-if-changed=../scripts/build-after-effects-jsxbin.mjs");
+    // A pinned certificate that changed without a rebuild would ship a binary
+    // trusting the previous list.
+    println!("cargo:rerun-if-changed=../INSTALLER/cep-trusted-cert.json");
 
     if env::var("PROFILE").as_deref() == Ok("release") {
         build_after_effects_jsxbin();

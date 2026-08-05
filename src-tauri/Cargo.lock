@@ -87,6 +87,7 @@ dependencies = [
 name = "arizona-app"
 version = "2.2.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "keyring",
  "rand 0.9.4",

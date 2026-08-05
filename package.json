@@ -14,15 +14,20 @@
     "tauri:build": "tauri build",
     "cep:dev": "npm --prefix ARIZONA-EXTENSION run dev",
     "cep:build": "npm --prefix ARIZONA-EXTENSION run build",
+    "cep:cert": "node scripts/generate-cep-signing-cert.mjs",
+    "cep:zxp": "node scripts/package-cep-zxp.mjs",
+    "cep:verify": "node scripts/verify-cep-zxp.mjs",
+    "test:cep-signing": "node --test --test-isolation=none scripts/cep-signing.test.mjs",
     "dev:all": "concurrently -k -n tauri,cep -c cyan,magenta \"npm run tauri:dev\" \"npm run cep:dev\"",
     "license:check": "node ADMIN/scripts/check-license-parity.mjs",
-    "release:check": "npm run license:check && powershell -NoProfile -ExecutionPolicy Bypass -File INSTALLER/scripts/verify-release.ps1",
-    "release:cep": "npm --prefix ARIZONA-EXTENSION run build",
-    "release:tauri": "npm run tauri:build",
+    "release:check": "npm run license:check && npm run test:cep-signing && powershell -NoProfile -ExecutionPolicy Bypass -File INSTALLER/scripts/verify-release.ps1",
+    "release:cep": "npm run cep:zxp",
+    "release:tauri": "npm run release:all",
     "release:collect": "powershell -NoProfile -ExecutionPolicy Bypass -File INSTALLER/scripts/collect-artifacts.ps1",
     "installer:test": "powershell -NoProfile -ExecutionPolicy Bypass -File INSTALLER/tests/run.ps1",
     "release:installer": "npm run release:check && npm run installer:test && npm run release:collect && powershell -NoProfile -ExecutionPolicy Bypass -File INSTALLER/scripts/verify-release.ps1 -RequirePayload && npm run tauri:build",
-    "release:all": "powershell -NoProfile -ExecutionPolicy Bypass -File INSTALLER/scripts/build-release.ps1"
+    "release:all": "powershell -NoProfile -ExecutionPolicy Bypass -File INSTALLER/scripts/build-release.ps1",
+    "release:verify-public": "npm run release:all && powershell -NoProfile -ExecutionPolicy Bypass -File INSTALLER/scripts/verify-release.ps1 -RequirePayload -RequireSignedTauri"
   },
   "dependencies": {
     "@tauri-apps/api": "2.8.0",
@@ -34,8 +39,12 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2",
     "@vitejs/plugin-react": "^4.6.0",
+    "asn1js": "^3.0.10",
     "concurrently": "^10.0.3",
+    "fflate": "^0.8.3",
     "jsxbin": "^2.3.0",
+    "pkijs": "^3.4.0",
+    "saxes": "^6.0.0",
     "vite": "^7.0.4"
   }
 }

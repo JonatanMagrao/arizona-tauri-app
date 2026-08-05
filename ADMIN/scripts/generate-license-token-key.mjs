@@ -1,6 +1,6 @@
-// Gera um novo par de chaves para o cepLicenseReceipt (extensao CEP).
+﻿// Gera um novo par de chaves para o cepLicenseReceipt (extensao CEP).
 //
-// ATENCAO: isto e uma ROTACAO DE CHAVE. Leia LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md
+// ATENCAO: isto e uma ROTACAO DE CHAVE. Leia docs/LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md
 // antes de rodar. O script:
 // - se recusa a sobrescrever a chave privada existente sem --force;
 // - com --force, salva backup datado do env anterior;

@@ -28,6 +28,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
 rand = "0.9"
 regex = "1"
+base64 = "0.22"
 sha2 = "0.10"
 roxmltree = "0.20"
 rusqlite = { version = "0.32", features = ["bundled"] }

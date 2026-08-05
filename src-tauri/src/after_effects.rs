@@ -252,7 +252,7 @@ fn version_sort_key(version: &str) -> Vec<u32> {
         .collect()
 }
 
-fn is_after_effects_running() -> Result<bool, String> {
+pub(crate) fn is_after_effects_running() -> Result<bool, String> {
     let mut command = Command::new("tasklist.exe");
     command.args(["/FI", "IMAGENAME eq AfterFX.exe", "/FO", "CSV", "/NH"]);
     #[cfg(windows)]

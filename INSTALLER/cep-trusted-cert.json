@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "certificates": [
+    {
+      "id": "v1",
+      "sha256": "64fc86ad828a9a6bb8554bbe164f2584cdac03ee88db82dc29ec3916749c9713",
+      "commonName": "Arizona Carrefour",
+      "notAfter": "2046-07-29T22:07:14.000Z",
+      "addedAt": "2026-08-03"
+    }
+  ]
+}

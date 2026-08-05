@@ -1,5 +1,6 @@
 import { fs, path as nodePath } from "../../../../lib/cep/node";
 import { parseProjectTokens, parseRegions } from "./roteiroFiles";
+import { getRoteiroMatchTokenKey } from "./regionMatching";
 
 export interface AudioFile {
   name: string;
@@ -20,7 +21,8 @@ const normalizeMatchTokens = (tokens: string[]): string[] =>
 const getTokenOrder = (tokens: string[]): Map<string, number> => {
   const order = new Map<string, number>();
   tokens.forEach((token, index) => {
-    if (!order.has(token)) order.set(token, index);
+    const matchKey = getRoteiroMatchTokenKey(token);
+    if (!order.has(matchKey)) order.set(matchKey, index);
   });
   return order;
 };
@@ -34,14 +36,14 @@ const getAudioMatchInfo = (
   const secondaryOrder = getTokenOrder(secondaryTokens);
 
   for (const token of audioTokens) {
-    const order = primaryOrder.get(token);
+    const order = primaryOrder.get(getRoteiroMatchTokenKey(token));
     if (order !== undefined) {
       return { matchOrder: order, matchScore: 2 };
     }
   }
 
   for (const token of audioTokens) {
-    const order = secondaryOrder.get(token);
+    const order = secondaryOrder.get(getRoteiroMatchTokenKey(token));
     if (order !== undefined) {
       return { matchOrder: order, matchScore: 1 };
     }
@@ -57,9 +59,9 @@ export const scanAudioDirectory = (
 ): AudioFile[] => {
   const projectTokens = normalizeMatchTokens(parseProjectTokens(projectName));
   const roteiroTokens = normalizeMatchTokens(matchTokens);
-  const projectTokenSet = new Set(projectTokens);
+  const projectTokenSet = new Set(projectTokens.map(getRoteiroMatchTokenKey));
   const exactRoteiroTokens = roteiroTokens.filter((token) =>
-    projectTokenSet.has(token)
+    projectTokenSet.has(getRoteiroMatchTokenKey(token))
   );
   const primaryTokens =
     exactRoteiroTokens.length > 0
@@ -69,7 +71,9 @@ export const scanAudioDirectory = (
         : projectTokens;
   const secondaryTokens =
     exactRoteiroTokens.length > 0
-      ? roteiroTokens.filter((token) => !projectTokenSet.has(token))
+      ? roteiroTokens.filter(
+          (token) => !projectTokenSet.has(getRoteiroMatchTokenKey(token))
+        )
       : [];
 
   return (fs.readdirSync(directory, { withFileTypes: true }) as unknown as Array<{ name: string; isFile(): boolean }>)

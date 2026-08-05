@@ -377,6 +377,7 @@ Deno.serve(async (req) => {
       issuedAt: session.issued_at,
       expiresAt: session.expires_at,
       serverTimeAtIssue: session.server_time_at_issue,
+      deviceFingerprintHash: incomingFingerprint,
     });
 
     return jsonResponse({

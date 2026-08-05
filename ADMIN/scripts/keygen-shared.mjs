@@ -1,6 +1,6 @@
-// Utilitarios compartilhados pelos keygens de licenca e do bridge AEX.
+﻿// Utilitarios compartilhados pelos keygens de licenca e do bridge AEX.
 //
-// Regras de seguranca (ver LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md):
+// Regras de seguranca (ver docs/LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md):
 // - Nunca sobrescrever uma chave privada existente sem --force.
 // - Com --force, o arquivo de env anterior e salvo em backup datado antes
 //   de qualquer escrita, para a chave antiga nunca se perder.
@@ -41,7 +41,7 @@ export function guardPrivateKeyOverwrite(envPath, privateKeyEnvName, force) {
   if (!force) {
     console.error(`ERRO: ${envPath} ja contem ${privateKeyEnvName}.`);
     console.error("Gerar uma chave nova sem rotacao planejada BLOQUEIA todos os usuarios validos.");
-    console.error("Leia LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md. Se a rotacao for intencional, rode novamente com --force.");
+    console.error("Leia docs/LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md. Se a rotacao for intencional, rode novamente com --force.");
     process.exit(1);
   }
 

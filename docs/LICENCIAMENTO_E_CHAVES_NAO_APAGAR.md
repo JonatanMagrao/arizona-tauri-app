@@ -60,6 +60,189 @@ editada manualmente para trocar chave:
 A rotação é gradual: adicione a chave nova sem remover a antiga, distribua a
 extensão, troque os secrets do backend e só então remova a antiga.
 
+## Assinatura da extensão CEP (.zxp)
+
+Essa é uma identidade criptográfica **diferente** da chave do recibo. A chave do
+recibo diz *se o usuário tem licença*. O certificado de assinatura diz *quem
+publicou a extensão*. As duas precisam ser preservadas, e por motivos distintos.
+
+O fluxo antigo copiava a pasta compilada `ARIZONA-EXTENSION/dist/cep` — saída de
+build **sem assinatura** — para `%APPDATA%\Adobe\CEP\extensions`. Uma árvore sem
+assinatura só carrega com o `PlayerDebugMode` ligado; esse fluxo não faz mais
+parte do instalador oficial.
+
+Agora a extensão é distribuída como `.zxp` assinado. O instalador extrai o
+pacote inteiro na pasta de extensões e o CEP confere a assinatura **da pasta
+instalada** no momento de carregar. A árvore extraída precisa ser idêntica, byte
+a byte, ao conteúdo do `.zxp` — inclusive `META-INF/signatures.xml`, `mimetype`
+e `.debug`.
+
+### Material privado crítico
+
+```text
+ARIZONA-EXTENSION/certs/arizona-cep-signing.p12
+ARIZONA-EXTENSION/certs/cep-signing.json
+```
+
+Os dois **precisam estar gitignored** e **estão no mesmo patamar da chave
+privada de licença**. O `.p12` é a identidade de publicador da Arizona. O
+`cep-signing.json` guarda o caminho e a **senha do `.p12` em texto claro** — ele
+não é menos sensível que o certificado, é a outra metade dele. Confira antes de
+qualquer commit:
+
+```powershell
+git check-ignore -v ARIZONA-EXTENSION/certs/arizona-cep-signing.p12 ARIZONA-EXTENSION/certs/cep-signing.json
+```
+
+Os dois caminhos precisam aparecer na saída. Se `cep-signing.json` não aparecer,
+**pare e corrija o `.gitignore` antes de commitar** (`*.p12` cobre o
+certificado, mas não cobre o json).
+
+Formato do `cep-signing.json`:
+
+```json
+{
+  "p12Path": "<absoluto ou relativo ao repositório>",
+  "password": "<gerada>",
+  "commonName": "...",
+  "createdAt": "<ISO>"
+}
+```
+
+Faça backup dos dois **fora do repositório**. Perder o `.p12` não é uma
+inconveniência de build: todo build seguinte sairia com outra identidade de
+publicador, e os instaladores já distribuídos — que confiam na impressão digital
+antiga — recusariam o `.zxp` novo. Voltar a instalar exigiria acrescentar a
+impressão digital nova a `INSTALLER/cep-trusted-cert.json`, gerar um build novo
+do app e distribuir esse instalador para toda a frota **antes** de qualquer
+`.zxp` assinado pelo certificado novo poder ser instalado.
+
+Em CI, `CEP_SIGNING_P12` e `CEP_SIGNING_PASSWORD` têm precedência sobre o json.
+
+### Manifesto público dos certificados aceitos
+
+```text
+INSTALLER/cep-trusted-cert.json
+```
+
+Versionado no Git e com **apenas material público** — o mesmo papel que
+`ADMIN/supabase/license-trusted-keys.json` cumpre para as chaves do recibo:
+
+```json
+{
+  "schemaVersion": 1,
+  "certificates": [
+    {
+      "id": "v1",
+      "sha256": "<hex minúsculo do certificado DER>",
+      "commonName": "...",
+      "notAfter": "...",
+      "addedAt": "..."
+    }
+  ]
+}
+```
+
+É uma **lista** de propósito. A rotação é aditiva, igual à das chaves do recibo:
+acrescente o certificado novo sem remover o antigo, distribua o app que confia
+nos dois, só então volte a assinar com o novo e remova o antigo quando não
+sobrar instalador antigo em campo. Remover primeiro deixa sem caminho de
+atualização toda instalação já feita.
+
+Duas propriedades desse manifesto explicam por que ele não pode ser apagado nem
+esvaziado:
+
+- ele é embutido no binário em tempo de compilação
+  (`include_str!("../../INSTALLER/cep-trusted-cert.json")` em
+  `src-tauri/src/cep_manager.rs`). Ninguém amplia a confiança editando um
+  arquivo na máquina do cliente, e **mudar a lista exige um build novo do app**;
+- ele **falha fechado**. Manifesto ausente é erro de compilação; manifesto
+  inválido ou com a lista vazia resulta em zero impressões digitais confiáveis,
+  e aí nenhum `.zxp` instala. Um `.zxp` sem assinatura é recusado exatamente
+  como um assinado por outra pessoa.
+
+O `notAfter` do manifesto é informativo, mas o prazo é real. O empacotador exige
+TSA por padrão, normaliza somente o whitespace que o `ZXPSignCmd` insere dentro
+de `SignatureValue` e depois valida o carimbo RFC 3161 sobre o XML canônico
+final. O gate confere a assinatura CMS, a cadeia e o EKU do TSA, o `genTime` e o
+`messageImprint`; não aceita apenas a presença de um bloco de timestamp. Não
+use `--allow-skip-tsa` em um release publicável.
+
+O mesmo `genTime` ancora a validade do certificado de assinatura da Arizona:
+o Node exige que ele estivesse entre o `notBefore` e o `notAfter` do certificado
+quando o TSA emitiu o token. Validar somente a cadeia e a validade do
+certificado do TSA deixaria essa prova incompleta.
+
+O `ZXPSignCmd` 4.1.3 ainda imprime `Invalid timestamp` para esse formato mesmo
+quando o token RFC 3161 e seu `messageImprint` validam criptograficamente. Por
+isso o pipeline usa o verificador próprio para o timestamp e continua usando o
+`ZXPSignCmd -verify` para a assinatura Adobe do conteúdo. O certificado atual
+também permanece válido até 2046; não trate a mensagem textual da ferramenta
+como prova isolada de validade ou invalidade.
+
+### Definição da impressão digital
+
+Uma definição só, usada por Node, PowerShell e Rust: **SHA-256 em hex minúsculo
+sobre os bytes DER crus do certificado X.509 de assinatura**. O documento XML
+precisa conter exatamente uma `Signature`, um `KeyInfo`, um `X509Data` e um
+`X509Certificate`; o certificado fica no caminho direto
+`Signature > KeyInfo > X509Data > X509Certificate`, todos no namespace XMLDSig.
+`KeyInfo` e `X509Data` não podem conter material de chave alternativo nem existir
+como elementos-isca em outro ponto do documento.
+Comentários, certificados-isca, namespaces errados, múltiplas assinaturas e
+qualquer estrutura ambígua são recusados.
+
+### O que o pin prova e o que não prova
+
+**O pin é uma checagem de identidade, não uma verificação de assinatura.** Por
+isso ele nunca é usado sozinho: app e instalador também verificam a XMLDSig com
+a chave do certificado pinado e comparam os digests SHA-256 de todos os arquivos
+da árvore; o CEP da Adobe repete a verificação ao carregar. O pipeline de
+release ainda valida o timestamp RFC 3161. Antes de trocar a instalação, o fluxo
+`per-user` do Tauri desliga `PlayerDebugMode` para que um ajuste legado não
+elimine a última barreira do CEP. O helper elevado do instalador Full não toca
+em HKCU; ligar esse modo continua sendo uma exceção explícita de
+desenvolvimento/suporte que relaxa essa barreira externa.
+
+Quando a checagem de identidade falha, tanto a inspeção quanto a instalação
+devolvem (convenção `code: message` já usada por `src-tauri/src/cep_manager.rs`):
+
+```text
+cep_zxp_untrusted -> "Este .zxp não foi assinado pelo certificado da Arizona."
+```
+
+### `.debug` não pode ser removido do pacote
+
+`.debug` está **dentro do manifesto de assinatura** do `.zxp`, junto com
+`mimetype` e `META-INF/signatures.xml`. Apagá-lo depois de assinar quebra a
+verificação da Adobe: a extensão volta a exigir `PlayerDebugMode` ou
+simplesmente não carrega. Por isso o pipeline de release não remove mais
+`.debug`, e a verificação de release não pode mais falhar por encontrá-lo.
+
+Pela mesma razão o instalador **não copia mais uma pasta de build**: ele extrai
+o `.zxp` assinado. Copiar arquivos soltos volta a produzir uma árvore que não
+corresponde à assinatura.
+
+### Comandos
+
+```text
+npm run cep:cert           (uma vez; perigoso — recusa sem --force)
+npm run cep:zxp            (gera o .zxp assinado em dist-cep/)
+npm run cep:verify -- <zxp> (valida pin, assinatura Adobe e timestamp RFC 3161)
+npm run release:installer  (agora produz um payload CEP assinado)
+npm run installer:test
+```
+
+A coleta escolhe o `.zxp` somente pela versão de
+`ARIZONA-EXTENSION/package.json`; a versão do app não é fallback para o nome do
+artefato CEP. Sem `-ZxpPath`, a própria coleta gera um pacote novo antes de
+copiá-lo para o payload.
+
+`npm run cep:cert` cria a identidade de publicador. Rodar de novo por engano
+troca o certificado de todos os builds futuros e invalida a impressão digital
+fixada nos instaladores em campo; por isso ele se recusa a sobrescrever um
+`.p12` existente sem `--force`, exatamente como os keygens de licença.
+
 ## Arquivos e segredos que não podem ser apagados
 
 ### Backend / Supabase
@@ -95,18 +278,61 @@ ADMIN/supabase/aex-bridge-token-public-key.v1.json   (legado; não apagar)
 Os keygens se recusam a sobrescrever o env sem `--force` e criam backup datado
 antes de escrever. Esses backups podem ser a única cópia da chave anterior.
 
+### Assinatura do .zxp da extensão CEP
+
+Arquivos privados locais, que precisam estar gitignored — **faça backup fora do
+repositório**:
+
+```text
+ARIZONA-EXTENSION/certs/arizona-cep-signing.p12
+ARIZONA-EXTENSION/certs/cep-signing.json   (contém a senha do .p12)
+```
+
+Manifesto público versionado:
+
+```text
+INSTALLER/cep-trusted-cert.json
+```
+
+Perder o `.p12` troca a identidade de publicador de todos os builds futuros e os
+instaladores em campo passam a recusar o `.zxp` novo. Apagar uma entrada do
+manifesto antes de a frota inteira estar em um app que confia no certificado
+novo tem o mesmo efeito prático. Ver "Assinatura da extensão CEP (.zxp)".
+
 ## Instalação local do CEP
 
-Produção:
+Instalador Full oficial (`perMachine`, com preferência por
+`CommonProgramW6432` para não cair em `Program Files (x86)`):
+
+```text
+%CommonProgramW6432%\Adobe\CEP\extensions\com.arizona-carrefour.cep
+```
+
+Staging e backups do Full ficam em
+`%CommonProgramW6432%\Adobe\CEP\.arizona-install-work`, fora de
+`extensions`. O helper elevado não escreve em `%APPDATA%` nem altera HKCU.
+
+O atualizador independente do CEP executado pelo Tauri continua per-user em:
 
 ```text
 C:\Users\<usuario>\AppData\Roaming\Adobe\CEP\extensions\com.arizona-carrefour.cep
 ```
 
-O instalador copia a pasta compilada para o perfil do usuário. Em
-desenvolvimento, o build da extensão pode criar uma junction desse caminho para
-`ARIZONA-EXTENSION\dist\cep`. A desinstalação remove apenas a junction, nunca o
-conteúdo do alvo.
+O work root desse fluxo também é irmão de `extensions`, em
+`%APPDATA%\Adobe\CEP\.arizona-install-work`; staging e backup nunca ficam em
+uma pasta que o CEP possa carregar como outra cópia do bundle.
+
+Ambos extraem o `.zxp` assinado; nenhum copia a pasta de build (ver "Assinatura
+da extensão CEP (.zxp)"). Em desenvolvimento, o build da extensão pode criar
+uma junction do caminho per-user para
+`ARIZONA-EXTENSION\dist\cep` — essa árvore de desenvolvimento não é assinada e
+continua exigindo `PlayerDebugMode`. A desinstalação remove apenas a junction,
+nunca o conteúdo do alvo.
+
+A assinatura ZXP não assina o Arizona App nem o setup. Authenticode continua
+uma etapa externa e ainda precisa retornar `Valid` para os dois artefatos. O
+smoke test do Full em máquina limpa, com `PlayerDebugMode` ausente, também é uma
+validação separada e não foi substituído pelos testes criptográficos.
 
 ## Fluxo da extensão CEP
 
@@ -231,12 +457,11 @@ cadastra nada e a v2.1.1 — a única que cadastrava o fator TOTP sozinha, contr
 o GoTrue — está bloqueada na validação. Desligar é opcional e apenas remove um
 resíduo cosmético.
 
-A ação **Resetar TOTP** e a Function `master-reset-member-totp` foram removidas
-do painel, do projeto Supabase e do repositório em 03/08/2026, junto com
-`admin-add-member`, `admin-list-members` e o compartilhado
-`_shared/mfa-recovery.ts`: não sobrou nenhum encanamento de TOTP no produto.
-A administração acontece somente no painel Admin web — a Gestão do Tauri foi
-removida e essa capacidade nunca existiu dentro do app.
+A ação **Resetar TOTP**, a Function `master-reset-member-totp` e o compartilhado
+`_shared/mfa-recovery.ts` foram removidos em 03/08/2026: não sobrou nenhum
+encanamento de TOTP no produto. `admin-add-member` e `admin-list-members`
+continuam ativos, assim como a janela **Gestão** do Tauri para sessões com papel
+`admin`. O painel Admin web permanece como fluxo separado para a conta master.
 
 O mesmo painel oferece ao master **Zerar tempos** por usuário. Essa ação remove
 somente os eventos de rate limit atribuíveis ao ID, e-mail e identidade de ator
@@ -326,7 +551,12 @@ Não rode sem rotação planejada:
 ```text
 npm run license:keygen:env   (ADMIN/)
 npm run bridge:keygen:env    (ADMIN/, legado)
+npm run cep:cert             (raiz; identidade de publicador do .zxp)
 ```
+
+`npm run cep:cert` é de uso único. Ele se recusa a sobrescrever um `.p12`
+existente sem `--force`, e rodá-lo com `--force` sem uma rotação planejada
+invalida a impressão digital fixada em todos os instaladores já distribuídos.
 
 Tenha cuidado extremo com:
 
@@ -348,12 +578,45 @@ Antes de enviar secrets, rode `npm run license:check`.
 7. Rodar `npm run license:check` até tudo passar.
 8. Remover a chave antiga apenas quando todas as máquinas aceitarem a nova.
 
+## Rotação correta do certificado do .zxp
+
+A ordem é o inverso da intuição: **o app precisa confiar no certificado novo
+antes de o certificado novo assinar qualquer coisa.**
+
+1. Decidir explicitamente a rotação.
+2. Gerar o certificado novo (`npm run cep:cert -- --force`) preservando o `.p12`
+   antigo em backup fora do repositório.
+3. **Adicionar** a entrada nova a `INSTALLER/cep-trusted-cert.json` sem remover
+   a antiga.
+4. Gerar e distribuir o instalador do app que confia nos dois.
+5. Só então voltar a assinar (`npm run cep:zxp`, `npm run release:installer`)
+   com o certificado novo.
+6. Remover a entrada antiga do manifesto apenas quando não sobrar instalador
+   antigo em campo.
+
+Pular a etapa 4 é o erro caro: um `.zxp` assinado pelo certificado novo é
+recusado com `cep_zxp_untrusted` por toda instalação que ainda fixa somente o
+antigo.
+
 ## Checklist
 
 - Li este arquivo.
 - Rodei `npm run license:check`.
 - Confirmei a extensão CEP instalada.
 - Não vou rodar keygen sem rotação planejada.
+- Não vou rodar `npm run cep:cert` de novo: o `.p12` de assinatura já existe e
+  trocá-lo invalida a impressão digital fixada nos instaladores em campo.
+- Tenho backup de `ARIZONA-EXTENSION/certs/arizona-cep-signing.p12` e de
+  `ARIZONA-EXTENSION/certs/cep-signing.json` fora do repositório.
+- Rodei `git check-ignore -v` nos dois e confirmei que nenhum deles vai para o
+  commit — o json carrega a senha do `.p12`.
+- Não vou apagar `INSTALLER/cep-trusted-cert.json` nem remover uma entrada dele
+  antes de a frota inteira aceitar o certificado novo.
+- Sei que `.debug` faz parte do pacote assinado e não pode ser removido da
+  árvore empacotada.
+- Sei que o pin do certificado é checagem de identidade; app e instalador
+  verificam a XMLDSig e os digests antes da troca, e o CEP repete a verificação
+  no carregamento.
 - Sei que os atalhos atuais usam JSX embutido, não AEX.
 - Não vou apagar chaves legadas enquanto a compatibilidade não for encerrada.
 - Sei que desligar o MFA do Supabase Auth é opcional desde 03/08/2026: nada

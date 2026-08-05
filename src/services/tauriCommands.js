@@ -8,6 +8,8 @@ export const commandNames = Object.freeze({
   authPoll: "auth_poll",
   authResume: "auth_resume",
   cepBridgeStatus: "cep_bridge_status",
+  cepDebugModeStatus: "cep_debug_mode_status",
+  cepExtensionStatus: "cep_extension_status",
   clearSecureAuth: "clear_secure_auth",
   duplicateIdenticalMp4: "duplicate_identical_mp4",
   exportIdenticalMp4NamesJson: "export_identical_mp4_names_json",
@@ -30,6 +32,8 @@ export const commandNames = Object.freeze({
   historyRevealMedia: "history_reveal_media",
   importProducts: "import_products",
   importIdenticalMp4NamesJson: "import_identical_mp4_names_json",
+  inspectCepZxp: "inspect_cep_zxp",
+  installCepZxp: "install_cep_zxp",
   listIdenticalMp4Items: "list_identical_mp4_items",
   listInstalledAfterEffectsVersions: "list_installed_after_effects_versions",
   loadAppConfig: "load_app_config",
@@ -60,6 +64,7 @@ export const commandNames = Object.freeze({
   releaseCurrentDevice: "release_current_device",
   saveAppConfig: "save_app_config",
   setAfterShortcutRecording: "set_after_shortcut_recording",
+  setCepDebugMode: "set_cep_debug_mode",
   updateIdenticalMp4NamesJson: "update_identical_mp4_names_json",
 });
 

@@ -47,6 +47,7 @@ export type LicenseTokenPayload = {
   issuedAt: string;
   expiresAt: string;
   serverTimeAtIssue: string;
+  deviceFingerprintHash?: string;
 };
 
 export type AexBridgeTokenPayload = {
@@ -87,7 +88,7 @@ export async function signLicenseToken(payload: LicenseTokenPayload): Promise<st
   const now = numericDate(payload.issuedAt);
   const expiresAt = numericDate(payload.expiresAt);
 
-  const claims = {
+  const claims: Record<string, unknown> = {
     iss: "arizona-app",
     aud: "arizona-license",
     jti: payload.tokenId,
@@ -105,6 +106,12 @@ export async function signLicenseToken(payload: LicenseTokenPayload): Promise<st
     exp: expiresAt,
     server_time_at_issue: payload.serverTimeAtIssue,
   };
+
+  // Vinculo do recibo com a maquina (aditivo: receiptVersion continua 2 e
+  // extensoes ja publicadas ignoram claims desconhecidas).
+  if (payload.deviceFingerprintHash) {
+    claims.deviceFingerprintHash = payload.deviceFingerprintHash;
+  }
 
   return signJwt(
     await signingKey("LICENSE_TOKEN_PRIVATE_KEY_PKCS8_B64", "missing_license_token_private_key"),

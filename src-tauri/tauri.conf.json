@@ -68,7 +68,8 @@
     ],
     "resources": {
       "../INSTALLER/scripts": "installer/scripts",
-      "../INSTALLER/payload": "installer/payload"
+      "../INSTALLER/payload": "installer/payload",
+      "../INSTALLER/cep-trusted-cert.json": "installer/cep-trusted-cert.json"
     },
     "windows": {
       "allowDowngrades": false,

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { fs } from "../../../../lib/cep/node";
 import { getMessage } from "../../../utils/errors";
+import { chooseRoteiroFile as openRoteiroFileDialog } from "../services/roteiroFileDialog";
 import { loadProjectRoteiroInfo } from "../services/roteiroService";
 import {
   loadOffersFirstProductInfo,
@@ -17,13 +18,18 @@ import {
   openTimelineCompPreview,
 } from "../services/markerService";
 import { queueActiveCompRenderOutputs } from "../services/renderService";
-import { isNodeAvailable, scanRoteiroDirectory } from "../utils/roteiroFiles";
+import {
+  getRoteiroFile,
+  isNodeAvailable,
+  scanRoteiroDirectory,
+} from "../utils/roteiroFiles";
 import { scanAudioDirectory } from "../utils/audioFiles";
 import { readDocxText } from "../utils/docxReader";
 import type {
   OfferValidationFieldKey,
   OfferValidationFieldRef,
   OfferValidationInfo,
+  RoteiroFile,
 } from "../types";
 
 export interface RoteiroToast {
@@ -45,7 +51,46 @@ interface LoadedRoteiroData {
   audioContext: RoteiroAudioContext;
 }
 
+interface RoteiroSelectionContext {
+  roteiroDirectory: string;
+  projectName: string;
+}
+
+interface RequestedRoteiroFile {
+  fullPath: string;
+  expectedContext: RoteiroSelectionContext;
+}
+
+class RoteiroSelectionRequiredError extends Error {
+  constructor(
+    readonly context: RoteiroSelectionContext,
+    message =
+      "Não encontramos automaticamente o roteiro deste projeto. Escolha o arquivo .docx para continuar."
+  ) {
+    super(message);
+    this.name = "RoteiroSelectionRequiredError";
+  }
+}
+
 const normPath = (p: string) => p.replace(/\\/g, "/").toLowerCase();
+
+const manualRoteiroSelections = new Map<string, string>();
+
+const getSelectionKey = (context: RoteiroSelectionContext): string =>
+  `${normPath(context.roteiroDirectory)}::${context.projectName.toLowerCase()}`;
+
+const readRoteiroTarget = (
+  target: RoteiroFile | null | undefined
+): { target: RoteiroFile; content: string } | null => {
+  if (!target) return null;
+
+  try {
+    const content = readDocxText(target.fullPath);
+    return content.trim() ? { target, content } : null;
+  } catch {
+    return null;
+  }
+};
 
 const deriveAudioBounceDir = (roteiroDirectory: string): string =>
   roteiroDirectory
@@ -74,6 +119,8 @@ export const useRoteiro = () => {
   const [offerActionLoading, setOfferActionLoading] = useState(false);
   const [error, setError] = useState("");
   const [toast, setToast] = useState<RoteiroToast | null>(null);
+  const [selectionContext, setSelectionContext] =
+    useState<RoteiroSelectionContext | null>(null);
   const [audioContext, setAudioContext] = useState<RoteiroAudioContext | null>(
     null
   );
@@ -185,43 +232,115 @@ export const useRoteiro = () => {
     }
   };
 
-  const readCurrentRoteiroData = useCallback(async (): Promise<LoadedRoteiroData> => {
-    const [{ roteiroDirectory, projectName }, offerInfos] =
-      await Promise.all([
-        loadProjectRoteiroInfo(),
-        loadOffersFirstProductInfo(),
-      ]);
+  const readCurrentRoteiroData = useCallback(
+    async (selectedFile?: RequestedRoteiroFile): Promise<LoadedRoteiroData> => {
+      const [{ roteiroDirectory, projectName }, offerInfos] =
+        await Promise.all([
+          loadProjectRoteiroInfo(),
+          loadOffersFirstProductInfo(),
+        ]);
 
-    if (!hasNodeAccess) {
-      throw new Error("Acesso ao sistema de arquivos nao disponivel.");
-    }
+      if (!hasNodeAccess) {
+        throw new Error("Acesso ao sistema de arquivos nao disponivel.");
+      }
 
-    if (!fs.existsSync(roteiroDirectory)) {
-      throw new Error("Pasta ROTEIRO nao encontrada.");
-    }
+      if (!fs.existsSync(roteiroDirectory)) {
+        throw new Error("Pasta ROTEIRO nao encontrada.");
+      }
 
-    const files = scanRoteiroDirectory(roteiroDirectory, projectName);
-    const target = files.find((f) => f.matched) ?? files[0];
+      const context = { roteiroDirectory, projectName };
+      const selectionKey = getSelectionKey(context);
 
-    if (!target) {
-      throw new Error("Nenhum roteiro encontrado.");
-    }
+      if (
+        selectedFile &&
+        getSelectionKey(selectedFile.expectedContext) !== selectionKey
+      ) {
+        throw new RoteiroSelectionRequiredError(
+          context,
+          "O projeto mudou enquanto o arquivo era escolhido. Escolha o roteiro do projeto atual."
+        );
+      }
 
-    return {
-      fileName: target.name,
-      content: readDocxText(target.fullPath),
-      offerValidationInfos: offerInfos,
-      audioContext: {
-        audioBounceDir: deriveAudioBounceDir(roteiroDirectory),
-        projectName,
-        roteiroRegions: target.regions,
-      },
-    };
-  }, [hasNodeAccess]);
+      const files = scanRoteiroDirectory(roteiroDirectory, projectName);
+      const automaticTarget = files.find((file) => file.matched);
+      const selectedTarget = selectedFile
+        ? getRoteiroFile(selectedFile.fullPath, projectName)
+        : null;
+      const savedSelectionPath = manualRoteiroSelections.get(selectionKey);
+      const savedTarget = savedSelectionPath
+        ? getRoteiroFile(savedSelectionPath, projectName)
+        : null;
+
+      if (savedSelectionPath && !savedTarget) {
+        manualRoteiroSelections.delete(selectionKey);
+      }
+
+      let readableTarget = selectedFile
+        ? readRoteiroTarget(selectedTarget)
+        : readRoteiroTarget(automaticTarget);
+
+      if (!selectedFile && !readableTarget && savedTarget) {
+        const isSameAsAutomatic =
+          automaticTarget &&
+          normPath(automaticTarget.fullPath) === normPath(savedTarget.fullPath);
+
+        if (!isSameAsAutomatic) {
+          readableTarget = readRoteiroTarget(savedTarget);
+        }
+
+        if (!readableTarget) {
+          manualRoteiroSelections.delete(selectionKey);
+        }
+      }
+
+      if (!readableTarget) {
+        const unreadableFileFound = selectedFile
+          ? true
+          : Boolean(automaticTarget || savedTarget);
+
+        throw new RoteiroSelectionRequiredError(
+          context,
+          unreadableFileFound
+            ? "Não conseguimos ler o roteiro encontrado. Escolha outro arquivo .docx."
+            : undefined
+        );
+      }
+
+      const { target, content: roteiroContent } = readableTarget;
+
+      const data: LoadedRoteiroData = {
+        fileName: target.name,
+        content: roteiroContent,
+        offerValidationInfos: offerInfos,
+        audioContext: {
+          audioBounceDir: deriveAudioBounceDir(roteiroDirectory),
+          projectName,
+          roteiroRegions: target.regions,
+        },
+      };
+
+      if (selectedFile) {
+        manualRoteiroSelections.set(selectionKey, target.fullPath);
+      }
+
+      return data;
+    },
+    [hasNodeAccess]
+  );
+
+  const showRoteiroLoadError = useCallback((caught: unknown) => {
+    const message = getMessage(caught);
+    setError(message);
+    setSelectionContext(
+      caught instanceof RoteiroSelectionRequiredError ? caught.context : null
+    );
+    setToast(null);
+  }, []);
 
   const updateAudio = async () => {
     setAudioUpdating(true);
     setError("");
+    setSelectionContext(null);
 
     try {
       const currentData = await readCurrentRoteiroData();
@@ -237,10 +356,8 @@ export const useRoteiro = () => {
       }
       await load();
     } catch (caught) {
-      const message = getMessage(caught);
       clearRoteiroState();
-      setError(message);
-      showToast(message, "error");
+      showRoteiroLoadError(caught);
     } finally {
       setAudioUpdating(false);
     }
@@ -277,16 +394,64 @@ export const useRoteiro = () => {
 
     setLoading(true);
     setError("");
+    setSelectionContext(null);
     clearRoteiroState();
 
     try {
-      applyLoadedRoteiroData(await readCurrentRoteiroData());
+      const data = await readCurrentRoteiroData();
+      applyLoadedRoteiroData(data);
+      setToast((current) => (current?.variant === "error" ? null : current));
     } catch (caught) {
-      setError(getMessage(caught));
+      showRoteiroLoadError(caught);
     } finally {
       setLoading(false);
     }
-  }, [applyLoadedRoteiroData, clearRoteiroState, readCurrentRoteiroData]);
+  }, [
+    applyLoadedRoteiroData,
+    clearRoteiroState,
+    readCurrentRoteiroData,
+    showRoteiroLoadError,
+  ]);
+
+  const chooseRoteiroFile = useCallback(async () => {
+    if (!selectionContext) return;
+
+    const dialogResult = openRoteiroFileDialog(
+      selectionContext.roteiroDirectory
+    );
+    if (dialogResult.status === "cancelled") return;
+    if (dialogResult.status === "error") {
+      setError(
+        "Não foi possível abrir o seletor de arquivos. Tente novamente."
+      );
+      setToast(null);
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    setSelectionContext(null);
+    clearRoteiroState();
+
+    try {
+      const data = await readCurrentRoteiroData({
+        fullPath: dialogResult.filePath,
+        expectedContext: selectionContext,
+      });
+      applyLoadedRoteiroData(data);
+      setToast(null);
+    } catch (caught) {
+      showRoteiroLoadError(caught);
+    } finally {
+      setLoading(false);
+    }
+  }, [
+    applyLoadedRoteiroData,
+    clearRoteiroState,
+    readCurrentRoteiroData,
+    selectionContext,
+    showRoteiroLoadError,
+  ]);
 
   const openOfferPrecomp = async (info: OfferValidationInfo | undefined) => {
     if (!info?.offerLayerIndex) {
@@ -353,7 +518,9 @@ export const useRoteiro = () => {
     renderQueueLoading,
     offerActionLoading,
     error,
+    canChooseRoteiroFile: selectionContext !== null,
     load,
+    chooseRoteiroFile,
     updateAudio,
     adjustMarkers,
     queueRender,

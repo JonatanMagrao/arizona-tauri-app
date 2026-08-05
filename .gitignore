@@ -11,6 +11,7 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+dist-cep/
 *.local
 
 # Editor directories and files
@@ -47,6 +48,11 @@ ADMIN/supabase/functions/*.bak.*
 # Extensao CEP (ARIZONA-EXTENSION): o .env.production dela nao tem segredo
 # (apenas NODE_ENV) e precisa ser versionado apesar do ignore global .env.*
 !ARIZONA-EXTENSION/.env.production
+
+# Identidade de assinatura da extensao CEP: .p12 estavel, senha e backups
+# datados. E material PRIVADO -- guarde offline, nunca no git.
+# O manifesto PUBLICO INSTALLER/cep-trusted-cert.json continua versionado.
+ARIZONA-EXTENSION/certs/
 
 # Admin app generated files
 ADMIN/node_modules/

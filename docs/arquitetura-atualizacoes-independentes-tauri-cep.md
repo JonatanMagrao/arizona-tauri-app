@@ -1,7 +1,7 @@
 # Arquitetura futura de atualizações independentes — Tauri e CEP
 
 **Status:** proposta de longo prazo — não implementar agora  
-**Atualizado em:** 28/07/2026  
+**Atualizado em:** 04/08/2026
 **Escopo:** Arizona App (Tauri), extensão CEP e o contrato de licença entre eles  
 **Fora do escopo:** Admin, mudanças imediatas no instalador e rotação de chaves
 
@@ -60,21 +60,27 @@ contrato do recibo permaneça compatível.
 O instalador NSIS oficial contém:
 
 - Arizona App;
-- payload compilado da extensão CEP;
+- `.zxp` assinado da extensão CEP;
 - hooks de instalação, upgrade e desinstalação.
 
-O hook copia e valida a extensão no perfil do usuário. Portanto, executar hoje
-o instalador unificado pode substituir os dois componentes, mesmo quando apenas
+O instalador Full extrai e valida a árvore assinada no destino `perMachine`. O
+Tauri possui também uma instalação manual separada, `per-user`, para um `.zxp`
+local já assinado. Nenhum desses fluxos consulta hoje um canal remoto de
+atualização.
+
+Executar o instalador unificado pode substituir Tauri e CEP mesmo quando apenas
 um deles mudou.
 
 Esse acoplamento pertence ao empacotamento atual. Ele não é uma dependência do
 runtime.
 
-### 2.3 Atualização automática ainda inexistente
+### 2.3 Atualização remota automática ainda inexistente
 
 - O projeto Tauri não possui atualmente o plugin oficial de updater configurado.
 - Não existe manifesto remoto de atualização independente do CEP.
-- O CEP não possui um mecanismo de atualização própria.
+- O Rust já inspeciona, instala e recupera um `.zxp` local, mas ainda não baixa
+  releases de uma fonte remota.
+- O CEP não baixa nem instala a si próprio.
 - Não existe ainda uma matriz publicada de compatibilidade entre versões.
 
 ## 3. Objetivos
@@ -170,7 +176,11 @@ Serviço de releases
 ```
 
 O instalador unificado permanece como rota independente para bootstrap e
-reparo.
+reparo. Essa rota Full é `perMachine` e instala em
+`%CommonProgramW6432%\Adobe\CEP\extensions\com.arizona-carrefour.cep` (com
+fallback para `%CommonProgramFiles%`); staging e backups ficam no irmão
+`Adobe\CEP\.arizona-install-work`. O atualizador executado pelo Tauri permanece
+per-user no caminho mostrado acima.
 
 ## 6. Manifesto futuro do CEP
 
@@ -180,12 +190,12 @@ Exemplo conceitual:
 {
   "schemaVersion": 1,
   "channel": "stable",
-  "version": "1.2.0",
+  "version": "2.0.1",
   "publishedAt": "2026-07-28T12:00:00Z",
-  "url": "https://releases.example.com/cep/1.2.0/arizona-cep.zip",
+  "url": "https://releases.example.com/cep/2.0.1/arizona-cep-v2.0.1.zxp",
   "sha256": "HASH_DO_ARTEFATO",
   "signature": "ASSINATURA_DESTACADA",
-  "minimumTauriVersion": "2.1.1",
+  "minimumTauriVersion": "2.2.0",
   "minimumReceiptProtocol": 1,
   "maximumReceiptProtocol": 1,
   "requiresAfterEffectsRestart": true,
@@ -213,7 +223,7 @@ Devem existir quatro versões independentes:
 | Item | Exemplo | Finalidade |
 |---|---|---|
 | Tauri | `2.2.0` | Versão do aplicativo desktop |
-| CEP | `1.2.0` | Versão da extensão |
+| CEP | `2.0.1` | Versão da extensão |
 | Protocolo do recibo | `1` | Contrato entre backend, Tauri e CEP |
 | Bundle do instalador | `2026.08.0` | Combinação testada para bootstrap/reparo |
 
@@ -227,8 +237,8 @@ Regras:
   protocolo.
 - A versão do CEP em `package.json` e `CSXS/manifest.xml` deve corresponder ao
   artefato publicado.
-- O número `0.0.1` atual do CEP não deve ser mantido em releases independentes;
-  o versionamento precisa começar a representar releases reais.
+- A versão publicada deve representar o release real da extensão e nunca ser
+  derivada da versão do Tauri.
 
 ## 8. Contrato de compatibilidade
 
@@ -331,31 +341,34 @@ reutilizada como chave do recibo de licença.
 
 ## 10. Instalação segura do CEP
 
-O atualizador deverá:
+O formato oficial já foi decidido: um `.zxp` assinado pela identidade da
+Arizona. Tanto o Full quanto a instalação manual do Tauri validam identidade,
+assinatura, conteúdo e versão antes da troca. O atualizador remoto futuro deve
+reutilizar essas mesmas garantias, sem criar uma segunda implementação mais
+permissiva.
+
+Ele deverá:
 
 - resolver e validar o destino exato antes de escrever;
 - detectar junction/symlink de desenvolvimento e não substituí-la
   silenciosamente;
 - rejeitar caminhos fora do diretório esperado;
-- extrair somente em diretório temporário;
+- baixar e extrair somente em diretório temporário;
 - bloquear `..`, caminhos absolutos e traversal em arquivos compactados;
 - impor limites de tamanho, quantidade de arquivos e profundidade;
 - rejeitar arquivo executável inesperado;
-- validar `CSXS/manifest.xml`, bundle ID e versão;
+- validar hash, assinatura, `CSXS/manifest.xml`, bundle ID e versão;
 - impedir duas instalações concorrentes;
 - preservar arquivo alheio fora da pasta gerenciada;
 - fazer troca e rollback com operações recuperáveis;
-- não apagar a instalação atual antes de validar completamente a nova.
+- não apagar a instalação atual antes de validar completamente a nova;
+- preservar a separação entre o destino `perMachine` do Full e o destino
+  `per-user` gerenciado pelo Tauri;
+- não criar duas cópias visíveis do mesmo BundleId durante staging ou rollback.
 
-A distribuição futura deverá decidir entre:
-
-1. manter o modelo atual de pasta gerenciada e assinar o artefato com a
-   infraestrutura própria; ou
-2. adotar pacote ZXP assinado e ferramenta de instalação compatível.
-
-Essa escolha deverá ser validada nas versões reais do After Effects usadas pelo
-cliente. A Adobe documenta empacotamento/assinatura ZXP e pastas de extensão,
-mas a estratégia atual do projeto é uma pasta instalada pelo NSIS.
+As regras criptográficas e de rotação estão em
+`LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md`; a implementação atual do Full está em
+`INSTALLER/README.md`.
 
 ## 11. Assinaturas e segredos
 
@@ -363,7 +376,7 @@ Devem existir identidades criptográficas distintas:
 
 - assinatura do executável e instalador Windows;
 - assinatura exigida pelo updater do Tauri;
-- assinatura do artefato CEP ou certificado ZXP;
+- certificado que assina o `.zxp` da extensão CEP;
 - assinatura ES256 do recibo de licença.
 
 Regras:
@@ -390,7 +403,7 @@ Versão instalada: 2.2.0
 Estado: atualizado
 
 Extensão After Effects
-Versão instalada: 1.2.0
+Versão instalada: 2.0.0
 Estado: atualização disponível
 Requer reabrir o After Effects
 ```
@@ -462,7 +475,7 @@ Tags sugeridas:
 
 ```text
 tauri-v2.2.0
-cep-v1.2.0
+cep-v2.0.0
 bundle-v2026.08.0
 ```
 
@@ -470,11 +483,10 @@ bundle-v2026.08.0
 
 ### Fase 0 — contrato e disciplina de release
 
-- corrigir o versionamento real do CEP;
 - documentar versões suportadas;
 - definir protocolo do recibo;
 - definir canais e política de versão mínima;
-- manter o instalador atual.
+- manter o instalador Full como recuperação.
 
 ### Fase 1 — updater independente do Tauri
 
@@ -486,8 +498,9 @@ bundle-v2026.08.0
 
 ### Fase 2 — updater gerenciado do CEP
 
-- definir formato e assinatura do pacote;
-- implementar download, staging, validação e rollback no Rust;
+- definir manifesto e origem remota confiável;
+- implementar download sobre a inspeção, staging, validação e rollback que já
+  existem no Rust;
 - detectar versão instalada;
 - testar After Effects aberto e fechado;
 - manter reparo pelo instalador.
@@ -502,7 +515,8 @@ bundle-v2026.08.0
 
 ### Fase 4 — distribuição corporativa
 
-- avaliar ZXP/Adobe Exchange, ferramenta corporativa ou distribuição interna;
+- avaliar Adobe Exchange, ferramenta corporativa ou distribuição interna do
+  `.zxp` já adotado;
 - considerar ambientes sem internet;
 - oferecer pacote completo administrável por TI;
 - preservar os mesmos controles de assinatura e compatibilidade.
@@ -541,7 +555,5 @@ bundle-v2026.08.0
 - [Tauri v2 — assinatura no Windows](https://v2.tauri.app/distribute/sign/windows/)
 - [Adobe CEP Resources](https://github.com/Adobe-CEP/CEP-Resources)
 - [Adobe CEP 11.1 HTML Extension Cookbook](https://github.com/Adobe-CEP/CEP-Resources/blob/master/CEP_11.x/Documentation/CEP%2011.1%20HTML%20Extension%20Cookbook.md)
-- [Arquitetura de licenciamento](../LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md)
+- [Arquitetura de licenciamento](./LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md)
 - [Instalador atual](../INSTALLER/README.md)
-- [Plano do instalador unificado](../PLANO_INSTALADOR_UNIFICADO.md)
-

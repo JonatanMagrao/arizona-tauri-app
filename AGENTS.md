@@ -57,7 +57,7 @@ Tauri (raiz) ── grava ──> cep-license-receipt.json ── lê ──> Ex
 
 Antes de alterar autenticação, licenciamento, Supabase secrets, validação da
 extensão CEP, chaves públicas/privadas ou geração de tokens, leia
-`LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md`.
+`docs/LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md`.
 
 - NÃO delete, regenere, sobrescreva ou faça upload de chaves sem uma rotação
   planejada pedida explicitamente pelo usuário.
@@ -68,13 +68,20 @@ extensão CEP, chaves públicas/privadas ou geração de tokens, leia
 ## Instalador
 
 - O payload oficial contém o app Tauri e a extensão CEP. Não contém `.aex`.
+- A instalação Full oficial é `perMachine` e instala a extensão diretamente em
+  `%CommonProgramW6432%\Adobe\CEP\extensions\com.arizona-carrefour.cep`.
+- Staging e backups do Full ficam na pasta irmã
+  `%CommonProgramW6432%\Adobe\CEP\.arizona-install-work`, fora de `extensions`.
+  Os helpers elevados de assets do Full não escrevem em `%APPDATA%` nem alteram
+  HKCU.
+- A instalação/atualização manual iniciada pelo Tauri continua `per-user`, em
+  `%APPDATA%\Adobe\CEP\extensions\com.arizona-carrefour.cep`.
 - Instalação não cria `Plug-ins\Arizona` em nenhuma versão do After Effects.
 - Upgrade e desinstalação procuram apenas o arquivo legado exato
   `Plug-ins\Arizona\ArizonaBridgeTest.aex`, removem-no com segurança e só apagam
   a pasta `Arizona` quando ela fica vazia.
-- A extensão instalada é uma pasta direta em
-  `%APPDATA%\Adobe\CEP\extensions\com.arizona-carrefour.cep`; em desenvolvimento
-  ela pode ser uma junction para `ARIZONA-EXTENSION\dist\cep`.
+- Em desenvolvimento, o destino `per-user` pode ser uma junction para
+  `ARIZONA-EXTENSION\dist\cep`.
 
 ## Notas operacionais
 

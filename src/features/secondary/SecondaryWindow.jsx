@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import AdminWindow from "../admin/AdminWindow";
@@ -69,7 +70,11 @@ const AFTER_EFFECTS_SHORTCUT_ACTIONS = Object.freeze([
 const SETTINGS_TABS = Object.freeze({
   GENERAL: "general",
   AFTER_SHORTCUTS: "afterShortcuts",
+  EXTENSION: "extension",
 });
+
+const CEP_DEV_LINK_MESSAGE =
+  "Esta pasta é um atalho para a sua build local da extensão (máquina de desenvolvimento).";
 
 const NUMERIC_SETTINGS_SAVE_DELAY_MS = 1000;
 const TEXT_SETTINGS_SAVE_DELAY_MS = 1500;
@@ -729,6 +734,18 @@ function SettingsView({ auth, showError, showSuccess }) {
             >
               Atalhos After
             </button>
+            <button
+              type="button"
+              className={`settings-tab ${activeSettingsTab === SETTINGS_TABS.EXTENSION ? "settings-tab--active" : ""}`}
+              onClick={() => {
+                cancelShortcutRecording();
+                setActiveSettingsTab(SETTINGS_TABS.EXTENSION);
+              }}
+              role="tab"
+              aria-selected={activeSettingsTab === SETTINGS_TABS.EXTENSION}
+            >
+              Extensão
+            </button>
           </nav>
           {appInfo.version && <span className="settings-version">v{appInfo.version}</span>}
         </div>
@@ -868,6 +885,10 @@ function SettingsView({ auth, showError, showSuccess }) {
           </section>
           )}
 
+          {activeSettingsTab === SETTINGS_TABS.EXTENSION && (
+            <ExtensionSettingsPanel showError={showError} showSuccess={showSuccess} />
+          )}
+
           <footer className="settings-actions settings-actions--window">
             <div className="settings-credit">
               {appInfo.authorName && (
@@ -929,6 +950,375 @@ function SettingsView({ auth, showError, showSuccess }) {
         )}
       </section>
     </main>
+  );
+}
+
+function ExtensionSettingsPanel({ showError, showSuccess }) {
+  const [extensionStatus, setExtensionStatus] = useState(null);
+  const [isLoadingStatus, setIsLoadingStatus] = useState(true);
+  const [isDebugEnabled, setIsDebugEnabled] = useState(false);
+  const [isDebugKnown, setIsDebugKnown] = useState(false);
+  const [isTogglingDebug, setIsTogglingDebug] = useState(false);
+  const [selectedZxp, setSelectedZxp] = useState(null);
+  const [isInspecting, setIsInspecting] = useState(false);
+  const [isInstalling, setIsInstalling] = useState(false);
+  const [isInstallConfirmOpen, setIsInstallConfirmOpen] = useState(false);
+  const [isDragActive, setIsDragActive] = useState(false);
+  const dropHandlerRef = useRef(() => {});
+
+  const isDevLink = Boolean(extensionStatus?.isDevLink);
+  const installedVersion = extensionStatus?.installed ? extensionStatus.version || "" : "";
+  const isReinstall = Boolean(
+    selectedZxp?.version && installedVersion && selectedZxp.version === installedVersion
+  );
+  const installLabel = isReinstall ? "Reinstalar" : "Instalar";
+  // The dev link only blocks until it is explicitly replaced; installing then
+  // removes the shortcut itself and never the build folder it points at.
+  const installBlocked = isLoadingStatus;
+
+  const refreshExtensionStatus = async ({ silent = false } = {}) => {
+    if (!silent) setIsLoadingStatus(true);
+    try {
+      const status = await invokeCommand(commandNames.cepExtensionStatus);
+      setExtensionStatus(normalizeCepExtensionStatus(status));
+    } catch (error) {
+      showError(cepErrorMessage(error, "Não foi possível consultar a extensão instalada."));
+    } finally {
+      if (!silent) setIsLoadingStatus(false);
+    }
+  };
+
+  useEffect(() => {
+    let mounted = true;
+
+    Promise.allSettled([
+      invokeCommand(commandNames.cepExtensionStatus),
+      invokeCommand(commandNames.cepDebugModeStatus),
+    ]).then(([statusResult, debugResult]) => {
+      if (!mounted) return;
+
+      if (statusResult.status === "fulfilled") {
+        setExtensionStatus(normalizeCepExtensionStatus(statusResult.value));
+      } else {
+        showError(cepErrorMessage(statusResult.reason, "Não foi possível consultar a extensão instalada."));
+      }
+
+      if (debugResult.status === "fulfilled") {
+        setIsDebugEnabled(Boolean(debugResult.value?.enabled));
+        setIsDebugKnown(true);
+      }
+
+      setIsLoadingStatus(false);
+    });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const selectZxpFile = async (path) => {
+    const filePath = String(path || "").trim();
+    if (!filePath.toLowerCase().endsWith(".zxp")) {
+      showError("Selecione um arquivo .zxp.");
+      return;
+    }
+    setIsInspecting(true);
+    setSelectedZxp(null);
+    try {
+      const inspection = await invokeCommand(commandNames.inspectCepZxp, { path: filePath });
+      setSelectedZxp({
+        path: filePath,
+        bundleId: String(inspection?.bundleId || "").trim(),
+        version: String(inspection?.version || "").trim(),
+        trusted: Boolean(inspection?.trusted),
+      });
+    } catch (error) {
+      showError(cepErrorMessage(error, "Não foi possível ler o arquivo .zxp."));
+    } finally {
+      setIsInspecting(false);
+    }
+  };
+
+  dropHandlerRef.current = (paths) => {
+    if (isInspecting || isInstalling) return;
+    if (installBlocked) return;
+    if (paths.length !== 1 || !String(paths[0] || "").toLowerCase().endsWith(".zxp")) {
+      showError("Arraste um único arquivo .zxp.");
+      return;
+    }
+    selectZxpFile(paths[0]);
+  };
+
+  useEffect(() => {
+    let mounted = true;
+    let unlistenDragDrop = null;
+
+    getCurrentWebview()
+      .onDragDropEvent((event) => {
+        const payload = event?.payload;
+        if (!payload) return;
+
+        if (payload.type === "enter" || payload.type === "over") {
+          setIsDragActive(true);
+          return;
+        }
+
+        setIsDragActive(false);
+        if (payload.type === "drop") {
+          dropHandlerRef.current(Array.isArray(payload.paths) ? payload.paths : []);
+        }
+      })
+      .then((unlisten) => {
+        if (!mounted) {
+          unlisten();
+          return;
+        }
+        unlistenDragDrop = unlisten;
+      })
+      .catch(() => {});
+
+    return () => {
+      mounted = false;
+      if (unlistenDragDrop) unlistenDragDrop();
+    };
+  }, []);
+
+  const chooseZxpFile = async () => {
+    try {
+      const selected = await open({
+        multiple: false,
+        title: "Selecionar extensão (.zxp)",
+        filters: [{ name: "Extensão CEP", extensions: ["zxp"] }],
+      });
+      const path = Array.isArray(selected) ? selected[0] : selected;
+      if (typeof path === "string" && path.trim()) {
+        await selectZxpFile(path);
+      }
+    } catch (error) {
+      showError(String(error || "Não foi possível selecionar o arquivo."));
+    }
+  };
+
+  const installSelectedZxp = async () => {
+    if (!selectedZxp?.path || isInstalling) return;
+
+    setIsInstallConfirmOpen(false);
+    setIsInstalling(true);
+    try {
+      const result = await invokeCommand(commandNames.installCepZxp, {
+        path: selectedZxp.path,
+        replaceDevLink: isDevLink,
+      });
+      const version = String(result?.version || selectedZxp.version || "").trim();
+      showSuccess(
+        version
+          ? `Extensão v${version} instalada. Reabra o After Effects para carregar a nova versão.`
+          : "Extensão instalada. Reabra o After Effects para carregar a nova versão."
+      );
+      setSelectedZxp(null);
+      await refreshExtensionStatus({ silent: true });
+    } catch (error) {
+      showError(cepErrorMessage(error, "A instalação falhou."));
+    } finally {
+      setIsInstalling(false);
+    }
+  };
+
+  const toggleDebugMode = async () => {
+    if (isTogglingDebug || !isDebugKnown) return;
+
+    const nextEnabled = !isDebugEnabled;
+    setIsTogglingDebug(true);
+    try {
+      const result = await invokeCommand(commandNames.setCepDebugMode, { enabled: nextEnabled });
+      const enabled = Boolean(result?.enabled);
+      setIsDebugEnabled(enabled);
+      showSuccess(enabled ? "Depuração do painel CEP ativada." : "Depuração do painel CEP desativada.");
+    } catch (error) {
+      showError(cepErrorMessage(error, "Não foi possível alterar a depuração do painel CEP."));
+    } finally {
+      setIsTogglingDebug(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isInstallConfirmOpen) return undefined;
+
+    const handleEscape = (event) => {
+      if (event.key === "Escape" && !isInstalling) {
+        setIsInstallConfirmOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [isInstallConfirmOpen, isInstalling]);
+
+  return (
+    <section className="settings-tab-panel settings-extension" role="tabpanel" aria-label="Extensão CEP">
+      <div className="settings-ext-card">
+        <header className="settings-ext-card__header">
+          <h2>Extensão Arizona (After Effects)</h2>
+          <div className="settings-ext-card__header-actions">
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={() => refreshExtensionStatus()}
+              disabled={isLoadingStatus || isInstalling}
+            >
+              {isLoadingStatus ? "..." : "Atualizar"}
+            </button>
+          </div>
+        </header>
+        <dl className="settings-ext-status">
+          <div>
+            <dt>Status</dt>
+            <dd>
+              {isLoadingStatus
+                ? "Verificando..."
+                : extensionStatus?.installed
+                  ? "Instalada"
+                  : "Não instalada"}
+            </dd>
+          </div>
+          <div>
+            <dt>Versão</dt>
+            <dd>{installedVersion ? `v${installedVersion}` : "—"}</dd>
+          </div>
+        </dl>
+        {isDevLink && (
+          <p className="settings-ext-note">
+            {CEP_DEV_LINK_MESSAGE} Instalar um .zxp aqui substitui esse atalho pela versão do
+            arquivo; a pasta de build para onde ele aponta não é apagada.
+          </p>
+        )}
+      </div>
+
+      <div
+        className={`settings-ext-dropzone ${isDragActive && !installBlocked ? "settings-ext-dropzone--active" : ""} ${installBlocked ? "settings-ext-dropzone--disabled" : ""}`}
+      >
+        <p>Arraste o arquivo .zxp aqui</p>
+        <button
+          type="button"
+          className="btn btn-outline"
+          onClick={chooseZxpFile}
+          disabled={installBlocked || isInspecting || isInstalling}
+        >
+          {isInspecting ? "Lendo arquivo..." : "Escolher arquivo…"}
+        </button>
+      </div>
+
+      {selectedZxp && (
+        <div className="settings-ext-card settings-ext-selected">
+          <div className="settings-ext-selected__info">
+            <strong title={selectedZxp.path}>{fileNameFromPath(selectedZxp.path)}</strong>
+            <span
+              className={`settings-ext-badge ${selectedZxp.trusted ? "settings-ext-badge--signed" : "settings-ext-badge--unsigned"}`}
+            >
+              {selectedZxp.trusted ? "Assinado pela Arizona" : "Publicador não confiável"}
+            </span>
+          </div>
+          <dl className="settings-ext-status">
+            <div title={selectedZxp.bundleId}>
+              <dt>Bundle</dt>
+              <dd>{selectedZxp.bundleId || "—"}</dd>
+            </div>
+            <div>
+              <dt>Versão do arquivo</dt>
+              <dd>{selectedZxp.version ? `v${selectedZxp.version}` : "—"}</dd>
+            </div>
+            <div>
+              <dt>Versão instalada</dt>
+              <dd>{installedVersion ? `v${installedVersion}` : "Não instalada"}</dd>
+            </div>
+          </dl>
+          <div className="settings-ext-selected__actions">
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={() => setSelectedZxp(null)}
+              disabled={isInstalling}
+            >
+              Remover
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => setIsInstallConfirmOpen(true)}
+              disabled={installBlocked || isInstalling}
+            >
+              {isInstalling ? "Instalando..." : installLabel}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="settings-ext-debug">
+        <div className="settings-ext-debug__text">
+          <span>Depuração do painel CEP (After Effects)</span>
+          <p className="settings-ext-hint">
+            Ligue apenas se o painel Arizona não aparecer no After Effects. Requer reiniciar o After
+            Effects e afrouxa a verificação de assinatura das extensões.
+          </p>
+        </div>
+        <button
+          type="button"
+          className={`settings-ext-switch ${isDebugEnabled ? "settings-ext-switch--on" : ""}`}
+          role="switch"
+          aria-checked={isDebugEnabled}
+          aria-label="Depuração do painel CEP (After Effects)"
+          onClick={toggleDebugMode}
+          disabled={isTogglingDebug || !isDebugKnown}
+        >
+          <span className="settings-ext-switch__thumb" aria-hidden="true"></span>
+        </button>
+      </div>
+
+      {isInstallConfirmOpen && selectedZxp && (
+        <div className="settings-confirm-backdrop" role="presentation">
+          <section
+            className="settings-confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="settingsExtensionInstallTitle"
+          >
+            <header className="settings-confirm-header">
+              <h2 id="settingsExtensionInstallTitle">{installLabel} a extensão?</h2>
+            </header>
+            <p>
+              Feche o After Effects antes de continuar. A versão
+              {selectedZxp.version ? ` v${selectedZxp.version}` : " selecionada"} substituirá a
+              instalação atual da extensão Arizona.
+            </p>
+            {isDevLink && (
+              <p className="settings-ext-note">
+                Esta máquina usa um atalho para a sua build local. Ele será removido e a pasta
+                passará a conter a versão do arquivo. A pasta de build não é apagada — para voltar
+                ao modo de desenvolvimento, rode o build da extensão novamente.
+              </p>
+            )}
+            <div className="settings-confirm-actions">
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => setIsInstallConfirmOpen(false)}
+                disabled={isInstalling}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={installSelectedZxp}
+                disabled={isInstalling}
+              >
+                {isInstalling ? "Instalando..." : installLabel}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1426,6 +1816,32 @@ function normalizeAppInfo(info) {
     authorName: String(info?.authorName || "").trim(),
     authorUrl: String(info?.authorUrl || "").trim(),
   };
+}
+
+function normalizeCepExtensionStatus(status) {
+  return {
+    installed: Boolean(status?.installed),
+    version: String(status?.version || "").trim(),
+    path: String(status?.path || "").trim(),
+    isDevLink: Boolean(status?.isDevLink),
+  };
+}
+
+function cepErrorMessage(error, fallback = "Operação não concluída.") {
+  const text = String(error?.message || error || "");
+  const match = text.match(/^([a-z0-9_]+):\s*(.*)$/i);
+  const code = match?.[1] || "";
+
+  if (code === "after_effects_running") return "Feche o After Effects antes de instalar.";
+  if (code === "cep_dev_link") return CEP_DEV_LINK_MESSAGE;
+  if (code === "cep_zxp_invalid") return "Este arquivo não é a extensão Arizona.";
+  if (code === "cep_zxp_untrusted") return "Este arquivo não foi assinado pela Arizona.";
+  if (code === "cep_zxp_signature_invalid") {
+    return "A assinatura deste arquivo é inválida ou o conteúdo foi alterado.";
+  }
+  if (code === "cep_zxp_unreadable") return "Não foi possível ler o arquivo. Verifique se ele ainda existe.";
+  if (code === "cep_install_failed") return "A instalação falhou e nada foi alterado.";
+  return match?.[2] || text || fallback;
 }
 
 function shortcutFromKeyboardEvent(event) {
