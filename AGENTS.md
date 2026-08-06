@@ -24,12 +24,17 @@ ADMIN/Supabase (Edge Function validate-license)
     v
 Tauri (raiz) ── grava ──> cep-license-receipt.json ── lê ──> Extensão CEP
     |
+    ├── prepara ──> cache local de previews ── lê ──> Extensão CEP
+    |
     └── materializa JSX embutido em AppData
           └── AfterFX.exe -r <acao.jsx> ──> After Effects
 ```
 
-- **Tauri → Extensão CEP**: apenas pelo arquivo
-  `cep-license-receipt.json` em `%LOCALAPPDATA%\com.pc.arizona-app\`.
+- **Tauri → Extensão CEP**: pelo recibo
+  `cep-license-receipt.json` em `%LOCALAPPDATA%\com.pc.arizona-app\` e pelo
+  cache local de previews documentado em `docs/CACHE_PREVIEWS_PRODUTOS.md`.
+  O cache contém somente miniaturas e metadados de arquivos; não transporta
+  comandos, sessão ou dados de licença.
 - **Tauri → After Effects**: os atalhos exigem sessão autenticada no Tauri. O
   Tauri embute `src-tauri/src/after_effects/arizona_actions.jsx`, materializa
   lançadores em `%LOCALAPPDATA%\com.pc.arizona-app\after-effects-scripts\` e
@@ -43,6 +48,8 @@ Tauri (raiz) ── grava ──> cep-license-receipt.json ── lê ──> Ex
 
 1. **Não importe código entre projetos.** Se dois projetos precisam do mesmo
    dado, ele passa pelo contrato documentado, nunca por import de runtime.
+   Para previews de produtos, preserve o contrato de path, versão e hash em
+   `docs/CACHE_PREVIEWS_PRODUTOS.md` nos dois lados.
 2. **Exceção única e sancionada**: o build da extensão lê o manifesto público
    `ADMIN/supabase/license-trusted-keys.json` via
    `ARIZONA-EXTENSION/scripts/generate-license-trusted-keys.mjs`.

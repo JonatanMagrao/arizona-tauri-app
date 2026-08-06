@@ -7,6 +7,7 @@ mod device_identity;
 mod history;
 mod license;
 mod media;
+mod product_preview_cache;
 mod roteiro;
 mod settings;
 mod uninstall;
@@ -2221,6 +2222,12 @@ fn abrir_ae(
 
     Ok(match arizona.abrir_jobinho(&jobao_cod, &jobinho_cod) {
         Ok(project) => {
+            let products_directory = arizona.products_directory(&project.jobao_path);
+            product_preview_cache::start_warmup(
+                app.clone(),
+                project.jobao_cod.clone(),
+                products_directory,
+            );
             cache_project_media_paths(&app, &project);
             history::record_project_opened(&app, &project)?;
             ActionResponse::ok_message(project.project_title)

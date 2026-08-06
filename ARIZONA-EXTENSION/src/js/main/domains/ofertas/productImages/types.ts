@@ -4,6 +4,7 @@ export type PreviewSource =
   | "png"
   | "psd-thumbnail"
   | "psd-composite"
+  | "prewarmed-cache"
   | "windows-thumbnail";
 
 export interface LocalImage {

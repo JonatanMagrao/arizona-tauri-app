@@ -52,4 +52,8 @@ impl Arizona {
             meses,
         }
     }
+
+    pub fn products_directory(&self, jobao_path: &std::path::Path) -> PathBuf {
+        jobao_path.join(&self.produtos)
+    }
 }

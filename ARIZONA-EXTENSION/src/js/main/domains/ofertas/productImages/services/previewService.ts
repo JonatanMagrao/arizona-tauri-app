@@ -7,10 +7,14 @@ import type { LocalImage } from "../types";
 import { readPngDataUrl } from "../utils/imageFiles";
 import { getMessage } from "../../../../utils/errors";
 import { renderWindowsShellThumbnail } from "./windowsThumbnail";
+import { readPrewarmedPreview } from "./prewarmedPreview";
 
 export const createPreviewPatch = async (
   image: LocalImage
 ): Promise<Partial<LocalImage>> => {
+  const prewarmedPreview = readPrewarmedPreview(image);
+  if (prewarmedPreview) return prewarmedPreview;
+
   if (image.kind === "png") {
     return {
       previewUrl: readPngDataUrl(image.fullPath),

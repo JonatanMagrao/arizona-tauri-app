@@ -10,6 +10,9 @@ do admin. A Ãºnica relaÃ§Ã£o com o resto do ecossistema Ã© por contrato:
 
 - lÃª o recibo de licenÃ§a `cep-license-receipt.json` gravado pelo Arizona App em
   `%LOCALAPPDATA%\com.pc.arizona-app\`;
+- consulta primeiro o cache de previews preparado pelo Arizona App conforme o
+  contrato `../docs/CACHE_PREVIEWS_PRODUTOS.md`, mantendo geraÃ§Ã£o local como
+  fallback;
 - no build, embute as chaves pÃºblicas do manifesto versionado
   `../ADMIN/supabase/license-trusted-keys.json` (Ãºnica exceÃ§Ã£o de fronteira,
   build-time e dado pÃºblico â€” ver `AGENTS.md` na raiz do repo).

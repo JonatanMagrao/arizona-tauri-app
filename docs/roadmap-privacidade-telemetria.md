@@ -1,7 +1,7 @@
 # Roadmap de privacidade, registros operacionais e diagnóstico
 
 **Status:** planejamento — nenhuma implementação autorizada por este documento  
-**Atualizado em:** 04/08/2026
+**Atualizado em:** 06/08/2026
 **Escopo:** Arizona App (Tauri), extensão CEP apenas quando relacionada à licença
 e ao diagnóstico, Admin e Supabase de licenciamento
 
@@ -186,6 +186,58 @@ controlador avaliar o incidente e, quando aplicável, cumprir os prazos da ANPD.
 Não usar a frase “ao continuar, você concorda com a coleta” para dados
 obrigatórios. O aviso serve para transparência; ele não deve simular uma escolha
 que o usuário não possui.
+
+#### Revisão futura de erros, alerts e toasts do Tauri e do CEP
+
+Esta revisão está planejada para uma etapa mais final do produto e **não está
+implementada agora**. Ela deverá abranger, em conjunto, as mensagens do Arizona
+App e da extensão CEP.
+
+A interface deve mostrar uma mensagem humana, breve e orientada à próxima ação.
+Ela não deve expor nome de fornecedor, URL, tabela, função remota, código SQL,
+stack trace, token, caminho interno ou outra informação de implementação. Por
+exemplo, uma falha de comunicação pode aparecer como:
+
+> Não foi possível acessar o serviço agora. Verifique sua conexão e tente
+> novamente.
+
+Quando a causa já estiver classificada com segurança, o texto pode ser mais
+específico, como indisponibilidade dos dados necessários, arquivo não
+sincronizado ou versão incompatível. Não transformar toda falha em uma mensagem
+genérica: o usuário precisa entender o que pode fazer, sem receber o detalhe
+técnico do backend.
+
+A implementação futura deverá:
+
+- manter um catálogo compartilhado de códigos e textos, aplicado nos limites de
+  apresentação de cada projeto, sem importar código entre Tauri e CEP;
+- revisar todos os alerts, banners, mensagens locais e toasts, evitando que a
+  mesma falha apareça repetida em mais de um lugar;
+- definir severidade, duração, ação sugerida e possibilidade de tentar
+  novamente para cada categoria;
+- permitir um identificador curto de suporte, sem mostrar o diagnóstico
+  completo na interface;
+- testar que respostas técnicas desconhecidas não chegam diretamente ao
+  usuário.
+
+Ocultar o nome do fornecedor na interface melhora a segurança de apresentação e
+a clareza, mas não substitui autenticação, autorização e proteção das
+credenciais. A segurança não pode depender somente dessa ocultação.
+
+O diagnóstico completo deverá seguir um canal separado da mensagem visível.
+Antes de implementá-lo, será necessário decidir entre:
+
+1. um registro local circular, com acesso restrito na máquina, prazo curto e
+   exportação consciente para suporte; ou
+2. envio remoto controlado, por um serviço intermediário autenticado, com
+   saneamento, consentimento/transparência aplicável, retenção definida e acesso
+   restrito — sem permitir que Tauri ou CEP gravem detalhes livremente no banco.
+
+Também pode ser adotado um modelo híbrido: dados técnicos ficam localmente e
+somente um conjunto enumerado e saneado é enviado quando autorizado. A escolha
+de destino remoto não está tomada; usar o serviço de dados atual é uma opção a
+avaliar, não uma decisão deste documento. Até essa definição, não ativar envio
+automático de exceções nem persistir logs técnicos novos com conteúdo livre.
 
 ### Etapa 2 — diagnóstico de erros, somente depois da Etapa 0
 

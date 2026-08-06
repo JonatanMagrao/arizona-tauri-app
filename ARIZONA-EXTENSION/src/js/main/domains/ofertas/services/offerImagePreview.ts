@@ -4,6 +4,7 @@ import {
   renderPsdCompositePreview,
 } from "../productImages/services/psdPreview";
 import { renderWindowsShellThumbnail } from "../productImages/services/windowsThumbnail";
+import { readPrewarmedPreviewDataUrl } from "../productImages/services/prewarmedPreview";
 import { getMessage } from "../../../utils/errors";
 
 const RASTER_MIME_TYPES = new Map([
@@ -32,6 +33,9 @@ export const isPsdFile = (filePath: string) => {
 };
 
 export const createOfferRasterPreview = (filePath: string) => {
+  const prewarmedPreview = readPrewarmedPreviewDataUrl(filePath);
+  if (prewarmedPreview) return prewarmedPreview;
+
   const mimeType = RASTER_MIME_TYPES.get(getExtension(filePath));
 
   if (!mimeType) {
@@ -44,6 +48,9 @@ export const createOfferRasterPreview = (filePath: string) => {
 };
 
 export const createOfferPsdPreview = async (filePath: string) => {
+  const prewarmedPreview = readPrewarmedPreviewDataUrl(filePath);
+  if (prewarmedPreview) return prewarmedPreview;
+
   const buffer = fs.readFileSync(filePath);
   let thumbnail: ReturnType<typeof extractPsdThumbnailPreview> = undefined;
   let parserError = "";

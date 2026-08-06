@@ -161,3 +161,4 @@ Revisões em andamento:
 - [Visualizador de MP4 e limitação de MOV](./docs/REVISAO_VISUALIZADOR_MP4_MOV.md)
 - [Privacidade, registros operacionais, diagnóstico e feedback](./docs/roadmap-privacidade-telemetria.md)
 - [Atualizações independentes do Tauri e CEP](./docs/arquitetura-atualizacoes-independentes-tauri-cep.md)
+- [Cache compartilhado de previews dos produtos](./docs/CACHE_PREVIEWS_PRODUTOS.md)

@@ -104,7 +104,7 @@ public static class ShellThumbnailExtractor {
     }
   }
 }
-"@
+"@ -ReferencedAssemblies System.Drawing
 
 [ShellThumbnailExtractor]::Save($InputPath, $OutputPath, $Size)
 `;

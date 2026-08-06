@@ -13,6 +13,8 @@ histórico continua disponível no Git.
   dependem de Dashboard, certificado externo, ambiente limpo ou decisão humana.
 - [Impacto de mudanças de backend e versões](./impacto-mudancas-backend-e-versoes.md):
   regra para decidir quando uma alteração exige Tauri, CEP ou somente backend.
+- [Cache compartilhado de previews dos produtos](./CACHE_PREVIEWS_PRODUTOS.md):
+  contrato operacional de aquecimento por Jobão entre o Tauri e o CEP.
 
 ## Revisões e propostas
 
