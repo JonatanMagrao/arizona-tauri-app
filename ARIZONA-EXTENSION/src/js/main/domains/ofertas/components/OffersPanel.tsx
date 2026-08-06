@@ -27,12 +27,14 @@ import type {
   OfferTextField,
 } from "../types";
 import { normalizeOfferPrice } from "../utils/price";
+import { isEditableOfferTextControl } from "../utils/keyboard";
 import "./offers.scss";
 
 interface OffersPanelProps {
   productImages: LocalImage[];
   requestedOfferLayerIndex?: number;
   onLoadProductPreview: (image: LocalImage) => Promise<void>;
+  onRefreshProductImages?: () => Promise<void>;
   onBeforeOfferNavigation?: () => Promise<boolean>;
   onRequestedOfferLayerIndexHandled?: () => void;
   onStatus: (message: string) => void;
@@ -48,6 +50,7 @@ interface OfferImageThumbnailProps {
   image: OfferImageInfo | null;
   onDoubleClick: () => void;
   skuName: string;
+  previewRevision: number;
 }
 
 interface DoubleClickActivation<T extends HTMLElement> {
@@ -63,6 +66,7 @@ interface DoubleClickActivation<T extends HTMLElement> {
 interface ProductEditorProps {
   offerLayerIndex: number;
   product: OfferProduct;
+  previewRevision: number;
   onDescriptionChange: (
     offerLayerIndex: number,
     productIndex: number,
@@ -211,12 +215,15 @@ const toOfferDescriptionText = (value: string) =>
   value.toLocaleUpperCase("pt-BR");
 
 const commitDescriptionTextArea =
-  (onCommit: (value: string) => void) =>
+  (originalValue: string, onCommit: (value: string) => void) =>
   (event: FocusEvent<HTMLTextAreaElement>) => {
     const nextValue = toOfferDescriptionText(event.currentTarget.value);
+    const normalizedOriginalValue = toOfferDescriptionText(originalValue);
 
     event.currentTarget.value = nextValue;
-    onCommit(nextValue);
+    if (nextValue !== normalizedOriginalValue) {
+      onCommit(nextValue);
+    }
   };
 
 const keepDigits = (value: string) => String(value || "").replace(/\D/g, "");
@@ -463,6 +470,7 @@ const getFieldClassName = (field: OfferTextField, baseClassName: string) => {
 const OfferImageThumbnail = ({
   image,
   onDoubleClick,
+  previewRevision,
   skuName,
 }: OfferImageThumbnailProps) => {
   const [failed, setFailed] = useState(false);
@@ -510,7 +518,7 @@ const OfferImageThumbnail = ({
     return () => {
       cancelled = true;
     };
-  }, [canUsePsdPreview, canUseRasterPreview, filePath]);
+  }, [canUsePsdPreview, canUseRasterPreview, filePath, previewRevision]);
 
   return (
     <div
@@ -547,20 +555,33 @@ const OfferFieldControl = ({
   const [value, setValue] = useState(normalizeFieldValue(field, field.value));
   const activation = useDoubleClickActivation<HTMLInputElement>(field.enabled);
   const skipNextBlurCommitRef = useRef(false);
+  const editStartValueRef = useRef(normalizeFieldValue(field, field.value));
   const label = getFieldDisplayLabel(field);
 
   useEffect(() => {
-    setValue(normalizeFieldValue(field, field.value));
+    const nextValue = normalizeFieldValue(field, field.value);
+    editStartValueRef.current = nextValue;
+    setValue(nextValue);
   }, [field.format, field.value]);
 
   const commitValue = (nextValue: string) => {
     const normalizedValue = normalizeFieldValue(field, nextValue);
+    const originalValue = normalizeFieldValue(field, field.value);
 
     setValue(normalizedValue);
-    onCommit(normalizedValue);
+    if (normalizedValue !== originalValue) {
+      onCommit(normalizedValue);
+    }
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (isUndoKey(event) && activation.isEditing) {
+      event.preventDefault();
+      event.stopPropagation();
+      setValue(editStartValueRef.current);
+      return;
+    }
+
     if (event.key === "Tab" && activation.isEditing) {
       commitValue(event.currentTarget.value);
       skipNextBlurCommitRef.current = true;
@@ -608,7 +629,10 @@ const OfferFieldControl = ({
         onChange={(event) =>
           setValue(getEditableFieldValue(field, event.currentTarget.value))
         }
-        onDoubleClick={activation.handleDoubleClick}
+        onDoubleClick={(event) => {
+          editStartValueRef.current = normalizeFieldValue(field, field.value);
+          activation.handleDoubleClick(event);
+        }}
         onFocus={activation.handleFocus}
         onKeyDown={handleKeyDown}
         onMouseDown={activation.handleMouseDown}
@@ -686,6 +710,7 @@ const getOptionControlClassName = (optionGroup: OfferOptionGroup): string =>
 const ProductEditor = ({
   offerLayerIndex,
   product,
+  previewRevision,
   onDescriptionChange,
   onFieldChange,
   onOptionChange,
@@ -712,6 +737,9 @@ const ProductEditor = ({
   const descriptionActivation =
     useDoubleClickActivation<HTMLTextAreaElement>(product.description.enabled);
   const skipNextDescriptionBlurCommitRef = useRef(false);
+  const descriptionEditStartValueRef = useRef(
+    toOfferDescriptionText(product.description.value)
+  );
   const hasInstallmentJump = product.mechanic.installmentJump !== undefined &&
     product.mechanic.installmentJump !== null;
   const hasExtraControls =
@@ -899,6 +927,7 @@ const ProductEditor = ({
       <div className="offer-product-summary">
         <OfferImageThumbnail
           image={product.image}
+          previewRevision={previewRevision}
           skuName={skuName}
           onDoubleClick={() => onOpenImagePicker(product.index)}
         />
@@ -933,22 +962,38 @@ const ProductEditor = ({
               if (skipNextDescriptionBlurCommitRef.current) {
                 skipNextDescriptionBlurCommitRef.current = false;
               } else {
-                commitDescriptionTextArea((value) =>
-                  onDescriptionChange(offerLayerIndex, product.index, value)
+                commitDescriptionTextArea(
+                  product.description.value,
+                  (value) =>
+                    onDescriptionChange(offerLayerIndex, product.index, value)
                 )(event);
               }
 
               descriptionActivation.deactivate();
             }}
-            onDoubleClick={descriptionActivation.handleDoubleClick}
+            onDoubleClick={(event) => {
+              descriptionEditStartValueRef.current = toOfferDescriptionText(
+                product.description.value
+              );
+              descriptionActivation.handleDoubleClick(event);
+            }}
             onFocus={descriptionActivation.handleFocus}
             onKeyDown={(event) => {
+              if (isUndoKey(event) && descriptionActivation.isEditing) {
+                event.preventDefault();
+                event.stopPropagation();
+                event.currentTarget.value = descriptionEditStartValueRef.current;
+                return;
+              }
+
               if (event.key !== "Tab" || !descriptionActivation.isEditing) {
                 return;
               }
 
-              commitDescriptionTextArea((value) =>
-                onDescriptionChange(offerLayerIndex, product.index, value)
+              commitDescriptionTextArea(
+                product.description.value,
+                (value) =>
+                  onDescriptionChange(offerLayerIndex, product.index, value)
               )(event as unknown as FocusEvent<HTMLTextAreaElement>);
               skipNextDescriptionBlurCommitRef.current = true;
               descriptionActivation.activateNextFocus();
@@ -1608,6 +1653,7 @@ export const OffersPanel = ({
   productImages,
   requestedOfferLayerIndex,
   onLoadProductPreview,
+  onRefreshProductImages,
   onBeforeOfferNavigation,
   onRequestedOfferLayerIndexHandled,
   onStatus,
@@ -1617,8 +1663,11 @@ export const OffersPanel = ({
   const [isLegalSettingsOpen, setIsLegalSettingsOpen] = useState(false);
   const [imagePickerTarget, setImagePickerTarget] =
     useState<ImagePickerTarget | null>(null);
+  const [previewRevision, setPreviewRevision] = useState(0);
   const {
     snapshot,
+    loading,
+    refreshOffers,
     selectOffer,
     openOfferPrecomp,
     updateDescription,
@@ -1649,11 +1698,24 @@ export const OffersPanel = ({
 
   const handlePanelKeyDownCapture = (event: KeyboardEvent<HTMLElement>) => {
     if (!isUndoKey(event)) return;
+    if (isEditableOfferTextControl(event.target)) return;
 
     event.preventDefault();
     event.stopPropagation();
     event.nativeEvent.stopImmediatePropagation();
     void undo();
+  };
+
+  const handleRefreshOffers = async () => {
+    if (loading) return;
+
+    const refreshed = await refreshOffers();
+    await onRefreshProductImages?.();
+    setPreviewRevision((current) => current + 1);
+
+    if (refreshed) {
+      onStatus("Ofertas atualizadas.");
+    }
   };
 
   const runOfferNavigation = (action: () => Promise<void>) => {
@@ -1726,6 +1788,21 @@ export const OffersPanel = ({
                 <span>{snapshot?.compName}</span>
                 <button
                   type="button"
+                  className="offers-refresh-button"
+                  aria-label="Atualizar ofertas"
+                  aria-busy={loading}
+                  disabled={loading}
+                  title="Atualizar ofertas e imagens"
+                  onClick={() => void handleRefreshOffers()}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    clearDocumentSelection();
+                  }}
+                >
+                  {loading ? "..." : "↺"}
+                </button>
+                <button
+                  type="button"
                   className="offers-legal-menu-button"
                   aria-label="Opcoes do texto legal"
                   title="Opcoes do texto legal"
@@ -1742,6 +1819,7 @@ export const OffersPanel = ({
                 <ProductEditor
                   offerLayerIndex={selectedOffer.layerIndex}
                   product={product}
+                  previewRevision={previewRevision}
                   draggedProduct={draggedProduct}
                   key={product.index}
                   onDescriptionChange={updateDescription}

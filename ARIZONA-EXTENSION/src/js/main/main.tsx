@@ -229,6 +229,7 @@ const LicensedApp = ({ bgColor }: LicensedAppProps) => {
               productImages={images}
               requestedOfferLayerIndex={requestedOfferLayerIndex}
               onLoadProductPreview={loadImagePreview}
+              onRefreshProductImages={scanProjectProductsDirectory}
               onBeforeOfferNavigation={keepCurrentProjectForAction}
               onRequestedOfferLayerIndexHandled={() =>
                 setRequestedOfferLayerIndex(undefined)

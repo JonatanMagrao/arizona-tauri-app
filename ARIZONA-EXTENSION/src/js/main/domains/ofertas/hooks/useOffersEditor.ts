@@ -75,7 +75,7 @@ export const useOffersEditor = ({
 
   const refreshOffers = useCallback(
     async (offerLayerIndex = selectedOfferLayerIndexRef.current) => {
-      if (!window.cep) return;
+      if (!window.cep) return false;
 
       setLoading(true);
 
@@ -84,8 +84,10 @@ export const useOffersEditor = ({
         selectedOfferLayerIndexRef.current =
           nextSnapshot.selectedOfferLayerIndex || offerLayerIndex;
         setSnapshot(nextSnapshot);
+        return true;
       } catch (caught) {
         onStatus(getMessage(caught));
+        return false;
       } finally {
         setLoading(false);
       }

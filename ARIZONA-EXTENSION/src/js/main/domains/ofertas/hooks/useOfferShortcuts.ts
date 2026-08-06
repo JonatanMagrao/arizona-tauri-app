@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { csi } from "../../../../lib/utils/bolt";
 import { getMessage } from "../../../utils/errors";
+import { isEditableOfferTextControl } from "../utils/keyboard";
 
 interface UseOfferShortcutsOptions {
   onStatus: (message: string) => void;
@@ -61,6 +62,7 @@ export const useOfferShortcuts = ({
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!isUndoKeyboardEvent(event)) return;
+      if (isEditableOfferTextControl(event.target)) return;
 
       event.preventDefault();
       event.stopPropagation();
@@ -69,6 +71,7 @@ export const useOfferShortcuts = ({
 
     const handleBeforeInput = (event: InputEvent) => {
       if (event.inputType !== "historyUndo") return;
+      if (isEditableOfferTextControl(event.target)) return;
 
       event.preventDefault();
       event.stopPropagation();
