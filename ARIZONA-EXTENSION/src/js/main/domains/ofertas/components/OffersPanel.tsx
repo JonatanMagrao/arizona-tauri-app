@@ -131,6 +131,10 @@ interface DraggedOfferProduct {
   productIndex: number;
 }
 
+interface DraggedOfferTab {
+  offerLayerIndex: number;
+}
+
 interface ImagePickerTarget {
   offerLayerIndex: number;
   productIndex: number;
@@ -165,6 +169,7 @@ const OFFER_TAB_COLORS: { [offerIndex: number]: string } = {
 };
 
 const OFFER_PRODUCT_DRAG_MIME = "application/x-arizona-offer-product";
+const OFFER_TAB_DRAG_MIME = "application/x-arizona-offer-tab";
 
 let shouldEditNextFocusedTextControl = false;
 let nextFocusedTextControlTimer = 0;
@@ -200,6 +205,19 @@ const readDraggedOfferProduct = (
   }
 
   return null;
+};
+
+const readDraggedOfferTab = (
+  event: DragEvent<HTMLElement>
+): DraggedOfferTab | null => {
+  const rawPayload = event.dataTransfer.getData(OFFER_TAB_DRAG_MIME);
+
+  if (!rawPayload) return null;
+
+  const offerLayerIndex = Number(rawPayload);
+  return isFinite(offerLayerIndex) && offerLayerIndex > 0
+    ? { offerLayerIndex }
+    : null;
 };
 
 const getOfferTabColor = (markerIndex: number, fallbackIndex: number) =>
@@ -1660,6 +1678,11 @@ export const OffersPanel = ({
 }: OffersPanelProps) => {
   const [draggedProduct, setDraggedProduct] =
     useState<DraggedOfferProduct | null>(null);
+  const [draggedOfferTab, setDraggedOfferTab] =
+    useState<DraggedOfferTab | null>(null);
+  const [offerDropTargetLayerIndex, setOfferDropTargetLayerIndex] =
+    useState<number | null>(null);
+  const suppressOfferTabClickRef = useRef(false);
   const [isLegalSettingsOpen, setIsLegalSettingsOpen] = useState(false);
   const [imagePickerTarget, setImagePickerTarget] =
     useState<ImagePickerTarget | null>(null);
@@ -1678,6 +1701,7 @@ export const OffersPanel = ({
     updateLegalControlValue,
     updateLegalControlOption,
     replaceProductImage,
+    swapOffers,
     swapProducts,
     undo,
   } = useOffersEditor({
@@ -1738,6 +1762,10 @@ export const OffersPanel = ({
         <div className="offers-list">
           {snapshot?.offers.map((offer, index) => {
             const isSelected = offer.layerIndex === snapshot.selectedOfferLayerIndex;
+            const isDragging =
+              offer.layerIndex === draggedOfferTab?.offerLayerIndex;
+            const isDropTarget =
+              offer.layerIndex === offerDropTargetLayerIndex;
             const offerColor = getOfferTabColor(offer.markerIndex, index);
             const offerTabName = getOfferTabName(index);
             const offerTabFullName = getOfferTabFullName(index);
@@ -1751,9 +1779,18 @@ export const OffersPanel = ({
                 key={offer.layerIndex}
                 title={offer.name}
                 aria-label={offerTabFullName + " - " + offer.name}
-                className={isSelected ? "is-selected" : ""}
+                className={[
+                  isSelected ? "is-selected" : "",
+                  isDragging ? "is-dragging" : "",
+                  isDropTarget ? "is-drop-target" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
                 style={offerTabStyle}
+                draggable
                 onClick={() => {
+                  if (suppressOfferTabClickRef.current) return;
+
                   window.clearTimeout(offerClickTimer);
                   offerClickTimer = window.setTimeout(() => {
                     runOfferNavigation(() => selectOffer(offer.layerIndex));
@@ -1764,6 +1801,69 @@ export const OffersPanel = ({
                   runOfferNavigation(() =>
                     openOfferPrecomp(offer.layerIndex)
                   );
+                }}
+                onDragStart={(event) => {
+                  window.clearTimeout(offerClickTimer);
+                  suppressOfferTabClickRef.current = true;
+                  setDraggedOfferTab({ offerLayerIndex: offer.layerIndex });
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData(
+                    OFFER_TAB_DRAG_MIME,
+                    String(offer.layerIndex)
+                  );
+                }}
+                onDragEnter={(event) => {
+                  if (
+                    draggedOfferTab !== null &&
+                    draggedOfferTab.offerLayerIndex !== offer.layerIndex
+                  ) {
+                    event.preventDefault();
+                    setOfferDropTargetLayerIndex(offer.layerIndex);
+                  }
+                }}
+                onDragOver={(event) => {
+                  if (
+                    draggedOfferTab !== null &&
+                    draggedOfferTab.offerLayerIndex !== offer.layerIndex
+                  ) {
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "move";
+                  }
+                }}
+                onDragLeave={(event) => {
+                  const relatedTarget = event.relatedTarget;
+                  if (
+                    !(relatedTarget instanceof Node) ||
+                    !event.currentTarget.contains(relatedTarget)
+                  ) {
+                    setOfferDropTargetLayerIndex(null);
+                  }
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  const dragged =
+                    draggedOfferTab || readDraggedOfferTab(event);
+
+                  setDraggedOfferTab(null);
+                  setOfferDropTargetLayerIndex(null);
+
+                  if (
+                    dragged === null ||
+                    dragged.offerLayerIndex === offer.layerIndex
+                  ) {
+                    return;
+                  }
+
+                  runOfferNavigation(() =>
+                    swapOffers(dragged.offerLayerIndex, offer.layerIndex)
+                  );
+                }}
+                onDragEnd={() => {
+                  setDraggedOfferTab(null);
+                  setOfferDropTargetLayerIndex(null);
+                  window.setTimeout(() => {
+                    suppressOfferTabClickRef.current = false;
+                  }, 0);
                 }}
               >
                 <span className="offer-tab-color" aria-hidden="true" />

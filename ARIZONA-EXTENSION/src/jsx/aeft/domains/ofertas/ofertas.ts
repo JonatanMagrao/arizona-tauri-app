@@ -30,6 +30,7 @@ export {
   updateOfferOption,
 } from "./actions/updateOption";
 export { replaceOfferProductImage } from "./actions/replaceProductImage";
+export { swapOfferSources } from "./actions/swapOfferSources";
 export { swapOfferProducts } from "./actions/swapProducts";
 export {
   updateOfferLegalControl,

@@ -84,6 +84,7 @@
   background: #1f1f1f;
   color: #d7d7d7;
   text-align: left;
+  cursor: pointer;
 }
 
 .offers-list button:hover,
@@ -171,6 +172,20 @@
   font-weight: 900;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.offers-list button:active,
+.offers-list button.is-dragging {
+  cursor: grabbing;
+}
+
+.offers-list button.is-dragging {
+  opacity: 0.45;
+}
+
+.offers-list button.is-drop-target {
+  background: #343434;
+  box-shadow: inset 0 0 0 2px var(--offer-tab-color);
 }
 
 .offers-refresh-button {

@@ -29,6 +29,7 @@ export {
   openOfferPrecompForEditor,
   replaceOfferProductImage,
   selectOfferForEditor,
+  swapOfferSources,
   swapOfferProducts,
   updateOfferDescription,
   updateOfferField,

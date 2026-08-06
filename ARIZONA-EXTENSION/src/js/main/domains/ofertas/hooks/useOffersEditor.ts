@@ -5,6 +5,7 @@ import {
   openOfferPrecompForEditor,
   replaceOfferProductImage,
   selectOfferForEditor,
+  swapOfferSources,
   swapOfferProducts,
   updateOfferDescription,
   updateOfferField,
@@ -246,6 +247,14 @@ export const useOffersEditor = ({
     [runOfferAction]
   );
 
+  const swapOffers = useCallback(
+    (sourceOfferLayerIndex: number, targetOfferLayerIndex: number) =>
+      runOfferAction(() =>
+        swapOfferSources(sourceOfferLayerIndex, targetOfferLayerIndex)
+      ),
+    [runOfferAction]
+  );
+
   const replaceProductImage = useCallback(
     (
       offerLayerIndex: number,
@@ -312,6 +321,7 @@ export const useOffersEditor = ({
     updateLegalControlValue,
     updateLegalControlOption,
     replaceProductImage,
+    swapOffers,
     swapProducts,
     undo,
   };

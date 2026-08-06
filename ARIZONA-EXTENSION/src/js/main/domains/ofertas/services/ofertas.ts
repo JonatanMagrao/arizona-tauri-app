@@ -121,6 +121,19 @@ export const swapOfferProducts = (
   ) as Promise<OfferEditorActionResult>;
 };
 
+export const swapOfferSources = (
+  sourceOfferLayerIndex: number,
+  targetOfferLayerIndex: number
+) => {
+  assertCep();
+
+  return evalTS(
+    "swapOfferSources",
+    sourceOfferLayerIndex,
+    targetOfferLayerIndex
+  ) as Promise<OfferEditorActionResult>;
+};
+
 export const replaceOfferProductImage = (
   offerLayerIndex: number,
   productIndex: number,
