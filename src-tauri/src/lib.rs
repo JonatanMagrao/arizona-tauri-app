@@ -532,6 +532,9 @@ fn configured_after_shortcuts(config: &AppConfig) -> Result<Vec<RegisteredAfterS
     let mut shortcuts = Vec::new();
 
     for (label, action, shortcut_text) in specs {
+        if shortcut_text.trim().is_empty() {
+            continue;
+        }
         let shortcut = parse_after_shortcut(label, shortcut_text)?;
         if shortcuts
             .iter()
@@ -550,6 +553,41 @@ fn parse_after_shortcut(label: &str, shortcut_text: &str) -> Result<Shortcut, St
     shortcut_text
         .parse()
         .map_err(|err| format!("Atalho invalido em {label} (\"{shortcut_text}\"): {err}"))
+}
+
+#[cfg(test)]
+mod after_shortcut_config_tests {
+    use super::configured_after_shortcuts;
+    use crate::{after_effects::AfterEffectsAction, settings::AppConfig};
+
+    fn config_without_shortcuts() -> AppConfig {
+        let mut config = AppConfig::default();
+        config.move_layers_backward_shortcut.clear();
+        config.move_layers_forward_shortcut.clear();
+        config.move_jump_marker_shortcut.clear();
+        config.select_jump_marker_layer_shortcut.clear();
+        config.adjust_markers_shortcut.clear();
+        config.render_shortcut.clear();
+        config
+    }
+
+    #[test]
+    fn empty_shortcuts_do_not_reserve_global_combinations() {
+        let shortcuts = configured_after_shortcuts(&config_without_shortcuts()).unwrap();
+
+        assert!(shortcuts.is_empty());
+    }
+
+    #[test]
+    fn an_empty_shortcut_does_not_disable_the_other_actions() {
+        let mut config = config_without_shortcuts();
+        config.render_shortcut = "Ctrl+NumpadEnter".to_string();
+
+        let shortcuts = configured_after_shortcuts(&config).unwrap();
+
+        assert_eq!(shortcuts.len(), 1);
+        assert_eq!(shortcuts[0].action, AfterEffectsAction::Render);
+    }
 }
 
 fn notify_after_effects_shortcut_error(

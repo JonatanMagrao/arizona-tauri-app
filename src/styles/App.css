@@ -1853,9 +1853,46 @@ textarea:focus{
   font-weight: 850;
 }
 
+.settings-after-shortcuts__header{
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 2px;
+}
+
+.settings-after-shortcuts__header > div:first-child{
+  min-width: 0;
+}
+
+.settings-after-shortcuts__header p{
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.settings-after-shortcuts__actions{
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.settings-shortcuts-clear{
+  border-color: rgba(248,113,113,.42);
+  color: #fecaca;
+}
+
+.settings-shortcuts-clear:hover:not(:disabled),
+.settings-shortcuts-clear:focus-visible:not(:disabled){
+  border-color: rgba(248,113,113,.72);
+  background: rgba(127,29,29,.28);
+  color: #fee2e2;
+}
+
 .settings-shortcut-row{
   display: grid;
-  grid-template-columns: minmax(0, 160px) max-content;
+  grid-template-columns: minmax(0, 160px) repeat(3, max-content);
   gap: 8px;
   align-items: center;
   justify-self: start;
@@ -2239,7 +2276,7 @@ textarea:focus{
 
   .settings-shortcut-row{
     width: 100%;
-    grid-template-columns: minmax(0, 1fr) max-content;
+    grid-template-columns: minmax(0, 1fr) repeat(3, max-content);
   }
 
   .settings-form--window .settings-short-input{
@@ -2725,6 +2762,15 @@ textarea:focus{
 @media (prefers-reduced-motion: reduce){
   .media-loading__spinner{
     animation-duration: 1.8s;
+  }
+
+  .settings-after-shortcuts__header{
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settings-after-shortcuts__actions .btn{
+    flex: 1 1 0;
   }
 }
 

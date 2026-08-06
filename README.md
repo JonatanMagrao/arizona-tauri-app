@@ -136,6 +136,13 @@ motor JSX embutido através do comando oficial `AfterFX.exe -r`. Os arquivos
 materializados ficam nos dados locais do Arizona App, nunca nas pastas
 `Plug-ins` ou `Scripts` do Adobe.
 
+Na tela **Configurações > Atalhos After**, **Padrão** e **Limpar** restauram ou
+desativam uma ação individual. **Restaurar padrões** repõe as seis combinações
+originais e **Limpar todos** deixa todos os campos vazios. Um campo vazio
+significa atalho desativado: a combinação não é registrada globalmente. O botão
+**Gravar** continua permitindo escolher uma combinação personalizada para cada
+ação.
+
 O fonte mantido pelo projeto fica em
 `src-tauri/src/after_effects/arizona_actions.jsx`. Em `npm run tauri:dev`, ele
 continua legivel e e materializado como `.jsx`. No build release, o

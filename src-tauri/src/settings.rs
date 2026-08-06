@@ -111,15 +111,6 @@ pub fn validate_config(config: AppConfig) -> Result<AppConfig, String> {
     if config.ae_version.is_empty() {
         return Err("Informe a versão do After Effects.".to_string());
     }
-    if config.move_layers_backward_shortcut.is_empty()
-        || config.move_layers_forward_shortcut.is_empty()
-        || config.move_jump_marker_shortcut.is_empty()
-        || config.select_jump_marker_layer_shortcut.is_empty()
-        || config.adjust_markers_shortcut.is_empty()
-        || config.render_shortcut.is_empty()
-    {
-        return Err("Informe todos os atalhos Bridge.".to_string());
-    }
     if config.drive.is_empty() {
         return Err("Selecione o entrypoint do Drive.".to_string());
     }
@@ -202,4 +193,29 @@ fn is_incomplete_drive_entrypoint(value: &str) -> bool {
         .and_then(|name| name.to_str())
         .map(|name| name.eq_ignore_ascii_case("Drives compartilhados"))
         .unwrap_or(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{validate_config, AppConfig};
+
+    #[test]
+    fn allows_every_after_shortcut_to_be_disabled() {
+        let mut config = AppConfig::default();
+        config.move_layers_backward_shortcut.clear();
+        config.move_layers_forward_shortcut.clear();
+        config.move_jump_marker_shortcut.clear();
+        config.select_jump_marker_layer_shortcut.clear();
+        config.adjust_markers_shortcut.clear();
+        config.render_shortcut.clear();
+
+        let validated = validate_config(config).unwrap();
+
+        assert!(validated.move_layers_backward_shortcut.is_empty());
+        assert!(validated.move_layers_forward_shortcut.is_empty());
+        assert!(validated.move_jump_marker_shortcut.is_empty());
+        assert!(validated.select_jump_marker_layer_shortcut.is_empty());
+        assert!(validated.adjust_markers_shortcut.is_empty());
+        assert!(validated.render_shortcut.is_empty());
+    }
 }

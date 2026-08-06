@@ -16,6 +16,9 @@ histórico continua disponível no Git.
 
 ## Revisões e propostas
 
+- [Fila distribuída de render](./arquitetura-fila-render-distribuida.md):
+  proposta para disponibilização voluntária de máquinas, sincronização de
+  snapshots `.aep` pelo Google Drive e coordenação de jobs pelo Supabase.
 - [Visualizador de MP4 e limitação de MOV](./REVISAO_VISUALIZADOR_MP4_MOV.md):
   revisão do acesso a arquivos, fallback e mensagens para o usuário.
 - [Privacidade, diagnóstico e feedback](./roadmap-privacidade-telemetria.md):

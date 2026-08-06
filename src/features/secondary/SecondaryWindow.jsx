@@ -68,6 +68,9 @@ const AFTER_EFFECTS_SHORTCUT_ACTIONS = Object.freeze([
     placeholder: "Ctrl+NumpadEnter",
   },
 ]);
+const AFTER_EFFECTS_SHORTCUT_FIELDS = Object.freeze(
+  AFTER_EFFECTS_SHORTCUT_ACTIONS.map((action) => action.field)
+);
 
 const SETTINGS_TABS = Object.freeze({
   GENERAL: "general",
@@ -332,6 +335,7 @@ function SettingsView({ auth, showError, showSuccess }) {
   const [isReleasingDevice, setIsReleasingDevice] = useState(false);
   const [isReleaseConfirmOpen, setIsReleaseConfirmOpen] = useState(false);
   const [savingShortcutField, setSavingShortcutField] = useState("");
+  const [savingShortcutOperation, setSavingShortcutOperation] = useState("");
   const [choosingField, setChoosingField] = useState("");
   const [recordingShortcutField, setRecordingShortcutField] = useState("");
   const [installedAfterEffectsVersions, setInstalledAfterEffectsVersions] = useState([]);
@@ -537,8 +541,13 @@ function SettingsView({ auth, showError, showSuccess }) {
     }
   };
 
-  const saveShortcut = async (field, shortcut) => {
-    const previousShortcut = persistedSettingsRef.current[field] || shortcutDraft[field] || "";
+  const saveShortcut = async (
+    field,
+    shortcut,
+    successMessage = "Atalho salvo.",
+    operation = "record"
+  ) => {
+    const previousShortcut = persistedSettingsRef.current[field] ?? "";
     const nextConfig = normalizeSettings({
       ...persistedSettingsRef.current,
       [field]: shortcut,
@@ -547,6 +556,7 @@ function SettingsView({ auth, showError, showSuccess }) {
     setShortcutDraft((config) => ({ ...config, [field]: shortcut }));
     setRecordingShortcutField("");
     setSavingShortcutField(field);
+    setSavingShortcutOperation(operation);
 
     try {
       const saved = await invokeCommand(commandNames.saveAppConfig, {
@@ -556,10 +566,10 @@ function SettingsView({ auth, showError, showSuccess }) {
       persistedSettingsRef.current = normalized;
       setPersistedSettings(normalized);
       setShortcutDraft(normalized);
-      showSuccess("Atalho salvo.");
+      showSuccess(successMessage);
     } catch (error) {
       setShortcutDraft((config) => ({ ...config, [field]: previousShortcut }));
-      showError(String(error || "NÃ£o foi possÃ­vel salvar o atalho."));
+      showError(String(error || "Não foi possível salvar o atalho."));
     } finally {
       try {
         await invokeCommand(commandNames.setAfterShortcutRecording, { recording: false });
@@ -567,7 +577,52 @@ function SettingsView({ auth, showError, showSuccess }) {
         showError(String(error || "Nao foi possivel restaurar os atalhos do After."));
       }
       setSavingShortcutField("");
+      setSavingShortcutOperation("");
     }
+  };
+
+  const saveShortcutSet = async (shortcutValues, successMessage, operation) => {
+    if (recordingShortcutField || isShortcutRecordingTransition || savingShortcutField) return;
+
+    const previousSettings = persistedSettingsRef.current;
+    const nextConfig = normalizeSettings({
+      ...previousSettings,
+      ...shortcutValues,
+    });
+
+    setShortcutDraft(nextConfig);
+    setSavingShortcutField("all");
+    setSavingShortcutOperation(operation);
+    try {
+      const saved = await invokeCommand(commandNames.saveAppConfig, {
+        config: nextConfig,
+      });
+      const normalized = normalizeSettings(saved);
+      persistedSettingsRef.current = normalized;
+      setPersistedSettings(normalized);
+      setShortcutDraft(normalized);
+      showSuccess(successMessage);
+    } catch (error) {
+      setShortcutDraft(previousSettings);
+      showError(String(error || "Não foi possível atualizar os atalhos."));
+    } finally {
+      setSavingShortcutField("");
+      setSavingShortcutOperation("");
+    }
+  };
+
+  const restoreDefaultShortcuts = () => {
+    const defaults = Object.fromEntries(
+      AFTER_EFFECTS_SHORTCUT_FIELDS.map((field) => [field, DEFAULT_SETTINGS[field]])
+    );
+    return saveShortcutSet(defaults, "Atalhos originais restaurados.", "restore-all");
+  };
+
+  const clearAllShortcuts = () => {
+    const cleared = Object.fromEntries(
+      AFTER_EFFECTS_SHORTCUT_FIELDS.map((field) => [field, ""])
+    );
+    return saveShortcutSet(cleared, "Atalhos globais desativados.", "clear-all");
   };
 
   useEffect(() => {
@@ -705,6 +760,7 @@ function SettingsView({ auth, showError, showSuccess }) {
     || Boolean(savingShortcutField);
   const generalActionBusy = busy || isSaving;
   const shortcutsBusy = busy;
+  const shortcutSetBusy = shortcutsBusy || Boolean(recordingShortcutField);
   const currentYear = String(new Date().getFullYear());
 
   return (
@@ -854,10 +910,35 @@ function SettingsView({ auth, showError, showSuccess }) {
 
           {activeSettingsTab === SETTINGS_TABS.AFTER_SHORTCUTS && (
           <section className="settings-after-shortcuts settings-tab-panel" aria-label="Atalhos After" role="tabpanel">
-            <h2>Mover layers para markers</h2>
+            <header className="settings-after-shortcuts__header">
+              <div>
+                <h2>Atalhos globais do After Effects</h2>
+                <p>Campos sem atalho não ocupam combinações globais no Windows.</p>
+              </div>
+              <div className="settings-after-shortcuts__actions">
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  onClick={restoreDefaultShortcuts}
+                  disabled={shortcutSetBusy}
+                >
+                  {savingShortcutOperation === "restore-all" ? "Restaurando..." : "Restaurar padrões"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline settings-shortcuts-clear"
+                  onClick={clearAllShortcuts}
+                  disabled={shortcutSetBusy}
+                >
+                  {savingShortcutOperation === "clear-all" ? "Limpando..." : "Limpar todos"}
+                </button>
+              </div>
+            </header>
             {AFTER_EFFECTS_SHORTCUT_ACTIONS.map((action) => {
               const isRecording = recordingShortcutField === action.field;
               const isSavingShortcut = savingShortcutField === action.field;
+              const shortcutValue = shortcutDraft[action.field] || "";
+              const rowActionDisabled = shortcutsBusy || Boolean(recordingShortcutField);
               return (
                 <label className="settings-field" key={action.field}>
                   <span>{action.label}</span>
@@ -866,7 +947,8 @@ function SettingsView({ auth, showError, showSuccess }) {
                       className="input settings-short-input"
                       type="text"
                       value={shortcutDraft[action.field]}
-                      placeholder={action.placeholder}
+                      placeholder="Sem atalho"
+                      title={`Padrão: ${action.placeholder}`}
                       autoComplete="off"
                       readOnly
                       disabled={shortcutsBusy || (Boolean(recordingShortcutField) && !isRecording)}
@@ -874,11 +956,39 @@ function SettingsView({ auth, showError, showSuccess }) {
                     <button
                       type="button"
                       className="btn btn-outline"
+                      onClick={() => saveShortcut(
+                        action.field,
+                        DEFAULT_SETTINGS[action.field],
+                        "Atalho original restaurado.",
+                        "restore"
+                      )}
+                      disabled={rowActionDisabled || shortcutValue === DEFAULT_SETTINGS[action.field]}
+                    >
+                      {isSavingShortcut && savingShortcutOperation === "restore" ? "Restaurando..." : "Padrão"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-outline settings-shortcuts-clear"
+                      onClick={() => saveShortcut(
+                        action.field,
+                        "",
+                        "Atalho global desativado.",
+                        "clear"
+                      )}
+                      disabled={rowActionDisabled || !shortcutValue}
+                    >
+                      {isSavingShortcut && savingShortcutOperation === "clear" ? "Limpando..." : "Limpar"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-outline"
                       onClick={() => startShortcutRecording(action.field)}
                       disabled={shortcutsBusy || (Boolean(recordingShortcutField) && !isRecording)}
                       aria-pressed={isRecording}
                     >
-                      {isSavingShortcut ? "Salvando..." : isRecording ? "Cancelar" : "Gravar"}
+                      {isSavingShortcut && savingShortcutOperation === "record"
+                        ? "Salvando..."
+                        : isRecording ? "Cancelar" : "Gravar"}
                     </button>
                   </div>
                 </label>
