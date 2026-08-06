@@ -80,6 +80,8 @@ export interface OfferTextField {
   format: OfferFieldFormat;
   enabled: boolean;
   multiline?: boolean;
+  hasExpression?: boolean;
+  expressionEnabled?: boolean;
 }
 
 export interface OfferOption {

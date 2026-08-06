@@ -8,6 +8,7 @@ import {
   swapOfferSources,
   swapOfferProducts,
   updateOfferDescription,
+  updateOfferDescriptionExpression,
   updateOfferField,
   updateOfferInstallmentJump,
   updateOfferLegalControl,
@@ -247,6 +248,18 @@ export const useOffersEditor = ({
     [runOfferAction]
   );
 
+  const updateDescriptionExpression = useCallback(
+    (offerLayerIndex: number, productIndex: number, enabled: boolean) =>
+      runOfferAction(() =>
+        updateOfferDescriptionExpression(
+          offerLayerIndex,
+          productIndex,
+          enabled
+        )
+      ),
+    [runOfferAction]
+  );
+
   const swapOffers = useCallback(
     (sourceOfferLayerIndex: number, targetOfferLayerIndex: number) =>
       runOfferAction(() =>
@@ -313,6 +326,7 @@ export const useOffersEditor = ({
     selectOffer,
     openOfferPrecomp,
     updateDescription,
+    updateDescriptionExpression,
     updateField,
     updateOption,
     updateInstallmentJump,

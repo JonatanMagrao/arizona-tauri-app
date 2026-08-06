@@ -21,6 +21,8 @@ import {
 } from "../layers/findLayers";
 import {
   getNestedTextProperty,
+  hasPropertyExpression,
+  isPropertyExpressionEnabled,
   readLegalText,
   readText,
 } from "../layers/textFields";
@@ -136,6 +138,8 @@ export const generateOfferData = (offer: Layer): InternalOfferDetails => {
           format: "text",
           enabled: descriptionProperty !== null,
           multiline: true,
+          hasExpression: hasPropertyExpression(descriptionProperty),
+          expressionEnabled: isPropertyExpressionEnabled(descriptionProperty),
         },
         descriptionLayer: descriptionPrecomp,
         descriptionProperty,
@@ -217,6 +221,8 @@ export const toPublicOfferDetails = (
         format: product.description.format,
         enabled: product.description.enabled,
         multiline: product.description.multiline,
+        hasExpression: product.description.hasExpression,
+        expressionEnabled: product.description.expressionEnabled,
       },
       mechanic: {
         type: product.mechanic.type,

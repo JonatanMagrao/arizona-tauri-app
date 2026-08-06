@@ -53,6 +53,21 @@ export const updateOfferDescription = (
   ) as Promise<OfferEditorActionResult>;
 };
 
+export const updateOfferDescriptionExpression = (
+  offerLayerIndex: number,
+  productIndex: number,
+  enabled: boolean
+) => {
+  assertCep();
+
+  return evalTS(
+    "updateOfferDescriptionExpression",
+    offerLayerIndex,
+    productIndex,
+    enabled
+  ) as Promise<OfferEditorActionResult>;
+};
+
 export const updateOfferField = (
   offerLayerIndex: number,
   productIndex: number,

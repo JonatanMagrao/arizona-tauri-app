@@ -32,6 +32,7 @@ export {
   swapOfferSources,
   swapOfferProducts,
   updateOfferDescription,
+  updateOfferDescriptionExpression,
   updateOfferField,
   updateOfferInstallmentJump,
   updateOfferLegalControl,

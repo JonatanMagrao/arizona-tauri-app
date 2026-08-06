@@ -174,7 +174,7 @@
   white-space: nowrap;
 }
 
-.offers-list button:active,
+.offers-list button.is-drag-ready,
 .offers-list button.is-dragging {
   cursor: grabbing;
 }
@@ -262,7 +262,7 @@
   z-index: 0;
   height: auto;
   display: grid;
-  grid-template-rows: auto auto;
+  grid-template-rows: auto auto auto;
   align-items: stretch;
   gap: 10px;
   padding: 12px;
@@ -457,33 +457,68 @@
 }
 
 .offer-product-header {
+  width: 100%;
   min-width: 0;
   display: grid;
   align-items: start;
   justify-items: start;
-  gap: 3px;
+  gap: 5px;
+  padding-right: 28px;
+  box-sizing: border-box;
+}
+
+.offer-description-sync {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 5px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.58rem;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.offer-description-sync input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--offer-accent);
+  cursor: pointer;
+}
+
+.offer-description-sync input:disabled {
+  cursor: default;
+}
+
+.offer-description-sync input:disabled + span {
+  opacity: 0.46;
 }
 
 .offer-product-mechanic {
+  width: 100%;
   justify-self: start;
   align-self: start;
   display: inline-flex;
   align-items: center;
   min-height: 18px;
   max-width: 100%;
-  overflow: hidden;
+  overflow: visible;
   padding: 1px 6px;
   border: 1px solid rgba(16, 24, 40, 0.11);
   border-left: 2px solid var(--offer-accent);
   border-radius: 4px;
   background: rgba(245, 247, 250, 0.86);
   color: var(--text-muted);
+  box-sizing: border-box;
   font-size: 0.58rem;
   font-weight: 900;
   line-height: 1.15;
-  text-overflow: ellipsis;
   text-transform: uppercase;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .offer-product-summary {
@@ -501,11 +536,11 @@
   min-width: 0;
   min-height: var(--offer-image-size);
   display: grid;
-  grid-template-rows: auto auto;
+  grid-template-rows: auto;
   align-content: start;
   justify-items: start;
-  gap: 7px;
-  padding-right: 28px;
+  gap: 0;
+  padding-right: 0;
   box-sizing: border-box;
   overflow: visible;
 }

@@ -24,6 +24,7 @@ export {
   undoOffersEditorAction,
 } from "./actions/navigation";
 export { updateOfferDescription } from "./actions/updateDescription";
+export { updateOfferDescriptionExpression } from "./actions/updateDescriptionExpression";
 export { updateOfferField } from "./actions/updateField";
 export {
   updateOfferInstallmentJump,

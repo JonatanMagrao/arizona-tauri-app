@@ -93,6 +93,41 @@ export const setText = (textProperty: Property | null, text: string): void => {
   }
 };
 
+export const hasPropertyExpression = (
+  property: Property | null
+): boolean => {
+  if (property === null) return false;
+
+  try {
+    return property.canSetExpression && String(property.expression || "") !== "";
+  } catch (error) {
+    return false;
+  }
+};
+
+export const isPropertyExpressionEnabled = (
+  property: Property | null
+): boolean => {
+  if (!hasPropertyExpression(property) || property === null) return false;
+
+  try {
+    return property.expressionEnabled === true;
+  } catch (error) {
+    return false;
+  }
+};
+
+export const setPropertyExpressionEnabled = (
+  property: Property | null,
+  enabled: boolean
+): void => {
+  if (!hasPropertyExpression(property) || property === null) {
+    throw new Error("O Source Text do descritivo nao possui expressao.");
+  }
+
+  property.expressionEnabled = enabled;
+};
+
 export const readFieldValue = (field: InternalTextField): string => {
   if (field.valueKind === "value") {
     return readValueProperty(field.property);

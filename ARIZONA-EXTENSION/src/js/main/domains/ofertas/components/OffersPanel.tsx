@@ -72,6 +72,11 @@ interface ProductEditorProps {
     productIndex: number,
     value: string
   ) => void;
+  onDescriptionExpressionChange: (
+    offerLayerIndex: number,
+    productIndex: number,
+    enabled: boolean
+  ) => void;
   onFieldChange: (
     offerLayerIndex: number,
     productIndex: number,
@@ -170,6 +175,7 @@ const OFFER_TAB_COLORS: { [offerIndex: number]: string } = {
 
 const OFFER_PRODUCT_DRAG_MIME = "application/x-arizona-offer-product";
 const OFFER_TAB_DRAG_MIME = "application/x-arizona-offer-tab";
+const OFFER_TAB_DRAG_HOLD_MS = 350;
 
 let shouldEditNextFocusedTextControl = false;
 let nextFocusedTextControlTimer = 0;
@@ -730,6 +736,7 @@ const ProductEditor = ({
   product,
   previewRevision,
   onDescriptionChange,
+  onDescriptionExpressionChange,
   onFieldChange,
   onOptionChange,
   onInstallmentJumpChange,
@@ -752,8 +759,13 @@ const ProductEditor = ({
   );
   const skuName = getOfferSkuName(product);
   const descriptionRows = getOfferDescriptionRows(product.description.value);
+  const descriptionHasExpression = product.description.hasExpression === true;
+  const descriptionExpressionEnabled =
+    product.description.expressionEnabled === true;
   const descriptionActivation =
-    useDoubleClickActivation<HTMLTextAreaElement>(product.description.enabled);
+    useDoubleClickActivation<HTMLTextAreaElement>(
+      product.description.enabled && !descriptionExpressionEnabled
+    );
   const skipNextDescriptionBlurCommitRef = useRef(false);
   const descriptionEditStartValueRef = useRef(
     toOfferDescriptionText(product.description.value)
@@ -942,6 +954,15 @@ const ProductEditor = ({
         ) : null}
       </div>
 
+      <header className="offer-product-header">
+        <span
+          className="offer-product-mechanic"
+          title={product.mechanic.type}
+        >
+          {product.mechanic.type}
+        </span>
+      </header>
+
       <div className="offer-product-summary">
         <OfferImageThumbnail
           image={product.image}
@@ -951,15 +972,6 @@ const ProductEditor = ({
         />
 
         <div className="offer-product-copy">
-          <header className="offer-product-header">
-            <span
-              className="offer-product-mechanic"
-              title={product.mechanic.type}
-            >
-              {product.mechanic.type}
-            </span>
-          </header>
-
           <textarea
             ref={descriptionActivation.ref}
             className={[
@@ -975,7 +987,11 @@ const ProductEditor = ({
             spellCheck={false}
             readOnly={!descriptionActivation.isEditing}
             rows={descriptionRows}
-            title="Clique duas vezes para editar"
+            title={
+              descriptionExpressionEnabled
+                ? "Texto controlado pela expressao do descritivo"
+                : "Clique duas vezes para editar"
+            }
             onBlur={(event) => {
               if (skipNextDescriptionBlurCommitRef.current) {
                 skipNextDescriptionBlurCommitRef.current = false;
@@ -1021,6 +1037,29 @@ const ProductEditor = ({
           />
         </div>
       </div>
+
+      <label
+        className="offer-description-sync"
+        title={
+          descriptionHasExpression
+            ? "Habilitar ou desabilitar a expressao do descritivo"
+            : "O Source Text do descritivo nao possui expressao"
+        }
+      >
+        <input
+          type="checkbox"
+          checked={descriptionExpressionEnabled}
+          disabled={!descriptionHasExpression}
+          onChange={(event) =>
+            onDescriptionExpressionChange(
+              offerLayerIndex,
+              product.index,
+              event.currentTarget.checked
+            )
+          }
+        />
+        <span>Sincronizar descritivo</span>
+      </label>
 
       {hasControls ? (
         <div className="offer-product-controls">
@@ -1682,6 +1721,9 @@ export const OffersPanel = ({
     useState<DraggedOfferTab | null>(null);
   const [offerDropTargetLayerIndex, setOfferDropTargetLayerIndex] =
     useState<number | null>(null);
+  const [dragReadyOfferLayerIndex, setDragReadyOfferLayerIndex] =
+    useState<number | null>(null);
+  const offerTabHoldTimerRef = useRef(0);
   const suppressOfferTabClickRef = useRef(false);
   const [isLegalSettingsOpen, setIsLegalSettingsOpen] = useState(false);
   const [imagePickerTarget, setImagePickerTarget] =
@@ -1694,6 +1736,7 @@ export const OffersPanel = ({
     selectOffer,
     openOfferPrecomp,
     updateDescription,
+    updateDescriptionExpression,
     updateField,
     updateOption,
     updateInstallmentJump,
@@ -1719,6 +1762,21 @@ export const OffersPanel = ({
     if (typeof requestedOfferLayerIndex !== "number") return;
     onRequestedOfferLayerIndexHandled?.();
   }, [onRequestedOfferLayerIndexHandled, requestedOfferLayerIndex]);
+
+  useEffect(() => {
+    const releaseOfferTabHold = () => {
+      window.clearTimeout(offerTabHoldTimerRef.current);
+      offerTabHoldTimerRef.current = 0;
+      setDragReadyOfferLayerIndex(null);
+    };
+
+    window.addEventListener("mouseup", releaseOfferTabHold);
+
+    return () => {
+      window.removeEventListener("mouseup", releaseOfferTabHold);
+      window.clearTimeout(offerTabHoldTimerRef.current);
+    };
+  }, []);
 
   const handlePanelKeyDownCapture = (event: KeyboardEvent<HTMLElement>) => {
     if (!isUndoKey(event)) return;
@@ -1766,6 +1824,8 @@ export const OffersPanel = ({
               offer.layerIndex === draggedOfferTab?.offerLayerIndex;
             const isDropTarget =
               offer.layerIndex === offerDropTargetLayerIndex;
+            const isDragReady =
+              offer.layerIndex === dragReadyOfferLayerIndex;
             const offerColor = getOfferTabColor(offer.markerIndex, index);
             const offerTabName = getOfferTabName(index);
             const offerTabFullName = getOfferTabFullName(index);
@@ -1782,12 +1842,29 @@ export const OffersPanel = ({
                 className={[
                   isSelected ? "is-selected" : "",
                   isDragging ? "is-dragging" : "",
+                  isDragReady ? "is-drag-ready" : "",
                   isDropTarget ? "is-drop-target" : "",
                 ]
                   .filter(Boolean)
                   .join(" ")}
                 style={offerTabStyle}
-                draggable
+                draggable={isDragReady}
+                onMouseDown={(event) => {
+                  if (event.button !== 0) return;
+
+                  window.clearTimeout(offerTabHoldTimerRef.current);
+                  setDragReadyOfferLayerIndex(null);
+                  offerTabHoldTimerRef.current = window.setTimeout(() => {
+                    offerTabHoldTimerRef.current = 0;
+                    setDragReadyOfferLayerIndex(offer.layerIndex);
+                  }, OFFER_TAB_DRAG_HOLD_MS);
+                }}
+                onMouseLeave={() => {
+                  if (isDragReady || isDragging) return;
+
+                  window.clearTimeout(offerTabHoldTimerRef.current);
+                  offerTabHoldTimerRef.current = 0;
+                }}
                 onClick={() => {
                   if (suppressOfferTabClickRef.current) return;
 
@@ -1803,7 +1880,14 @@ export const OffersPanel = ({
                   );
                 }}
                 onDragStart={(event) => {
+                  if (!isDragReady) {
+                    event.preventDefault();
+                    return;
+                  }
+
                   window.clearTimeout(offerClickTimer);
+                  window.clearTimeout(offerTabHoldTimerRef.current);
+                  offerTabHoldTimerRef.current = 0;
                   suppressOfferTabClickRef.current = true;
                   setDraggedOfferTab({ offerLayerIndex: offer.layerIndex });
                   event.dataTransfer.effectAllowed = "move";
@@ -1859,7 +1943,10 @@ export const OffersPanel = ({
                   );
                 }}
                 onDragEnd={() => {
+                  window.clearTimeout(offerTabHoldTimerRef.current);
+                  offerTabHoldTimerRef.current = 0;
                   setDraggedOfferTab(null);
+                  setDragReadyOfferLayerIndex(null);
                   setOfferDropTargetLayerIndex(null);
                   window.setTimeout(() => {
                     suppressOfferTabClickRef.current = false;
@@ -1923,6 +2010,7 @@ export const OffersPanel = ({
                   draggedProduct={draggedProduct}
                   key={product.index}
                   onDescriptionChange={updateDescription}
+                  onDescriptionExpressionChange={updateDescriptionExpression}
                   onFieldChange={updateField}
                   onOptionChange={updateOption}
                   onInstallmentJumpChange={updateInstallmentJump}
