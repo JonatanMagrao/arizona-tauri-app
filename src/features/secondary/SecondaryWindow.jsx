@@ -6,6 +6,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import AdminWindow from "../admin/AdminWindow";
 import DuplicateIdenticalModal from "../duplicates/DuplicateIdenticalModal";
 import HistoryWindow from "../history/HistoryWindow";
+import RoteiroViewer from "./RoteiroViewer";
 import AppDropdown from "../../components/AppDropdown";
 import previewImg from "../../assets/hierarquia_pracas.jpg";
 import { useAutoHideToast } from "../../hooks/useAutoHideToast";
@@ -31,6 +32,7 @@ const DEFAULT_SECONDARY_STATE = {
   mediaTitle: "",
   mediaLoading: false,
   mediaError: "",
+  roteiroDocument: null,
   productReport: null,
   adminAuth: null,
   sessionAuth: null,
@@ -188,7 +190,8 @@ function SecondaryTitlebar({ title, view, onClose }) {
   const [isMaximized, setIsMaximized] = useState(false);
   const isSettingsTitlebar = view === "settings";
   const isDuplicateTitlebar = view === "duplicate";
-  const useSingleTitle = isSettingsTitlebar || isDuplicateTitlebar;
+  const isRoteiroTitlebar = view === "roteiro";
+  const useSingleTitle = isSettingsTitlebar || isDuplicateTitlebar || isRoteiroTitlebar;
 
   useEffect(() => {
     let unlistenResize = null;
@@ -289,6 +292,16 @@ function renderSecondaryView(state, closeWindow, showToast, onAdminAccessRestric
       <MediaView
         key={`media-${state.mediaPath}`}
         state={state}
+        showError={(message) => showToast(message, "error")}
+      />
+    );
+  }
+
+  if (state.view === "roteiro") {
+    return (
+      <RoteiroViewer
+        key={`roteiro-${state.roteiroDocument?.fileName || "empty"}`}
+        document={state.roteiroDocument}
         showError={(message) => showToast(message, "error")}
       />
     );
@@ -1898,6 +1911,7 @@ function normalizeSecondaryState(payload) {
   const mediaTitle = String(payload?.mediaTitle || payload?.media_title || "").trim();
   const mediaLoading = Boolean(payload?.mediaLoading ?? payload?.media_loading);
   const mediaError = String(payload?.mediaError || payload?.media_error || "").trim();
+  const roteiroDocument = normalizeRoteiroDocument(payload?.roteiroDocument || payload?.roteiro_document);
   const rawMediaKind = String(payload?.mediaKind || payload?.media_kind || "").trim().toLowerCase();
   const mediaKind = rawMediaKind === "audio" ? "audio" : "video";
   const productReport = normalizeProductReport(payload?.productReport || payload?.product_report);
@@ -1912,6 +1926,7 @@ function normalizeSecondaryState(payload) {
     mediaTitle,
     mediaLoading,
     mediaError,
+    roteiroDocument,
     productReport,
     adminAuth,
     sessionAuth,
@@ -1921,9 +1936,10 @@ function normalizeSecondaryState(payload) {
 function normalizeView(value) {
   if (value === "duplicate-identical") return "duplicate";
   if (value === "midia") return "media";
+  if (value === "script") return "roteiro";
   if (value === "produtos" || value === "products-log" || value === "product-log") return "products";
   if (value === "config" || value === "configuracoes") return "settings";
-  if (["duplicate", "history", "places", "media", "products", "settings", "admin"].includes(value)) return value;
+  if (["duplicate", "history", "places", "media", "roteiro", "products", "settings", "admin"].includes(value)) return value;
   return DEFAULT_SECONDARY_STATE.view;
 }
 
@@ -1936,6 +1952,14 @@ function secondaryWindowTitle(state) {
     return `Jobão ${state.productReport.jobaoCod}`;
   }
 
+  if (state.view === "roteiro") {
+    const document = state.roteiroDocument;
+    if (document?.jobaoCod && document?.jobinhoCod && document?.praca) {
+      return `${document.jobaoCod} - ${document.jobinhoCod} - ${document.praca}`;
+    }
+    return "Roteiro";
+  }
+
   if (state.view === "duplicate") return "Cópia de produtos idênticos";
   if (state.view === "history") return "Histórico";
   if (state.view === "places") return "Praças CRF";
@@ -1943,6 +1967,21 @@ function secondaryWindowTitle(state) {
   if (state.view === "admin") return "Gestão";
   if (state.view === "settings") return "Configurações";
   return "Arizona";
+}
+
+function normalizeRoteiroDocument(value) {
+  if (!value || typeof value !== "object") return null;
+
+  const content = String(value.content || "");
+  if (!content.trim()) return null;
+  return {
+    fileName: String(value.fileName || value.file_name || "Roteiro.docx").trim(),
+    jobaoCod: String(value.jobaoCod || value.jobao_cod || "").trim(),
+    jobinhoCod: String(value.jobinhoCod || value.jobinho_cod || "").trim(),
+    praca: String(value.praca || "").trim(),
+    modifiedAt: String(value.modifiedAt || value.modified_at || "").trim(),
+    content,
+  };
 }
 
 function normalizeAdminAuth(value) {

@@ -250,6 +250,79 @@ impl Arizona {
         Ok(ActionResponse::ok())
     }
 
+    pub fn roteiro_source(
+        &self,
+        jobao_cod: &str,
+        cod_jobinho: &str,
+    ) -> Result<(PathBuf, String), String> {
+        let jobao = self.get_jobao_path(jobao_cod)?;
+        let roteiros = jobao.join("ROTEIRO");
+        let projetos_ae = jobao.join("PROJETOS").join("AE");
+        let prefixo = Regex::new(&format!("^{}", regex::escape(cod_jobinho.trim())))
+            .map_err(|err| err.to_string())?;
+
+        let mut projetos = fs::read_dir(&projetos_ae)
+            .map_err(|err| format!("Erro ao ler {}: {err}", projetos_ae.display()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| err.to_string())?;
+        projetos.sort_by_key(|entry| entry.file_name().to_string_lossy().to_lowercase());
+
+        let praca = projetos
+            .into_iter()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .find(|name| prefixo.is_match(name))
+            .and_then(|name| {
+                name.split('_')
+                    .nth(1)
+                    .map(|value| value.trim().to_uppercase())
+            })
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "Praça não encontrada para este Jobinho.".to_string())?;
+
+        let mut candidatos = fs::read_dir(&roteiros)
+            .map_err(|err| format!("Erro ao ler {}: {err}", roteiros.display()))?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.is_file())
+            .filter(|path| {
+                path.extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("docx"))
+            })
+            .filter(|path| {
+                !path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("~$"))
+            })
+            .filter(|path| {
+                path.file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .is_some_and(|stem| {
+                        stem.split('_')
+                            .any(|part| part.eq_ignore_ascii_case(&praca))
+                    })
+            })
+            .collect::<Vec<_>>();
+        candidatos.sort_by_key(|path| {
+            path.file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_lowercase()
+        });
+
+        let path = candidatos
+            .into_iter()
+            .next()
+            .ok_or_else(|| format!("Roteiro DOCX da praça {praca} não encontrado."))?;
+
+        Ok((path, praca))
+    }
+
+    pub fn roteiro_path(&self, jobao_cod: &str, cod_jobinho: &str) -> Result<PathBuf, String> {
+        self.roteiro_source(jobao_cod, cod_jobinho)
+            .map(|(path, _)| path)
+    }
+
     pub fn project_name(
         &self,
         jobao_cod: &str,

@@ -530,7 +530,7 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
   const openVideo = async (jobao, jobinho, mediaType) => run(commandNames.openVideo, { jobaoCod: jobao, jobinhoCod: jobinho, mediaType }, `Não foi possível abrir o vídeo do projeto "${jobinho}"`);
   const openAudio = async (jobao, jobinho) => run(commandNames.openAudio, { jobaoCod: jobao, jobinhoCod: jobinho }, `Não foi possível abrir o áudio do projeto "${jobinho}"`);
   const revealVideo = async (jobao, jobinho, mediaType) => run(commandNames.revealVideo, { jobaoCod: jobao, jobinhoCod: jobinho, mediaType }, `Não foi possível localizar o vídeo do projeto "${jobinho}"`);
-  const openRoteiro = async () => run(commandNames.openRoteiro, { jobaoCod, jobinhoCod }, `Não foi possível abrir o roteiro do projeto "${jobinhoCod}"`);
+  const openRoteiro = async () => run(commandNames.viewRoteiro, { jobaoCod, jobinhoCod }, `Não foi possível visualizar o roteiro do projeto "${jobinhoCod}"`);
   const openOut = async (opt) => {
     if (isOpeningOut) return;
     setIsOpeningOut(true);

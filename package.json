@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node --test --test-isolation=none src/features/auth/loginFlow.test.mjs",
+    "test": "node --test --test-isolation=none src/features/auth/loginFlow.test.mjs src/features/secondary/roteiroHighlights.test.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:clean": "cd src-tauri && cargo clean",

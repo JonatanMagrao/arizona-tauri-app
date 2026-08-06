@@ -50,6 +50,8 @@ export const commandNames = Object.freeze({
   openOut: "open_out",
   openPip: "open_pip",
   openRoteiro: "open_roteiro",
+  openRoteiroInWord: "open_roteiro_in_word",
+  viewRoteiro: "view_roteiro",
   openSecondaryWindow: "open_secondary_window",
   openVideo: "open_video",
   openVisto: "open_visto",

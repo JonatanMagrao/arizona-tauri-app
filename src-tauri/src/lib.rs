@@ -7,6 +7,7 @@ mod device_identity;
 mod history;
 mod license;
 mod media;
+mod roteiro;
 mod settings;
 mod uninstall;
 
@@ -295,6 +296,8 @@ pub fn run() {
             open_media_native,
             reveal_video,
             open_roteiro,
+            open_roteiro_in_word,
+            view_roteiro,
             history_list,
             history_clear,
             history_copy_list,
@@ -2282,6 +2285,7 @@ struct SecondaryWindowState {
     media_title: Option<String>,
     media_loading: Option<bool>,
     media_error: Option<String>,
+    roteiro_document: Option<roteiro::RoteiroDocument>,
     product_report: Option<ProductImportReport>,
     admin_auth: Option<AdminWindowAuth>,
     session_auth: Option<SessionWindowAuth>,
@@ -2369,6 +2373,7 @@ fn open_secondary_window(
         media_title: None,
         media_loading: None,
         media_error: None,
+        roteiro_document: None,
         product_report: None,
         admin_auth,
         session_auth,
@@ -2608,6 +2613,7 @@ fn normalize_secondary_view(view: &str) -> Result<&'static str, String> {
         "history" | "historico" => Ok("history"),
         "places" | "pracas" | "crf" => Ok("places"),
         "media" | "midia" => Ok("media"),
+        "roteiro" | "script" => Ok("roteiro"),
         "products" | "produtos" | "products-log" | "product-log" => Ok("products"),
         "settings" | "config" | "configuracoes" => Ok("settings"),
         "admin" | "gestao" | "gestor" => Ok("admin"),
@@ -2621,6 +2627,7 @@ fn secondary_window_title(view: &str) -> &'static str {
         "history" => "Histórico",
         "places" => "Praças CRF",
         "media" => "Mídia",
+        "roteiro" => "Roteiro",
         "products" => "Produtos importados",
         "settings" => "Configurações",
         "admin" => "Admin",
@@ -2643,6 +2650,15 @@ fn secondary_window_state_title(state: &SecondaryWindowState) -> String {
         if let Some(report) = &state.product_report {
             return format!("Jobão {}", report.jobao_cod());
         }
+    }
+
+    if state.view == "roteiro" {
+        return state
+            .roteiro_document
+            .as_ref()
+            .map(|document| document.project_title())
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| secondary_window_title("roteiro").to_string());
     }
 
     secondary_window_title(&state.view).to_string()
@@ -2800,6 +2816,53 @@ fn open_roteiro(
 ) -> Result<ActionResponse, String> {
     require_authenticated(&auth)?;
     arizona_from_app(&app)?.open_roteiro(&jobao_cod, &jobinho_cod)
+}
+
+#[tauri::command]
+fn open_roteiro_in_word(
+    app: AppHandle,
+    auth: State<AuthState>,
+    jobao_cod: String,
+    jobinho_cod: String,
+) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
+    let roteiro = arizona_from_app(&app)?.roteiro_path(&jobao_cod, &jobinho_cod)?;
+    arizona::open_start_file(&roteiro)?;
+    Ok(ActionResponse::ok())
+}
+
+#[tauri::command]
+async fn view_roteiro(
+    app: AppHandle,
+    auth: State<'_, AuthState>,
+    jobao_cod: String,
+    jobinho_cod: String,
+) -> Result<ActionResponse, String> {
+    require_authenticated(&auth)?;
+    let arizona = arizona_from_app(&app)?;
+    let document_jobao = jobao_cod.clone();
+    let document_jobinho = jobinho_cod.clone();
+    let document = tauri::async_runtime::spawn_blocking(move || {
+        let (path, praca) = arizona.roteiro_source(&document_jobao, &document_jobinho)?;
+        roteiro::read_document(&path, &document_jobao, &document_jobinho, &praca)
+    })
+    .await
+    .map_err(|err| format!("Não foi possível preparar o visualizador de roteiro: {err}"))??;
+
+    let state = SecondaryWindowState {
+        view: "roteiro".to_string(),
+        jobao_cod: normalize_optional_text(Some(jobao_cod)),
+        media_path: None,
+        media_kind: None,
+        media_title: None,
+        media_loading: None,
+        media_error: None,
+        roteiro_document: Some(document),
+        product_report: None,
+        admin_auth: None,
+        session_auth: None,
+    };
+    show_secondary_window(app, state)
 }
 
 #[tauri::command]
@@ -3106,6 +3169,7 @@ where
         media_title: Some(loading_title),
         media_loading: Some(true),
         media_error: None,
+        roteiro_document: None,
         product_report: None,
         admin_auth: None,
         session_auth: None,
@@ -3142,6 +3206,7 @@ where
             media_title: Some(media.title),
             media_loading: Some(false),
             media_error: None,
+            roteiro_document: None,
             product_report: None,
             admin_auth: None,
             session_auth: None,
@@ -3154,6 +3219,7 @@ where
             media_title: Some("Mídia".to_string()),
             media_loading: Some(false),
             media_error: Some(message),
+            roteiro_document: None,
             product_report: None,
             admin_auth: None,
             session_auth: None,
@@ -3202,6 +3268,7 @@ fn show_product_import_report(
         media_title: None,
         media_loading: None,
         media_error: None,
+        roteiro_document: None,
         product_report: Some(report),
         admin_auth: None,
         session_auth: None,
