@@ -1,7 +1,8 @@
 # Cache compartilhado de previews dos produtos
 
 **Status:** operacional  
-**Última revisão:** 2026-08-06  
+**Última revisão:** 2026-08-09
+
 **Fontes da verdade:** `src-tauri/src/product_preview_cache.rs` e
 `ARIZONA-EXTENSION/src/js/main/domains/ofertas/productImages/services/prewarmedPreview.ts`
 
@@ -20,7 +21,8 @@ consegue localizar e disparar o `.aep` do Jobinho.
   Jobão e é compartilhado por seus Jobinhos.
 - Um Jobão concluído não inicia outra fila durante a mesma execução do app.
 - Depois de reiniciar o app, uma varredura rápida compara os arquivos com o
-  cache persistente e gera somente chaves ausentes.
+  cache persistente e gera somente chaves ausentes, inclusive entradas que
+  ficaram indisponíveis em uma tentativa anterior.
 - Um manifesto deixado como `preparing` por interrupção não bloqueia a retomada.
 
 ## Diretórios
@@ -44,9 +46,11 @@ prewarmed-v1\
   arizona-product-preview-v1.ps1
 ```
 
-Os previews são PNG de até `512 x 512`, obtidos pelo thumbnail provider do
-Windows. Cada arquivo é gravado em um temporário e movido para o nome final;
-assim, o CEP nunca deve observar um PNG parcialmente escrito.
+Os previews são PNG de até `512 x 512`. PSDs são compostos pelo renderer interno
+do Tauri; se ele não suportar um arquivo específico, o thumbnail provider do
+Windows é usado como fallback. PNGs usam o thumbnail provider do Windows. Cada
+arquivo é gravado em um temporário e movido para o nome final; assim, o CEP
+nunca deve observar um PNG parcialmente escrito.
 
 ## Identidade e invalidação
 
@@ -86,9 +90,10 @@ Cada manifesto registra:
 - horário da última varredura;
 - path, tamanho, modificação, chave e disponibilidade de cada preview.
 
-Falhas individuais do thumbnail provider são registradas como indisponíveis
-quando a execução chega a `complete`. O CEP continua capaz de interpretar o
-arquivo original e gerar seu preview localmente.
+Falhas individuais dos renderers são registradas como indisponíveis quando a
+execução chega a `complete`. O CEP continua capaz de interpretar o arquivo
+original e gerar seu preview localmente. Uma nova execução do app tenta essas
+entradas novamente.
 
 ## Leitura pelo CEP
 

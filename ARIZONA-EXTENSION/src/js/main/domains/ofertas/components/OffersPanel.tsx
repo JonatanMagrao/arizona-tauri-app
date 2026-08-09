@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -176,10 +177,10 @@ const OFFER_TAB_COLORS: { [offerIndex: number]: string } = {
 const OFFER_PRODUCT_DRAG_MIME = "application/x-arizona-offer-product";
 const OFFER_TAB_DRAG_MIME = "application/x-arizona-offer-tab";
 const OFFER_TAB_DRAG_HOLD_MS = 350;
+const OFFER_TAB_POST_DRAG_CLICK_SUPPRESSION_MS = 250;
 
 let shouldEditNextFocusedTextControl = false;
 let nextFocusedTextControlTimer = 0;
-let offerClickTimer = 0;
 
 const clearDocumentSelection = () => {
   window.getSelection()?.removeAllRanges();
@@ -1723,7 +1724,9 @@ export const OffersPanel = ({
     useState<number | null>(null);
   const [dragReadyOfferLayerIndex, setDragReadyOfferLayerIndex] =
     useState<number | null>(null);
+  const offerClickTimerRef = useRef(0);
   const offerTabHoldTimerRef = useRef(0);
+  const offerTabClickReleaseTimerRef = useRef(0);
   const suppressOfferTabClickRef = useRef(false);
   const [isLegalSettingsOpen, setIsLegalSettingsOpen] = useState(false);
   const [imagePickerTarget, setImagePickerTarget] =
@@ -1753,9 +1756,17 @@ export const OffersPanel = ({
   });
   const selectedOffer = snapshot?.selectedOffer ?? null;
 
+  const handleUndo = useCallback(async () => {
+    const offersRefreshed = await undo();
+    if (!offersRefreshed) return;
+
+    await onRefreshProductImages?.();
+    setPreviewRevision((current) => current + 1);
+  }, [onRefreshProductImages, undo]);
+
   useOfferShortcuts({
     onStatus,
-    onUndo: undo,
+    onUndo: handleUndo,
   });
 
   useEffect(() => {
@@ -1774,7 +1785,9 @@ export const OffersPanel = ({
 
     return () => {
       window.removeEventListener("mouseup", releaseOfferTabHold);
+      window.clearTimeout(offerClickTimerRef.current);
       window.clearTimeout(offerTabHoldTimerRef.current);
+      window.clearTimeout(offerTabClickReleaseTimerRef.current);
     };
   }, []);
 
@@ -1785,7 +1798,9 @@ export const OffersPanel = ({
     event.preventDefault();
     event.stopPropagation();
     event.nativeEvent.stopImmediatePropagation();
-    void undo();
+    if (event.repeat) return;
+
+    void handleUndo();
   };
 
   const handleRefreshOffers = async () => {
@@ -1852,6 +1867,7 @@ export const OffersPanel = ({
                 onMouseDown={(event) => {
                   if (event.button !== 0) return;
 
+                  window.clearTimeout(offerClickTimerRef.current);
                   window.clearTimeout(offerTabHoldTimerRef.current);
                   setDragReadyOfferLayerIndex(null);
                   offerTabHoldTimerRef.current = window.setTimeout(() => {
@@ -1866,15 +1882,22 @@ export const OffersPanel = ({
                   offerTabHoldTimerRef.current = 0;
                 }}
                 onClick={() => {
-                  if (suppressOfferTabClickRef.current) return;
+                  if (suppressOfferTabClickRef.current) {
+                    window.clearTimeout(offerTabClickReleaseTimerRef.current);
+                    offerTabClickReleaseTimerRef.current = 0;
+                    suppressOfferTabClickRef.current = false;
+                    return;
+                  }
 
-                  window.clearTimeout(offerClickTimer);
-                  offerClickTimer = window.setTimeout(() => {
+                  window.clearTimeout(offerClickTimerRef.current);
+                  offerClickTimerRef.current = window.setTimeout(() => {
+                    offerClickTimerRef.current = 0;
                     runOfferNavigation(() => selectOffer(offer.layerIndex));
                   }, 180);
                 }}
                 onDoubleClick={() => {
-                  window.clearTimeout(offerClickTimer);
+                  window.clearTimeout(offerClickTimerRef.current);
+                  offerClickTimerRef.current = 0;
                   runOfferNavigation(() =>
                     openOfferPrecomp(offer.layerIndex)
                   );
@@ -1885,9 +1908,12 @@ export const OffersPanel = ({
                     return;
                   }
 
-                  window.clearTimeout(offerClickTimer);
+                  window.clearTimeout(offerClickTimerRef.current);
+                  offerClickTimerRef.current = 0;
                   window.clearTimeout(offerTabHoldTimerRef.current);
+                  window.clearTimeout(offerTabClickReleaseTimerRef.current);
                   offerTabHoldTimerRef.current = 0;
+                  offerTabClickReleaseTimerRef.current = 0;
                   suppressOfferTabClickRef.current = true;
                   setDraggedOfferTab({ offerLayerIndex: offer.layerIndex });
                   event.dataTransfer.effectAllowed = "move";
@@ -1948,9 +1974,14 @@ export const OffersPanel = ({
                   setDraggedOfferTab(null);
                   setDragReadyOfferLayerIndex(null);
                   setOfferDropTargetLayerIndex(null);
-                  window.setTimeout(() => {
-                    suppressOfferTabClickRef.current = false;
-                  }, 0);
+                  window.clearTimeout(offerTabClickReleaseTimerRef.current);
+                  offerTabClickReleaseTimerRef.current = window.setTimeout(
+                    () => {
+                      offerTabClickReleaseTimerRef.current = 0;
+                      suppressOfferTabClickRef.current = false;
+                    },
+                    OFFER_TAB_POST_DRAG_CLICK_SUPPRESSION_MS
+                  );
                 }}
               >
                 <span className="offer-tab-color" aria-hidden="true" />

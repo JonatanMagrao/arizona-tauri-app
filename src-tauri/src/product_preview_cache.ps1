@@ -90,7 +90,7 @@ public static class ArizonaShellThumbnailExtractor {
 }
 "@ -ReferencedAssemblies System.Drawing
 
-$tasks = @(Get-Content -LiteralPath $TasksPath -Raw | ConvertFrom-Json)
+$tasks = Get-Content -LiteralPath $TasksPath -Raw | ConvertFrom-Json
 
 foreach ($task in $tasks) {
   if (Test-Path -LiteralPath $task.outputPath -PathType Leaf) {

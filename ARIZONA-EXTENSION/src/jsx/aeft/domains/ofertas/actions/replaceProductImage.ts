@@ -34,10 +34,19 @@ export const replaceOfferProductImage = (
       throw new Error("Layer de imagem da oferta nao encontrada.");
     }
 
-    const footage = getOrImportFootage(filePath);
+    const footage = imageLayer.source;
 
-    imageLayer.replaceSource(footage, false);
-    imageLayer.name = footage.name;
+    if (!(footage instanceof FootageItem)) {
+      throw new Error("A source da imagem precisa ser um footage.");
+    }
+
+    const file = new File(filePath);
+
+    if (!file.exists) {
+      throw new Error("Arquivo de imagem nao encontrado.");
+    }
+
+    footage.replace(file);
 
     if (openOfferPrecomp === true) {
       openOfferSourceInViewer(offer);
@@ -57,52 +66,4 @@ export const replaceOfferProductImage = (
   }
 
   return result;
-};
-
-const getOrImportFootage = (filePath: string): FootageItem => {
-  const file = new File(filePath);
-
-  if (!file.exists) {
-    throw new Error("Arquivo de imagem nao encontrado.");
-  }
-
-  if (app.project === null) {
-    throw new Error("Nenhum projeto aberto.");
-  }
-
-  const existingFootage = findImportedFootageByFile(file);
-
-  if (existingFootage !== null) return existingFootage;
-
-  const importOptions = new ImportOptions(file);
-
-  if (importOptions.canImportAs(ImportAsType.FOOTAGE)) {
-    importOptions.importAs = ImportAsType.FOOTAGE;
-  }
-
-  return app.project.importFile(importOptions);
-};
-
-const findImportedFootageByFile = (file: File): FootageItem | null => {
-  if (app.project === null) return null;
-
-  const targetPath = file.fsName;
-
-  for (let index = 1; index <= app.project.numItems; index += 1) {
-    const item = app.project.item(index);
-
-    if (!(item instanceof FootageItem)) continue;
-
-    try {
-      if (
-        item.mainSource instanceof FileSource &&
-        item.mainSource.file.fsName === targetPath
-      ) {
-        return item;
-      }
-    } catch (error) {
-    }
-  }
-
-  return null;
 };

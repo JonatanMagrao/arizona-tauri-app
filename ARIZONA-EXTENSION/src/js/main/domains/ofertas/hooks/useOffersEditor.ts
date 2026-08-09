@@ -59,6 +59,7 @@ export const useOffersEditor = ({
     initialOfferLayerIndex
   );
   const lastUndoAtRef = useRef(0);
+  const undoInFlightRef = useRef(false);
 
   const appendLog = useCallback((messages: string | string[]) => {
     const nextMessages = Array.isArray(messages) ? messages : [messages];
@@ -288,9 +289,11 @@ export const useOffersEditor = ({
 
   const undo = useCallback(async () => {
     const now = Date.now();
-    if (now - lastUndoAtRef.current < UNDO_DEDUPE_MS) return;
+    if (undoInFlightRef.current) return false;
+    if (now - lastUndoAtRef.current < UNDO_DEDUPE_MS) return false;
 
     lastUndoAtRef.current = now;
+    undoInFlightRef.current = true;
 
     try {
       const result = await undoOffersEditorAction();
@@ -305,11 +308,14 @@ export const useOffersEditor = ({
       }
 
       await wait(UNDO_REFRESH_DELAY_MS);
-      await refreshOffers(selectedOfferLayerIndexRef.current);
+      return await refreshOffers(selectedOfferLayerIndexRef.current);
     } catch (caught) {
       const message = getMessage(caught);
       onStatus(message);
       appendLog(message);
+      return false;
+    } finally {
+      undoInFlightRef.current = false;
     }
   }, [appendLog, onStatus, refreshOffers]);
 

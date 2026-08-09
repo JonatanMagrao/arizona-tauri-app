@@ -3,6 +3,7 @@ import {
   getLayerByIndex,
   getOffersComp,
   nameMatches,
+  selectOffer,
 } from "../layers/findLayers";
 import { createActionResult } from "./shared";
 
@@ -11,7 +12,7 @@ export const swapOfferSources = (
   targetOfferLayerIndex: number
 ): OfferEditorActionResult => {
   const result = createActionResult();
-  const comp = getOffersComp();
+  const comp = getOffersComp(true);
 
   if (comp === null) {
     result.message = 'Precomp "Miolo" nao encontrada.';
@@ -60,15 +61,20 @@ export const swapOfferSources = (
   app.beginUndoGroup("Trocar conteudo das ofertas");
 
   try {
-    sourceOffer.replaceSource(targetComp, true);
+    // Both comps remain valid during this bidirectional swap, so expression
+    // text must not be rewritten in either half. Keep the source, scale,
+    // layer-name and target selection changes in the same undo step.
+    sourceOffer.replaceSource(targetComp, false);
     sourceWasReplaced = true;
     sourceOffer.scale.setValue(targetScale);
     sourceOffer.name = sourceLayerName;
 
-    targetOffer.replaceSource(sourceComp, true);
+    targetOffer.replaceSource(sourceComp, false);
     targetWasReplaced = true;
     targetOffer.scale.setValue(sourceScale);
     targetOffer.name = targetLayerName;
+
+    selectOffer(comp, targetOffer);
 
     result.ok = true;
     result.selectedOfferLayerIndex = targetOffer.index;
@@ -81,12 +87,12 @@ export const swapOfferSources = (
   } catch (error) {
     try {
       if (targetWasReplaced) {
-        targetOffer.replaceSource(targetComp, true);
+        targetOffer.replaceSource(targetComp, false);
         targetOffer.scale.setValue(targetScale);
       }
 
       if (sourceWasReplaced) {
-        sourceOffer.replaceSource(sourceComp, true);
+        sourceOffer.replaceSource(sourceComp, false);
         sourceOffer.scale.setValue(sourceScale);
       }
 

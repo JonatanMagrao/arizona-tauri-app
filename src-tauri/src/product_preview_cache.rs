@@ -1,3 +1,5 @@
+use image::{DynamicImage, ImageFormat, RgbaImage};
+use psd::Psd;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -45,7 +47,7 @@ struct ProductPreviewManifest {
     entries: Vec<ProductPreviewManifestEntry>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PreviewTask {
     input_path: String,
@@ -135,20 +137,6 @@ fn warmup_job(app: &AppHandle, jobao_cod: &str, products_directory: &Path) -> Re
     fs::create_dir_all(&tasks_directory).map_err(|error| error.to_string())?;
 
     let manifest_path = jobs_directory.join(format!("{}.json", sanitize_job_key(jobao_cod)));
-    let previous_manifest = read_manifest(&manifest_path);
-    let unavailable_cache_keys = previous_manifest
-        .as_ref()
-        .filter(|manifest| manifest.status == "complete")
-        .map(|manifest| {
-            manifest
-                .entries
-                .iter()
-                .filter(|entry| !entry.preview_available)
-                .map(|entry| entry.cache_key.clone())
-                .collect::<HashSet<_>>()
-        })
-        .unwrap_or_default();
-
     let mut entries = scan_product_entries(products_directory)?;
     let mut tasks = Vec::new();
 
@@ -156,7 +144,7 @@ fn warmup_job(app: &AppHandle, jobao_cod: &str, products_directory: &Path) -> Re
         let output_path = files_directory.join(format!("{}.png", entry.cache_key));
         entry.preview_available = output_path.is_file();
 
-        if !entry.preview_available && !unavailable_cache_keys.contains(&entry.cache_key) {
+        if !entry.preview_available {
             tasks.push(PreviewTask {
                 input_path: entry.source_path.clone(),
                 output_path: path_text(&output_path),
@@ -237,9 +225,34 @@ fn run_preview_tasks(
     jobao_cod: &str,
     tasks: &[PreviewTask],
 ) -> Result<(), String> {
+    let mut shell_tasks = Vec::new();
+
+    for task in tasks {
+        if is_psd_path(Path::new(&task.input_path)) {
+            match render_psd_preview(task) {
+                Ok(()) => continue,
+                Err(error) => eprintln!(
+                    "Render PSD interno indisponivel para {}: {}. Tentando thumbnail do Windows.",
+                    task.input_path, error
+                ),
+            }
+        }
+
+        shell_tasks.push(task.clone());
+    }
+
+    if shell_tasks.is_empty() {
+        return Ok(());
+    }
+
     let script_path = cache_root.join(POWERSHELL_SCRIPT_NAME);
-    if !script_path.is_file() {
-        fs::write(&script_path, include_str!("product_preview_cache.ps1"))
+    let script_contents = include_str!("product_preview_cache.ps1");
+    let script_is_current = fs::read_to_string(&script_path)
+        .map(|contents| contents == script_contents)
+        .unwrap_or(false);
+
+    if !script_is_current {
+        fs::write(&script_path, script_contents)
             .map_err(|error| format!("Erro ao criar {}: {error}", script_path.display()))?;
     }
 
@@ -249,7 +262,7 @@ fn run_preview_tasks(
         std::process::id(),
         epoch_millis(SystemTime::now())
     ));
-    let tasks_json = serde_json::to_string(tasks).map_err(|error| error.to_string())?;
+    let tasks_json = serde_json::to_string(&shell_tasks).map_err(|error| error.to_string())?;
     fs::write(&tasks_path, tasks_json)
         .map_err(|error| format!("Erro ao criar {}: {error}", tasks_path.display()))?;
 
@@ -273,6 +286,79 @@ fn run_preview_tasks(
     }
 
     Ok(())
+}
+
+#[cfg(windows)]
+fn render_psd_preview(task: &PreviewTask) -> Result<(), String> {
+    let input_path = Path::new(&task.input_path);
+    let output_path = Path::new(&task.output_path);
+
+    if output_path.is_file() {
+        return Ok(());
+    }
+
+    let bytes = fs::read(input_path)
+        .map_err(|error| format!("Erro ao ler {}: {error}", input_path.display()))?;
+    let psd = Psd::from_bytes(&bytes)
+        .map_err(|error| format!("Erro ao interpretar {}: {error}", input_path.display()))?;
+    let width = psd.width();
+    let height = psd.height();
+
+    if width == 0 || height == 0 {
+        return Err(format!(
+            "PSD sem dimensoes validas: {}",
+            input_path.display()
+        ));
+    }
+
+    let rgba = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| psd.rgba()))
+        .map_err(|_| format!("Falha ao compor os pixels de {}", input_path.display()))?;
+    let expected_length = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| format!("Dimensoes PSD invalidas: {width}x{height}"))?;
+
+    if rgba.len() != expected_length {
+        return Err(format!(
+            "Pixels PSD incompletos para {}: esperado {}, recebido {}",
+            input_path.display(),
+            expected_length,
+            rgba.len()
+        ));
+    }
+
+    let source = RgbaImage::from_raw(width, height, rgba).ok_or_else(|| {
+        format!(
+            "Nao foi possivel montar o bitmap de {}",
+            input_path.display()
+        )
+    })?;
+    let preview = image::imageops::thumbnail(&source, task.size, task.size);
+    let temporary_path = output_path.with_extension(format!("png.{}.tmp", std::process::id()));
+
+    let save_result = DynamicImage::ImageRgba8(preview)
+        .save_with_format(&temporary_path, ImageFormat::Png)
+        .map_err(|error| format!("Erro ao criar {}: {error}", temporary_path.display()));
+
+    if let Err(error) = save_result {
+        let _ = fs::remove_file(&temporary_path);
+        return Err(error);
+    }
+
+    match fs::rename(&temporary_path, output_path) {
+        Ok(()) => Ok(()),
+        Err(_) if output_path.is_file() => {
+            let _ = fs::remove_file(&temporary_path);
+            Ok(())
+        }
+        Err(error) => {
+            let _ = fs::remove_file(&temporary_path);
+            Err(format!(
+                "Erro ao concluir {}: {error}",
+                output_path.display()
+            ))
+        }
+    }
 }
 
 fn preview_cache_key(source_path: &str, size: u64, modified_at_ms: u64) -> String {
@@ -332,6 +418,14 @@ fn is_supported_product_image(path: &Path) -> bool {
     )
 }
 
+#[cfg(windows)]
+fn is_psd_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.eq_ignore_ascii_case("psd"))
+        .unwrap_or(false)
+}
+
 fn sanitize_job_key(jobao_cod: &str) -> String {
     let sanitized = jobao_cod
         .trim()
@@ -378,7 +472,8 @@ fn lock_jobs(
 
 #[cfg(test)]
 mod tests {
-    use super::{preview_cache_key, sanitize_job_key};
+    use super::{preview_cache_key, render_psd_preview, sanitize_job_key, PreviewTask};
+    use std::{env, fs};
 
     #[test]
     fn cache_key_ignores_windows_path_case_and_separator_direction() {
@@ -412,5 +507,46 @@ mod tests {
     fn sanitizes_jobao_for_manifest_file_name() {
         assert_eq!(sanitize_job_key(" 13/34 "), "13_34");
         assert_eq!(sanitize_job_key(""), "jobao");
+    }
+
+    #[test]
+    #[ignore = "requires ARIZONA_TEST_PSD_DIRECTORY with external PSD fixtures"]
+    fn renders_external_psd_fixtures() {
+        let directory = env::var("ARIZONA_TEST_PSD_DIRECTORY")
+            .expect("ARIZONA_TEST_PSD_DIRECTORY must point to the PSD fixture directory");
+        let mut inputs = fs::read_dir(&directory)
+            .expect("PSD fixture directory should be readable")
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| {
+                path.extension()
+                    .and_then(|extension| extension.to_str())
+                    .map(|extension| extension.eq_ignore_ascii_case("psd"))
+                    .unwrap_or(false)
+            })
+            .collect::<Vec<_>>();
+        inputs.sort();
+        assert!(!inputs.is_empty(), "at least one PSD fixture is required");
+
+        let output_directory =
+            env::temp_dir().join(format!("arizona-psd-preview-smoke-{}", std::process::id()));
+        fs::create_dir_all(&output_directory).expect("output directory should be created");
+
+        for (index, input) in inputs.iter().enumerate() {
+            let output = output_directory.join(format!("{index}.png"));
+            let task = PreviewTask {
+                input_path: input.to_string_lossy().into_owned(),
+                output_path: output.to_string_lossy().into_owned(),
+                size: 512,
+            };
+
+            render_psd_preview(&task)
+                .unwrap_or_else(|error| panic!("{}: {error}", input.display()));
+            let preview = image::open(&output)
+                .unwrap_or_else(|error| panic!("{}: {error}", output.display()));
+            assert!(preview.width() <= 512);
+            assert!(preview.height() <= 512);
+        }
+
+        fs::remove_dir_all(output_directory).expect("smoke previews should be removable");
     }
 }

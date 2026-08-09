@@ -30,6 +30,8 @@ rand = "0.9"
 regex = "1"
 base64 = "0.22"
 sha2 = "0.10"
+image = { version = "0.25", default-features = false, features = ["png"] }
+psd = "0.3.5"
 roxmltree = "0.20"
 rusqlite = { version = "0.32", features = ["bundled"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
