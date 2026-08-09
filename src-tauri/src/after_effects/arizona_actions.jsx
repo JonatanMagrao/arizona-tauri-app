@@ -300,6 +300,77 @@
     }
   }
 
+  function swapSelectedLayers() {
+    var comp = getActiveComp();
+    if (comp === null) {
+      return "Abra uma composicao antes de usar o atalho.";
+    }
+
+    var layers = copyLayers(comp.selectedLayers);
+    if (layers.length !== 2) {
+      return "Selecione exatamente duas layers para trocar.";
+    }
+    if (!(layers[0] instanceof AVLayer) || !(layers[1] instanceof AVLayer)) {
+      return "As duas layers selecionadas precisam possuir source.";
+    }
+
+    var firstSource = layers[0].source;
+    var secondSource = layers[1].source;
+    if (firstSource === null || secondSource === null) {
+      return "As duas layers selecionadas precisam possuir source.";
+    }
+
+    var firstScale = layers[0].scale.value;
+    var secondScale = layers[1].scale.value;
+
+    app.beginUndoGroup("Trocar layers");
+    try {
+      layers[0].replaceSource(secondSource, true);
+      layers[0].scale.setValue(secondScale);
+      layers[1].replaceSource(firstSource, true);
+      layers[1].scale.setValue(firstScale);
+      return "";
+    } finally {
+      app.endUndoGroup();
+    }
+  }
+
+  function exportPrintFrames() {
+    // Gera frames .png a partir da claquete e de cada oferta, cria a respectiva pasta da praça e salva os arquivos dentro
+    // por Wiliam Takashi Yamashita com contribuição do Jonatan Magrão na função getCompByName
+
+    var projeto = app.project;
+    var renderizar = projeto.renderQueue;
+
+
+    function getCompByName(compName){
+        for(var i=1;i<=projeto.numItems;i++){
+            var item = projeto.item(i);
+            var compFound = null
+            if(item instanceof CompItem && item.name == compName){
+                compFound = item
+                break
+            }
+        }
+
+        return compFound
+    }
+
+    var filtroInicial = app.project.file.name.split("_")[1];
+    var index = renderizar.numItems;
+    var novaPasta = new Folder(projeto.file.parent.parent.parent.toString()+"/OUT/PRINT/"+filtroInicial.toString());
+    novaPasta.create();
+
+    projeto.activeItem.saveFrameToPng(0,File(novaPasta.toString()+"/"+projeto.file.name+"_00.png"));
+    projeto.activeItem.saveFrameToPng(15.75,File(novaPasta.toString()+"/"+projeto.file.name+"_01.png"));
+    projeto.activeItem.saveFrameToPng(17,File(novaPasta.toString()+"/"+projeto.file.name+"_02.png"));
+    projeto.activeItem.saveFrameToPng(20,File(novaPasta.toString()+"/"+projeto.file.name+"_03.png"));
+    projeto.activeItem.saveFrameToPng(23,File(novaPasta.toString()+"/"+projeto.file.name+"_04.png"));
+    projeto.activeItem.saveFrameToPng(26,File(novaPasta.toString()+"/"+projeto.file.name+"_05.png"));
+    projeto.activeItem.saveFrameToPng(29,File(novaPasta.toString()+"/"+projeto.file.name+"_06.png"));
+    alert("Prints exportados! Verifique se está tudo certo.");
+  }
+
   function hasIndexedJumpMarker(layer) {
     var markerProperty = getLayerMarkerProperty(layer);
     return markerProperty !== null && markerProperty.numKeys >= JUMP_MARKER_INDEX;
@@ -508,6 +579,19 @@
     return folder.create() || folder.exists;
   }
 
+  function findOutputModuleTemplateName(outputModule, templateName) {
+    var templates = outputModule.templates;
+    var expectedName = String(templateName).toLowerCase();
+
+    for (var index = 0; index < templates.length; index += 1) {
+      if (String(templates[index]).toLowerCase() === expectedName) {
+        return templates[index];
+      }
+    }
+
+    return null;
+  }
+
   function queueRenderOutputs() {
     if (app.project === null || app.project.file === null) {
       return "Salve o projeto do After Effects antes de enviar para render.";
@@ -563,7 +647,18 @@
 
     try {
       movQueueItem = project.renderQueue.items.add(movComps[0]);
-      movQueueItem.outputModule(1).file = movFile;
+      var movOutputModule = movQueueItem.outputModule(1);
+      var proxyTemplateName = findOutputModuleTemplateName(
+        movOutputModule,
+        "PROXY"
+      );
+      if (proxyTemplateName === null) {
+        throw new Error(
+          'Nao encontrei o template de modulo de saida "PROXY" no After Effects.'
+        );
+      }
+      movOutputModule.applyTemplate(proxyTemplateName);
+      movOutputModule.file = movFile;
 
       mp4QueueItem = project.renderQueue.items.add(mp4Comps[0]);
       mp4QueueItem.outputModule(1).applyTemplate("MP4");
@@ -598,6 +693,12 @@
     }
     if (action === "adjust_markers_to_tail") {
       return adjustTimelineMarkersToTail();
+    }
+    if (action === "swap_layers") {
+      return swapSelectedLayers();
+    }
+    if (action === "export_print_frames") {
+      return exportPrintFrames();
     }
     if (action === "render") {
       return queueRenderOutputs();

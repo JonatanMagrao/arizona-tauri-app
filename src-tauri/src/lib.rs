@@ -96,6 +96,7 @@ struct MediaLoadRuntimeState {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct RegisteredAfterShortcut {
+    label: &'static str,
     shortcut: Shortcut,
     action: AfterEffectsAction,
 }
@@ -258,7 +259,7 @@ pub fn run() {
             restore_app_window_position(&app_handle);
             let config = settings::load(&app_handle).unwrap_or_default();
             if let Err(err) = register_after_command_shortcuts(&app_handle, &config) {
-                let message = format!("Nao foi possivel registrar atalho do After: {err}");
+                let message = err;
                 eprintln!("{message}");
                 bridge.set_last_error(message);
             }
@@ -415,26 +416,18 @@ fn register_after_command_shortcuts(app: &AppHandle, config: &AppConfig) -> Resu
         let _ = app.global_shortcut().unregister(item.shortcut);
     }
 
-    let mut registered_now: Vec<RegisteredAfterShortcut> = Vec::new();
-    for item in &requested {
-        if let Err(err) = app.global_shortcut().register(item.shortcut) {
-            for registered_item in &registered_now {
-                let _ = app.global_shortcut().unregister(registered_item.shortcut);
-            }
-            for previous_item in &previous {
-                let _ = app.global_shortcut().register(previous_item.shortcut);
-            }
-            return Err(err.to_string());
-        }
-        registered_now.push(*item);
-    }
+    let (registered_now, registration_errors) =
+        register_available_after_shortcuts(&requested, |shortcut| {
+            app.global_shortcut().register(shortcut)
+        });
 
     *shortcut_state
         .registered
         .lock()
-        .map_err(|_| "Nao foi possivel atualizar os atalhos do After.".to_string())? = requested;
+        .map_err(|_| "Nao foi possivel atualizar os atalhos do After.".to_string())? =
+        registered_now;
 
-    Ok(())
+    after_shortcut_registration_result(registration_errors)
 }
 
 fn suspend_after_command_shortcuts(app: &AppHandle) -> Result<(), String> {
@@ -481,23 +474,90 @@ fn resume_after_command_shortcuts(app: &AppHandle) -> Result<(), String> {
         .map_err(|_| "Nao foi possivel restaurar os atalhos do After.".to_string())?
         .clone();
 
-    let mut registered_now: Vec<RegisteredAfterShortcut> = Vec::new();
-    for item in &registered {
-        if let Err(err) = app.global_shortcut().register(item.shortcut) {
-            for registered_item in &registered_now {
-                let _ = app.global_shortcut().unregister(registered_item.shortcut);
-            }
-            return Err(err.to_string());
-        }
-        registered_now.push(*item);
-    }
+    let (registered_now, registration_errors) =
+        register_available_after_shortcuts(&registered, |shortcut| {
+            app.global_shortcut().register(shortcut)
+        });
+
+    *shortcut_state
+        .registered
+        .lock()
+        .map_err(|_| "Nao foi possivel restaurar os atalhos do After.".to_string())? =
+        registered_now;
 
     *shortcut_state
         .suspended
         .lock()
         .map_err(|_| "Nao foi possivel restaurar os atalhos do After.".to_string())? = false;
 
-    Ok(())
+    after_shortcut_registration_result(registration_errors)
+}
+
+fn register_available_after_shortcuts<E, F>(
+    requested: &[RegisteredAfterShortcut],
+    mut register: F,
+) -> (Vec<RegisteredAfterShortcut>, Vec<String>)
+where
+    E: std::fmt::Display,
+    F: FnMut(Shortcut) -> Result<(), E>,
+{
+    let mut registered = Vec::new();
+    let mut errors = Vec::new();
+
+    for item in requested {
+        match register(item.shortcut) {
+            Ok(()) => registered.push(*item),
+            Err(err) => {
+                eprintln!(
+                    "Nao foi possivel registrar o atalho '{}': {err}",
+                    item.label
+                );
+                errors.push(item.label.to_string());
+            }
+        }
+    }
+
+    (registered, errors)
+}
+
+fn after_shortcut_registration_result(errors: Vec<String>) -> Result<(), String> {
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        let action_names = human_join_quoted(&errors);
+        let (shortcut_word, conflict_explanation) = if errors.len() == 1 {
+            (
+                "o atalho",
+                "Essa combina\u{00e7}\u{00e3}o pode estar sendo usada por outro aplicativo.",
+            )
+        } else {
+            (
+                "os atalhos",
+                "Essas combina\u{00e7}\u{00f5}es podem estar sendo usadas por outro aplicativo.",
+            )
+        };
+
+        Err(format!(
+            "N\u{00e3}o foi poss\u{00ed}vel ativar {shortcut_word} {action_names}. {conflict_explanation} Os demais atalhos continuam ativos."
+        ))
+    }
+}
+
+fn human_join_quoted(values: &[String]) -> String {
+    match values {
+        [] => String::new(),
+        [value] => format!("\"{value}\""),
+        [first, second] => format!("\"{first}\" e \"{second}\""),
+        _ => {
+            let last = values.last().expect("a lista possui ao menos um item");
+            let initial = values[..values.len() - 1]
+                .iter()
+                .map(|value| format!("\"{value}\""))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{initial} e \"{last}\"")
+        }
+    }
 }
 
 fn configured_after_shortcuts(config: &AppConfig) -> Result<Vec<RegisteredAfterShortcut>, String> {
@@ -528,6 +588,16 @@ fn configured_after_shortcuts(config: &AppConfig) -> Result<Vec<RegisteredAfterS
             config.adjust_markers_shortcut.as_str(),
         ),
         (
+            "Trocar Layers",
+            AfterEffectsAction::SwapLayers,
+            config.swap_layers_shortcut.as_str(),
+        ),
+        (
+            "Exportar Prints",
+            AfterEffectsAction::ExportPrintFrames,
+            config.export_print_frames_shortcut.as_str(),
+        ),
+        (
             "Render",
             AfterEffectsAction::Render,
             config.render_shortcut.as_str(),
@@ -546,7 +616,11 @@ fn configured_after_shortcuts(config: &AppConfig) -> Result<Vec<RegisteredAfterS
         {
             return Err(format!("Atalho duplicado em {label}: {shortcut_text}"));
         }
-        shortcuts.push(RegisteredAfterShortcut { shortcut, action });
+        shortcuts.push(RegisteredAfterShortcut {
+            label,
+            shortcut,
+            action,
+        });
     }
 
     Ok(shortcuts)
@@ -561,7 +635,10 @@ fn parse_after_shortcut(label: &str, shortcut_text: &str) -> Result<Shortcut, St
 
 #[cfg(test)]
 mod after_shortcut_config_tests {
-    use super::configured_after_shortcuts;
+    use super::{
+        after_shortcut_registration_result, configured_after_shortcuts,
+        register_available_after_shortcuts,
+    };
     use crate::{after_effects::AfterEffectsAction, settings::AppConfig};
 
     fn config_without_shortcuts() -> AppConfig {
@@ -571,6 +648,8 @@ mod after_shortcut_config_tests {
         config.move_jump_marker_shortcut.clear();
         config.select_jump_marker_layer_shortcut.clear();
         config.adjust_markers_shortcut.clear();
+        config.swap_layers_shortcut.clear();
+        config.export_print_frames_shortcut.clear();
         config.render_shortcut.clear();
         config
     }
@@ -591,6 +670,57 @@ mod after_shortcut_config_tests {
 
         assert_eq!(shortcuts.len(), 1);
         assert_eq!(shortcuts[0].action, AfterEffectsAction::Render);
+    }
+
+    #[test]
+    fn registers_swap_layers_with_its_default_shortcut() {
+        let config = AppConfig::default();
+        let shortcuts = configured_after_shortcuts(&config).unwrap();
+
+        assert!(shortcuts
+            .iter()
+            .any(|item| item.action == AfterEffectsAction::SwapLayers));
+    }
+
+    #[test]
+    fn registers_export_print_frames_with_its_default_shortcut() {
+        let config = AppConfig::default();
+        let shortcuts = configured_after_shortcuts(&config).unwrap();
+
+        assert!(shortcuts
+            .iter()
+            .any(|item| item.action == AfterEffectsAction::ExportPrintFrames));
+    }
+
+    #[test]
+    fn a_conflicting_shortcut_does_not_disable_the_other_actions() {
+        let shortcuts = configured_after_shortcuts(&AppConfig::default()).unwrap();
+        let (registered, errors) = register_available_after_shortcuts(&shortcuts, |shortcut| {
+            let item = shortcuts
+                .iter()
+                .find(|item| item.shortcut == shortcut)
+                .unwrap();
+            if item.action == AfterEffectsAction::ExportPrintFrames {
+                Err("HotKey already registered")
+            } else {
+                Ok(())
+            }
+        });
+
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("Exportar Prints"));
+        assert!(registered
+            .iter()
+            .any(|item| item.action == AfterEffectsAction::SwapLayers));
+        assert!(!registered
+            .iter()
+            .any(|item| item.action == AfterEffectsAction::ExportPrintFrames));
+
+        let message = after_shortcut_registration_result(errors).unwrap_err();
+        assert!(message.contains("Exportar Prints"));
+        assert!(message.contains("outro aplicativo"));
+        assert!(!message.contains("HotKey"));
+        assert!(!message.contains("Modifiers"));
     }
 }
 

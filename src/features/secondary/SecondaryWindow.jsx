@@ -65,6 +65,16 @@ const AFTER_EFFECTS_SHORTCUT_ACTIONS = Object.freeze([
     placeholder: "Ctrl+NumpadDecimal",
   },
   {
+    field: "swapLayersShortcut",
+    label: "Trocar Layers",
+    placeholder: "Ctrl+Numpad5",
+  },
+  {
+    field: "exportPrintFramesShortcut",
+    label: "Exportar Prints",
+    placeholder: "Ctrl+Numpad6",
+  },
+  {
     field: "renderShortcut",
     label: "Render",
     placeholder: "Ctrl+NumpadEnter",

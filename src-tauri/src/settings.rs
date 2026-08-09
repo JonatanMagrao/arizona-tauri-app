@@ -17,6 +17,10 @@ pub struct AppConfig {
     pub select_jump_marker_layer_shortcut: String,
     #[serde(default = "default_adjust_markers_shortcut")]
     pub adjust_markers_shortcut: String,
+    #[serde(default = "default_swap_layers_shortcut")]
+    pub swap_layers_shortcut: String,
+    #[serde(default = "default_export_print_frames_shortcut")]
+    pub export_print_frames_shortcut: String,
     #[serde(default = "default_render_shortcut")]
     pub render_shortcut: String,
     #[serde(default = "default_drive")]
@@ -38,6 +42,8 @@ impl Default for AppConfig {
             move_jump_marker_shortcut: default_move_jump_marker_shortcut(),
             select_jump_marker_layer_shortcut: default_select_jump_marker_layer_shortcut(),
             adjust_markers_shortcut: default_adjust_markers_shortcut(),
+            swap_layers_shortcut: default_swap_layers_shortcut(),
+            export_print_frames_shortcut: default_export_print_frames_shortcut(),
             render_shortcut: default_render_shortcut(),
             drive: default_drive(),
             produtos: default_produtos(),
@@ -98,6 +104,8 @@ fn sanitize_config(config: AppConfig) -> AppConfig {
             .trim()
             .to_string(),
         adjust_markers_shortcut: config.adjust_markers_shortcut.trim().to_string(),
+        swap_layers_shortcut: config.swap_layers_shortcut.trim().to_string(),
+        export_print_frames_shortcut: config.export_print_frames_shortcut.trim().to_string(),
         render_shortcut: config.render_shortcut.trim().to_string(),
         drive: config.drive.trim().to_string(),
         produtos: config.produtos.trim().to_string(),
@@ -154,6 +162,14 @@ fn default_adjust_markers_shortcut() -> String {
     "Ctrl+NumpadDecimal".to_string()
 }
 
+fn default_swap_layers_shortcut() -> String {
+    "Ctrl+Numpad5".to_string()
+}
+
+fn default_export_print_frames_shortcut() -> String {
+    "Ctrl+Numpad6".to_string()
+}
+
 fn default_render_shortcut() -> String {
     "Ctrl+NumpadEnter".to_string()
 }
@@ -207,6 +223,8 @@ mod tests {
         config.move_jump_marker_shortcut.clear();
         config.select_jump_marker_layer_shortcut.clear();
         config.adjust_markers_shortcut.clear();
+        config.swap_layers_shortcut.clear();
+        config.export_print_frames_shortcut.clear();
         config.render_shortcut.clear();
 
         let validated = validate_config(config).unwrap();
@@ -216,6 +234,8 @@ mod tests {
         assert!(validated.move_jump_marker_shortcut.is_empty());
         assert!(validated.select_jump_marker_layer_shortcut.is_empty());
         assert!(validated.adjust_markers_shortcut.is_empty());
+        assert!(validated.swap_layers_shortcut.is_empty());
+        assert!(validated.export_print_frames_shortcut.is_empty());
         assert!(validated.render_shortcut.is_empty());
     }
 }

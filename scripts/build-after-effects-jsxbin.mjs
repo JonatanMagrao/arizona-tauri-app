@@ -10,6 +10,8 @@ const ACTIONS = Object.freeze([
   "move_jump_marker",
   "select_jump_marker_layer",
   "adjust_markers_to_tail",
+  "swap_layers",
+  "export_print_frames",
   "render",
 ]);
 

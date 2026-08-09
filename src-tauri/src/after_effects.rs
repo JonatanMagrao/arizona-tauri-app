@@ -40,6 +40,16 @@ const ADJUST_MARKERS_TO_TAIL_SCRIPT: &str = include_str!(concat!(
     "/after-effects-jsxbin/adjust_markers_to_tail.jsxbin"
 ));
 #[cfg(not(debug_assertions))]
+const SWAP_LAYERS_SCRIPT: &str = include_str!(concat!(
+    env!("OUT_DIR"),
+    "/after-effects-jsxbin/swap_layers.jsxbin"
+));
+#[cfg(not(debug_assertions))]
+const EXPORT_PRINT_FRAMES_SCRIPT: &str = include_str!(concat!(
+    env!("OUT_DIR"),
+    "/after-effects-jsxbin/export_print_frames.jsxbin"
+));
+#[cfg(not(debug_assertions))]
 const RENDER_SCRIPT: &str = include_str!(concat!(
     env!("OUT_DIR"),
     "/after-effects-jsxbin/render.jsxbin"
@@ -55,6 +65,8 @@ pub enum AfterEffectsAction {
     MoveJumpMarker,
     SelectJumpMarkerLayer,
     AdjustMarkersToTail,
+    SwapLayers,
+    ExportPrintFrames,
     Render,
 }
 
@@ -66,6 +78,8 @@ impl AfterEffectsAction {
             Self::MoveJumpMarker => "moveJumpMarker",
             Self::SelectJumpMarkerLayer => "selectJumpMarkerLayer",
             Self::AdjustMarkersToTail => "adjustMarkersToTail",
+            Self::SwapLayers => "swapLayers",
+            Self::ExportPrintFrames => "exportPrintFrames",
             Self::Render => "render",
         }
     }
@@ -77,6 +91,8 @@ impl AfterEffectsAction {
             Self::MoveJumpMarker => "move_jump_marker",
             Self::SelectJumpMarkerLayer => "select_jump_marker_layer",
             Self::AdjustMarkersToTail => "adjust_markers_to_tail",
+            Self::SwapLayers => "swap_layers",
+            Self::ExportPrintFrames => "export_print_frames",
             Self::Render => "render",
         }
     }
@@ -97,6 +113,8 @@ pub fn action_from_key(value: &str) -> Option<AfterEffectsAction> {
         "adjustMarkersToTail" | "adjust_markers_to_tail" => {
             Some(AfterEffectsAction::AdjustMarkersToTail)
         }
+        "swapLayers" | "swap_layers" | "troca_layers" => Some(AfterEffectsAction::SwapLayers),
+        "exportPrintFrames" | "export_print_frames" => Some(AfterEffectsAction::ExportPrintFrames),
         "render" | "queueRender" | "queue_render" => Some(AfterEffectsAction::Render),
         _ => None,
     }
@@ -327,6 +345,8 @@ fn action_script(action: AfterEffectsAction) -> String {
         AfterEffectsAction::MoveJumpMarker => MOVE_JUMP_MARKER_SCRIPT,
         AfterEffectsAction::SelectJumpMarkerLayer => SELECT_JUMP_MARKER_LAYER_SCRIPT,
         AfterEffectsAction::AdjustMarkersToTail => ADJUST_MARKERS_TO_TAIL_SCRIPT,
+        AfterEffectsAction::SwapLayers => SWAP_LAYERS_SCRIPT,
+        AfterEffectsAction::ExportPrintFrames => EXPORT_PRINT_FRAMES_SCRIPT,
         AfterEffectsAction::Render => RENDER_SCRIPT,
     }
     .to_string()
@@ -359,6 +379,14 @@ mod tests {
             action_from_key("queueRender"),
             Some(AfterEffectsAction::Render)
         );
+        assert_eq!(
+            action_from_key("troca_layers"),
+            Some(AfterEffectsAction::SwapLayers)
+        );
+        assert_eq!(
+            action_from_key("export_print_frames"),
+            Some(AfterEffectsAction::ExportPrintFrames)
+        );
         assert_eq!(action_from_key("unknown"), None);
     }
 
@@ -369,6 +397,8 @@ mod tests {
         assert!(script.contains("var action = \"adjust_markers_to_tail\";"));
         assert!(!script.contains(ACTION_PLACEHOLDER));
         assert!(script.contains("function adjustTimelineMarkersToTail()"));
+        assert!(script.contains("function swapSelectedLayers()"));
+        assert!(script.contains("function exportPrintFrames()"));
         assert!(script.contains("function queueRenderOutputs()"));
     }
 
