@@ -13,6 +13,7 @@ import {
 import type { LocalImage } from "../productImages/types";
 import { useOfferShortcuts } from "../hooks/useOfferShortcuts";
 import { useOffersEditor } from "../hooks/useOffersEditor";
+import { getPublicErrorMessage } from "../../../utils/errors";
 import {
   createOfferRasterPreview,
   createOfferPsdPreview,
@@ -2060,7 +2061,14 @@ export const OffersPanel = ({
           </>
         ) : (
           <div className="offers-empty">
-            {snapshot?.message || "Carregando ofertas..."}
+            {snapshot?.message
+              ? getPublicErrorMessage(
+                  snapshot.message,
+                  snapshot.ok
+                    ? "Nenhuma oferta foi encontrada neste projeto."
+                    : "Não foi possível carregar as ofertas deste projeto.",
+                )
+              : "Carregando ofertas..."}
           </div>
         )}
       </main>

@@ -13,6 +13,8 @@ do admin. A Ãºnica relaÃ§Ã£o com o resto do ecossistema Ã© por contrato:
 - consulta primeiro o cache de previews preparado pelo Arizona App conforme o
   contrato `../docs/CACHE_PREVIEWS_PRODUTOS.md`, mantendo geraÃ§Ã£o local como
   fallback;
+- lÃª `diagnostics-config.json` para gravar seu prÃ³prio JSONL na pasta local
+  escolhida no Arizona App, conforme `../docs/DIAGNOSTICOS_LOCAIS.md`;
 - no build, embute as chaves pÃºblicas do manifesto versionado
   `../ADMIN/supabase/license-trusted-keys.json` (Ãºnica exceÃ§Ã£o de fronteira,
   build-time e dado pÃºblico â€” ver `AGENTS.md` na raiz do repo).
@@ -26,6 +28,20 @@ do admin. A Ãºnica relaÃ§Ã£o com o resto do ecossistema Ã© por contrato:
   edite na mÃ£o. RotaÃ§Ã£o de chaves: ver `../docs/LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md`
   na raiz do repo.
 - No navegador (fora do CEP), o painel roda destravado (`browser_dev`).
+
+## DiagnÃ³stico local
+
+Dentro do Adobe CEP, o painel usa o Node do host para gravar
+`arizona-cep-AAAA-MM-DD.jsonl`. O ExtendScript nÃ£o escreve arquivos de log
+diretamente; o painel registra as etapas observadas e marca
+`runtime: "extendscript"` quando aplicÃ¡vel. A gravaÃ§Ã£o Ã© sequencial e
+assÃ­ncrona; cada evento tenta a pasta selecionada e depois o fallback local.
+
+A pasta Ã© escolhida em **ConfiguraÃ§Ãµes > DiagnÃ³stico** no Arizona App e o
+fallback Ã© `%LOCALAPPDATA%\com.pc.arizona-app\logs`. A retenÃ§Ã£o mantÃ©m o dia
+atual e os 13 anteriores. NÃ£o existe envio automÃ¡tico: o usuÃ¡rio exporta e
+compartilha o pacote somente quando desejar. Formato, saneamento, migraÃ§Ã£o e
+soluÃ§Ã£o de problemas: `../docs/DIAGNOSTICOS_LOCAIS.md`.
 
 ## Comandos
 

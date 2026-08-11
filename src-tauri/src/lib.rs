@@ -4,6 +4,7 @@ mod auth;
 mod cep_bridge;
 mod cep_manager;
 mod device_identity;
+mod diagnostics;
 mod history;
 mod license;
 mod media;
@@ -210,6 +211,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(AuthState::default())
         .manage(CepBridgeState::new())
+        .manage(diagnostics::DiagnosticsState::new())
         .manage(AfterShortcutState::default())
         .manage(SecondaryWindowRuntimeState::default())
         .manage(MediaPathCache::default())
@@ -247,6 +249,15 @@ pub fn run() {
             match event {
                 WindowEvent::CloseRequested { .. } => {
                     save_app_window_position(window);
+                    diagnostics::info(
+                        window.app_handle(),
+                        "aplicativo",
+                        "encerrar",
+                        "requested",
+                        "Encerramento do Arizona App solicitado.",
+                        None,
+                    );
+                    let _ = diagnostics::flush(window.app_handle());
                 }
                 _ => {}
             }
@@ -255,12 +266,21 @@ pub fn run() {
             disable_browser_accelerator_keys(app);
             let bridge = app.state::<CepBridgeState>();
             let app_handle = app.handle().clone();
+            diagnostics::initialize(&app_handle);
             remove_legacy_cep_bridge_session(&app_handle);
             restore_app_window_position(&app_handle);
             let config = settings::load(&app_handle).unwrap_or_default();
             if let Err(err) = register_after_command_shortcuts(&app_handle, &config) {
                 let message = err;
-                eprintln!("{message}");
+                diagnostics::warning(
+                    &app_handle,
+                    "after_effects",
+                    "registrar_atalhos",
+                    "completed_with_warnings",
+                    "after_effects_shortcut_conflict",
+                    "Nem todos os atalhos globais do After Effects puderam ser registrados.",
+                    Some(serde_json::json!({ "technicalMessage": message })),
+                );
                 bridge.set_last_error(message);
             }
             Ok(())
@@ -332,7 +352,12 @@ pub fn run() {
             cep_manager::set_cep_debug_mode,
             cep_manager::cep_extension_status,
             cep_manager::inspect_cep_zxp,
-            cep_manager::install_cep_zxp
+            cep_manager::install_cep_zxp,
+            diagnostics::diagnostics_record_event,
+            diagnostics::diagnostics_status,
+            diagnostics::diagnostics_set_directory,
+            diagnostics::diagnostics_open_directory,
+            diagnostics::diagnostics_export
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -507,11 +532,7 @@ where
     for item in requested {
         match register(item.shortcut) {
             Ok(()) => registered.push(*item),
-            Err(err) => {
-                eprintln!(
-                    "Nao foi possivel registrar o atalho '{}': {err}",
-                    item.label
-                );
+            Err(_) => {
                 errors.push(item.label.to_string());
             }
         }
@@ -729,9 +750,17 @@ fn notify_after_effects_shortcut_error(
     message: &str,
     action: Option<AfterEffectsAction>,
 ) {
-    eprintln!("Arizona After Effects shortcut failed: {message}");
-
     let (code, user_message) = after_effects_shortcut_notice(message);
+    diagnostics::error(
+        app,
+        "after_effects",
+        action
+            .map(AfterEffectsAction::key)
+            .unwrap_or("atalho_global"),
+        code,
+        user_message,
+        Some(serde_json::json!({ "technicalMessage": message })),
+    );
     let notice = AfterEffectsNotice {
         level: "error",
         code,
@@ -899,7 +928,9 @@ async fn auth_resume(app: AppHandle, app_version: String) -> Result<AuthFlowResp
         let auth_state = app.state::<AuthState>();
         let bridge = app.state::<CepBridgeState>();
         let _operation = auth_state.lock_operation()?;
-        auth_resume_blocking(&app, &auth_state, &bridge, &app_version)
+        let result = auth_resume_blocking(&app, &auth_state, &bridge, &app_version);
+        log_auth_command_result(&app, "retomar_sessao", &result, true);
+        result
     })
     .await
 }
@@ -960,7 +991,10 @@ async fn auth_activate(
         let auth_state = app.state::<AuthState>();
         let bridge = app.state::<CepBridgeState>();
         let _operation = auth_state.lock_operation()?;
-        auth_activate_blocking(&app, &auth_state, &bridge, &email, &code, &app_version)
+        let result =
+            auth_activate_blocking(&app, &auth_state, &bridge, &email, &code, &app_version);
+        log_auth_command_result(&app, "ativar_dispositivo", &result, true);
+        result
     })
     .await
 }
@@ -987,16 +1021,73 @@ fn auth_activate_blocking(
         return Ok(response);
     }
 
+    diagnostics::info(
+        app,
+        "acesso",
+        "validar_codigo",
+        "started",
+        "Validação do código de ativação iniciada.",
+        None,
+    );
     let exchange = match auth::activate(&email, code.trim()) {
-        Ok(exchange) => exchange,
-        Err(error) => return Ok(api_error_flow(&error, Some(email))),
+        Ok(exchange) => {
+            diagnostics::info(
+                app,
+                "acesso",
+                "validar_codigo",
+                "completed",
+                "O código de ativação foi aceito.",
+                Some(serde_json::json!({ "recovery": exchange.recovery })),
+            );
+            exchange
+        }
+        Err(error) => {
+            diagnostics::warning(
+                app,
+                "acesso",
+                "validar_codigo",
+                "rejected",
+                &error.code,
+                "O código de ativação não foi aceito.",
+                None,
+            );
+            return Ok(api_error_flow(&error, Some(email)));
+        }
     };
     let remote = match auth::exchange_magic_link(&exchange) {
-        Ok(remote) => remote,
-        Err(error) => return Ok(api_error_flow(&error, Some(email))),
+        Ok(remote) => {
+            diagnostics::info(
+                app,
+                "acesso",
+                "criar_sessao",
+                "completed",
+                "A sessão segura foi criada.",
+                None,
+            );
+            remote
+        }
+        Err(error) => {
+            diagnostics::error(
+                app,
+                "acesso",
+                "criar_sessao",
+                &error.code,
+                "Não foi possível criar a sessão segura após validar o código.",
+                None,
+            );
+            return Ok(api_error_flow(&error, Some(email)));
+        }
     };
     if exchange.recovery {
         if let Err(error) = auth::revoke_other_sessions(&remote.access_token) {
+            diagnostics::error(
+                app,
+                "acesso",
+                "encerrar_sessoes_anteriores",
+                &error.code,
+                "A ativação de recuperação não conseguiu encerrar as sessões anteriores.",
+                None,
+            );
             return Ok(api_error_flow(&error, Some(email)));
         }
     }
@@ -1020,7 +1111,9 @@ async fn auth_poll(app: AppHandle, app_version: String) -> Result<AuthFlowRespon
         let auth_state = app.state::<AuthState>();
         let bridge = app.state::<CepBridgeState>();
         let _operation = auth_state.lock_operation()?;
-        auth_poll_blocking(&app, &auth_state, &bridge, &app_version)
+        let result = auth_poll_blocking(&app, &auth_state, &bridge, &app_version);
+        log_auth_command_result(&app, "renovar_sessao", &result, false);
+        result
     })
     .await
 }
@@ -1075,6 +1168,7 @@ fn continue_remote_auth(
     app_version: &str,
     ui_mode: AuthenticatedUiMode,
 ) -> AuthFlowResponse {
+    let interactive_diagnostics = matches!(ui_mode, AuthenticatedUiMode::Reveal);
     let fallback_refresh_token = authenticated_session(auth_state)
         .ok()
         .and_then(|session| session.refresh_token);
@@ -1118,8 +1212,30 @@ fn continue_remote_auth(
     }
     let device_body = match device_request_body(app, app_version) {
         Ok(body) => body,
-        Err(error) => return auth_flow("error", Some("device_identity_error"), Some(error)),
+        Err(error) => {
+            if interactive_diagnostics {
+                diagnostics::error(
+                    app,
+                    "acesso",
+                    "identificar_dispositivo",
+                    "device_identity_error",
+                    "Não foi possível identificar este computador.",
+                    Some(serde_json::json!({ "technicalMessage": error })),
+                );
+            }
+            return auth_flow("error", Some("device_identity_error"), Some(error));
+        }
     };
+    if interactive_diagnostics {
+        diagnostics::info(
+            app,
+            "acesso",
+            "validar_licenca",
+            "started",
+            "A conferência da licença e deste computador foi iniciada.",
+            None,
+        );
+    }
     let mut license = auth::validate_license(&remote.access_token, device_body.clone());
     if matches!(
         &license,
@@ -1129,14 +1245,47 @@ fn continue_remote_auth(
         )
     ) {
         if let Err(error) = auth::activate_device(&remote.access_token, device_body.clone()) {
+            if interactive_diagnostics {
+                diagnostics::error(
+                    app,
+                    "acesso",
+                    "vincular_dispositivo",
+                    &error.code,
+                    "Não foi possível associar este computador à licença.",
+                    None,
+                );
+            }
             return api_error_flow(&error, Some(email));
+        }
+        if interactive_diagnostics {
+            diagnostics::info(
+                app,
+                "acesso",
+                "vincular_dispositivo",
+                "completed",
+                "O computador foi associado; a licença será conferida novamente.",
+                None,
+            );
         }
         license = auth::validate_license(&remote.access_token, device_body);
     }
 
     let license = match license {
         Ok(license) => license,
-        Err(error) => return api_error_flow(&error, Some(email)),
+        Err(error) => {
+            if interactive_diagnostics {
+                diagnostics::warning(
+                    app,
+                    "acesso",
+                    "validar_licenca",
+                    "rejected",
+                    &error.code,
+                    "Não foi possível confirmar a licença.",
+                    None,
+                );
+            }
+            return api_error_flow(&error, Some(email));
+        }
     };
     match authenticated_session_from_license(base_session, &license) {
         Ok(session) => {
@@ -1148,7 +1297,27 @@ fn continue_remote_auth(
                 &license,
                 ui_mode,
             ) {
+                if interactive_diagnostics {
+                    diagnostics::error(
+                        app,
+                        "acesso",
+                        "salvar_sessao_local",
+                        "local_auth_error",
+                        "A licença foi aceita, mas o acesso não pôde ser salvo neste computador.",
+                        Some(serde_json::json!({ "technicalMessage": error })),
+                    );
+                }
                 return auth_flow("error", Some("local_auth_error"), Some(error));
+            }
+            if interactive_diagnostics {
+                diagnostics::info(
+                    app,
+                    "acesso",
+                    "validar_licenca",
+                    "completed",
+                    "A licença foi confirmada e o acesso deste computador foi atualizado.",
+                    None,
+                );
             }
             AuthFlowResponse {
                 state: "authenticated",
@@ -1453,6 +1622,90 @@ fn forget_secure_auth(
     clear_runtime_auth_session(auth_state, bridge)
 }
 
+fn log_auth_command_result(
+    app: &AppHandle,
+    action: &str,
+    result: &Result<AuthFlowResponse, String>,
+    log_success: bool,
+) {
+    let response = match result {
+        Ok(response) => response,
+        Err(error) => {
+            diagnostics::error(
+                app,
+                "acesso",
+                action,
+                "local_auth_command_failed",
+                "O acesso não conseguiu concluir uma etapa local.",
+                Some(serde_json::json!({ "technicalMessage": error })),
+            );
+            return;
+        }
+    };
+
+    if !log_success {
+        return;
+    }
+
+    if response.state == "authenticated" {
+        diagnostics::info(
+            app,
+            "acesso",
+            action,
+            "authenticated",
+            "O acesso salvo neste computador e a licença foram confirmados.",
+            None,
+        );
+        return;
+    }
+
+    if response.state == "activation_required" && response.code.is_none() {
+        diagnostics::info(
+            app,
+            "acesso",
+            action,
+            "activation_required",
+            "Nenhum acesso salvo foi encontrado; a tela de ativação foi exibida.",
+            None,
+        );
+        return;
+    }
+
+    let code = response.code.as_deref().unwrap_or("auth_flow_incomplete");
+    let expected_denial = matches!(
+        code,
+        "activation_invalid"
+            | "activation_required"
+            | "device_activation_expired"
+            | "device_limit_reached"
+            | "device_not_active"
+            | "device_revoked"
+            | "license_expired"
+            | "organization_not_active"
+            | "rate_limited"
+    );
+    if expected_denial {
+        diagnostics::warning(
+            app,
+            "acesso",
+            action,
+            &response.state,
+            code,
+            "O acesso foi interrompido e uma orientação foi apresentada ao usuário.",
+            Some(serde_json::json!({ "state": response.state, "code": code })),
+        );
+    } else {
+        diagnostics::error(
+            app,
+            "acesso",
+            action,
+            code,
+            "O fluxo de acesso não pôde ser concluído.",
+            Some(serde_json::json!({ "state": response.state, "code": code })),
+        );
+    }
+}
+
 fn auth_flow(state: &'static str, code: Option<&str>, message: Option<String>) -> AuthFlowResponse {
     AuthFlowResponse {
         state,
@@ -1479,7 +1732,7 @@ fn api_error_flow(error: &auth::ApiError, email: Option<String>) -> AuthFlowResp
             "Não foi possível concluir a ativação agora. Tente o mesmo código novamente."
         }
         "daily_mfa_required" | "mfa_required" => {
-            "O servidor ainda exige o autenticador. Backend desatualizado — contate o suporte."
+            "Não foi possível confirmar seu acesso com esta versão do aplicativo. Atualize o Arizona App ou contate o suporte."
         }
         "device_limit_reached" => {
             "Este usuário já está ativo em outra máquina. Peça a liberação a quem enviou o código de ativação."
@@ -1503,7 +1756,9 @@ fn api_error_flow(error: &auth::ApiError, email: Option<String>) -> AuthFlowResp
         }
         "member_not_authorized" => "Este usuário não está autorizado.",
         "rate_limited" => "Muitas tentativas. Aguarde antes de tentar novamente.",
-        "network_error" => "Não foi possível conectar ao Supabase.",
+        "network_error" => {
+            "Não foi possível acessar o serviço agora. Verifique sua conexão com a internet e tente novamente."
+        }
         _ => "Não foi possível confirmar o acesso.",
     };
     AuthFlowResponse {
@@ -1761,7 +2016,7 @@ mod auth_flow_tests {
             assert_eq!(
                 flow.message.as_deref(),
                 Some(
-                    "O servidor ainda exige o autenticador. Backend desatualizado — contate o suporte."
+                    "Não foi possível confirmar seu acesso com esta versão do aplicativo. Atualize o Arizona App ou contate o suporte."
                 )
             );
         }
@@ -1959,6 +2214,15 @@ fn after_effects_action_command(
     action: String,
 ) -> Result<ActionResponse, String> {
     let Some(action) = after_effects::action_from_key(&action) else {
+        diagnostics::warning(
+            &app,
+            "after_effects",
+            "executar_acao",
+            "rejected",
+            "after_effects_action_invalid",
+            "Uma ação desconhecida do After Effects foi recusada.",
+            None,
+        );
         return Ok(ActionResponse::err("Acao do After Effects invalida."));
     };
 
@@ -1990,18 +2254,64 @@ fn run_after_effects_action(
     auth: &State<AuthState>,
     action: AfterEffectsAction,
 ) -> ActionResponse {
+    diagnostics::info(
+        app,
+        "after_effects",
+        action.key(),
+        "started",
+        "Preparação da ação do After Effects iniciada.",
+        Some(serde_json::json!({ "action": action.key() })),
+    );
     if let Err(err) = require_authenticated(auth) {
+        diagnostics::error(
+            app,
+            "after_effects",
+            action.key(),
+            "after_effects_auth_required",
+            "A ação do After Effects foi interrompida porque o acesso não está válido.",
+            None,
+        );
         return ActionResponse::err(err);
     }
 
     let config = match settings::load_validated(app) {
         Ok(config) => config,
-        Err(err) => return ActionResponse::err(err),
+        Err(err) => {
+            diagnostics::error(
+                app,
+                "after_effects",
+                action.key(),
+                "after_effects_config_invalid",
+                "A ação do After Effects foi interrompida por uma configuração inválida.",
+                Some(serde_json::json!({ "technicalMessage": err })),
+            );
+            return ActionResponse::err(err);
+        }
     };
 
     match after_effects::execute(app, &config, action) {
-        Ok(command_id) => ActionResponse::ok_message(command_id),
-        Err(err) => ActionResponse::err(err),
+        Ok(command_id) => {
+            diagnostics::info(
+                app,
+                "after_effects",
+                action.key(),
+                "dispatched",
+                "A ação foi enviada e continuará sendo executada no After Effects.",
+                Some(serde_json::json!({ "action": action.key() })),
+            );
+            ActionResponse::ok_message(command_id)
+        }
+        Err(err) => {
+            diagnostics::error(
+                app,
+                "after_effects",
+                action.key(),
+                "after_effects_dispatch_failed",
+                "Não foi possível enviar a ação ao After Effects.",
+                Some(serde_json::json!({ "technicalMessage": err })),
+            );
+            ActionResponse::err(err)
+        }
     }
 }
 
@@ -2172,7 +2482,15 @@ fn restore_app_window_position(app: &AppHandle) {
         }
         Ok(None) => {}
         Err(err) => {
-            eprintln!("{err}");
+            diagnostics::warning(
+                app,
+                "interface",
+                "restaurar_posicao",
+                "fallback_to_center",
+                "window_state_restore_failed",
+                "A posição anterior da janela não pôde ser restaurada; ela foi centralizada.",
+                Some(serde_json::json!({ "technicalMessage": err })),
+            );
             let _ = window.center();
         }
     }
@@ -2273,6 +2591,15 @@ fn position_is_visible_for_window(
 #[tauri::command]
 fn exit_app(app: AppHandle) -> Result<(), String> {
     save_current_app_window_position(&app);
+    diagnostics::info(
+        &app,
+        "aplicativo",
+        "encerrar",
+        "requested",
+        "Encerramento do Arizona App solicitado.",
+        None,
+    );
+    let _ = diagnostics::flush(&app);
     app.exit(0);
     Ok(())
 }
@@ -2548,14 +2875,30 @@ fn show_secondary_window_preserving_media_load(
 
     let _ = window.eval(script);
     if let Err(err) = window.set_title(&window_title) {
-        eprintln!("Nao foi possivel atualizar o titulo da janela secundaria: {err}");
+        diagnostics::warning(
+            &app,
+            "interface",
+            "atualizar_janela_secundaria",
+            "completed_with_warnings",
+            "secondary_window_title_failed",
+            "A nova janela abriu, mas o título não pôde ser atualizado.",
+            Some(serde_json::json!({ "technicalMessage": err.to_string() })),
+        );
     }
     let _ = window.unmaximize();
     if let Err(err) = window.set_size(LogicalSize::new(
         SECONDARY_WINDOW_WIDTH,
         SECONDARY_WINDOW_HEIGHT,
     )) {
-        eprintln!("Nao foi possivel redimensionar a janela secundaria: {err}");
+        diagnostics::warning(
+            &app,
+            "interface",
+            "redimensionar_janela_secundaria",
+            "completed_with_warnings",
+            "secondary_window_resize_failed",
+            "A nova janela abriu, mas não pôde usar o tamanho padrão.",
+            Some(serde_json::json!({ "technicalMessage": err.to_string() })),
+        );
     }
     let _ = window.center();
     let _ = window.unminimize();
@@ -2593,7 +2936,15 @@ fn update_pending_media_window(
         .eval(script)
         .map_err(|err| format!("Não foi possível atualizar o visualizador: {err}"))?;
     if let Err(err) = window.set_title(&secondary_window_state_title(state)) {
-        eprintln!("Nao foi possivel atualizar o titulo da janela secundaria: {err}");
+        diagnostics::warning(
+            app,
+            "interface",
+            "atualizar_visualizador",
+            "completed_with_warnings",
+            "secondary_window_title_failed",
+            "O visualizador foi atualizado, mas o título da janela não.",
+            Some(serde_json::json!({ "technicalMessage": err.to_string() })),
+        );
     }
 
     Ok(true)
@@ -2607,7 +2958,15 @@ fn close_secondary_window(app: AppHandle) -> Result<ActionResponse, String> {
     }
     set_secondary_active_view(&app, None);
     if let Err(err) = resume_after_command_shortcuts(&app) {
-        eprintln!("Nao foi possivel restaurar atalhos do After: {err}");
+        diagnostics::warning(
+            &app,
+            "after_effects",
+            "restaurar_atalhos",
+            "completed_with_warnings",
+            "after_effects_shortcut_restore_failed",
+            "A janela foi fechada, mas alguns atalhos do After Effects não puderam ser restaurados.",
+            Some(serde_json::json!({ "technicalMessage": err })),
+        );
     }
 
     if let Some(app_window) = app.get_webview_window(APP_WINDOW_LABEL) {
@@ -3447,9 +3806,13 @@ fn prepare_media_asset(app: &AppHandle, path: &Path) -> Result<PathBuf, String> 
     let path = validate_configured_media_path(app, path)?;
     prewarm_media_for_webview(&path)?;
     if let Err(error) = app.asset_protocol_scope().allow_file(&path) {
-        eprintln!(
-            "Nao foi possivel liberar {} no Asset Protocol: {error}",
-            path.display()
+        diagnostics::error(
+            app,
+            "midia",
+            "preparar_reproducao",
+            "media_asset_protocol_failed",
+            "A mídia foi localizada, mas não pôde ser liberada para o visualizador.",
+            Some(serde_json::json!({ "technicalMessage": error.to_string() })),
         );
         return Err("Não foi possível preparar esta mídia para reprodução.".to_string());
     }

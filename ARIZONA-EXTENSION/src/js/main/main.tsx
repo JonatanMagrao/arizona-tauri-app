@@ -9,6 +9,12 @@ import { RoteiroPanel } from "./domains/roteiro/components/RoteiroPanel";
 import { useArizonaBridgeLicense } from "./hooks/useArizonaBridgeLicense";
 import { useHostTheme } from "./hooks/useHostTheme";
 import { useProjectIdentity } from "./hooks/useProjectIdentity";
+import { getPublicErrorMessage } from "./utils/errors";
+import {
+  createDiagnosticOperationId,
+  recordDiagnosticFailure,
+  recordLocalDiagnostic,
+} from "./services/localDiagnostics";
 import "./main.scss";
 
 type ActiveView = "offers" | "roteiro" | "render";
@@ -42,17 +48,14 @@ interface LicenseGateProps {
 const LicenseGate = ({ bgColor, reason }: LicenseGateProps) => {
   const appStyle = { backgroundColor: bgColor } as CSSProperties;
   const reasonCode = (reason || "").trim();
-  const showReason = reasonCode && reasonCode !== "receipt_pending";
+  const accessMessage = licenseAccessMessage(reasonCode);
 
   return (
     <div className="app arizona-carrefour" style={appStyle}>
       <section className="license-lock" role="alert">
         <p>
-          <strong>Plugin bloqueado.</strong>
-          <span>Valide a licença novamente no Arizona App.</span>
-          {showReason ? (
-            <span className="license-lock-reason">({reasonCode})</span>
-          ) : null}
+          <strong>Painel indisponível.</strong>
+          <span>{accessMessage}</span>
         </p>
       </section>
     </div>
@@ -82,7 +85,7 @@ const LicensedApp = ({ bgColor }: LicensedAppProps) => {
   } = useProductImageLibrary();
   const [isClearingPreviewCache, setIsClearingPreviewCache] = useState(false);
   const [previewCacheMessage, setPreviewCacheMessage] = useState(
-    "Limpar cache de previews"
+    "Limpar imagens temporárias"
   );
 
   const appStyle = { backgroundColor: bgColor } as CSSProperties;
@@ -104,30 +107,61 @@ const LicensedApp = ({ bgColor }: LicensedAppProps) => {
     if (!hasNodeAccess || isClearingPreviewCache) return;
 
     const shouldClear = window.confirm(
-      "Apagar o cache de previews dos produtos?"
+      "Apagar as imagens temporárias dos produtos?"
     );
 
     if (!shouldClear) return;
 
     setIsClearingPreviewCache(true);
+    const operationId = createDiagnosticOperationId("preview-cache");
+    const startedAt = Date.now();
+    recordLocalDiagnostic({
+      component: "previews",
+      action: "limpar_cache",
+      status: "started",
+      operationId,
+      message: "Limpeza das imagens temporárias iniciada.",
+    });
 
     try {
       const result = await clearProductImagePreviewCache();
       const message =
         result.removedCount === 1
-          ? "1 arquivo removido do cache"
-          : result.removedCount + " arquivos removidos do cache";
+          ? "1 arquivo temporário removido"
+          : result.removedCount + " arquivos temporários removidos";
 
       setPreviewCacheMessage(message);
       setStatus(message);
+      recordLocalDiagnostic({
+        component: "previews",
+        action: "limpar_cache",
+        status: "completed",
+        operationId,
+        message: "Imagens temporárias removidas.",
+        details: {
+          durationMs: Date.now() - startedAt,
+          removedCount: result.removedCount,
+        },
+      });
     } catch (caught) {
-      const message =
-        caught instanceof Error
-          ? caught.message
-          : "Nao foi possivel limpar o cache.";
+      const message = getPublicErrorMessage(
+        caught,
+        "Não foi possível limpar as imagens temporárias. Tente novamente.",
+      );
 
       setPreviewCacheMessage(message);
       setStatus(message);
+      recordDiagnosticFailure(
+        "previews",
+        "limpar_cache",
+        "Não foi possível remover as imagens temporárias.",
+        caught,
+        {
+          code: "preview_cache_clear_failed",
+          operationId,
+          details: { durationMs: Date.now() - startedAt },
+        }
+      );
     } finally {
       setIsClearingPreviewCache(false);
     }
@@ -198,7 +232,7 @@ const LicensedApp = ({ bgColor }: LicensedAppProps) => {
         <button
           type="button"
           className="panel-cache-button"
-          aria-label="Limpar cache de previews"
+          aria-label="Limpar imagens temporárias"
           aria-busy={isClearingPreviewCache}
           disabled={!hasNodeAccess || isClearingPreviewCache}
           title={previewCacheMessage}
@@ -241,4 +275,23 @@ const LicensedApp = ({ bgColor }: LicensedAppProps) => {
       </div>
     </div>
   );
+};
+
+const licenseAccessMessage = (reason: string) => {
+  if (!reason || reason === "receipt_pending" || reason === "valid") {
+    return "Estamos confirmando seu acesso. Aguarde um instante.";
+  }
+  if (reason === "receipt_missing") {
+    return "Abra o Arizona App e entre novamente para liberar este painel.";
+  }
+  if (reason === "receipt_expired") {
+    return "Sua confirmação de acesso expirou. Abra o Arizona App para renová-la.";
+  }
+  if (reason === "receipt_device_mismatch") {
+    return "Este painel ainda não foi liberado neste computador. Abra o Arizona App para confirmar o acesso.";
+  }
+  if (reason === "not_licensed" || reason === "feature_missing") {
+    return "Seu acesso a este painel não está disponível. Confirme sua licença no Arizona App.";
+  }
+  return "Não foi possível confirmar seu acesso. Abra o Arizona App e tente novamente.";
 };

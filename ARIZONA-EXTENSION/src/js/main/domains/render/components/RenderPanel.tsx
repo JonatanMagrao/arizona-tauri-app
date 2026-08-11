@@ -58,7 +58,7 @@ interface RenderJobRowProps {
 
 const RenderJobRow = ({ job, now }: RenderJobRowProps) => {
   const duration = getJobDuration(job, now);
-  const detail = job.error || job.lastLog || job.outputPath;
+  const detail = job.error || renderJobDetail(job);
   const progressPercent = job.status === "done" ? 100 : job.progressPercent;
   const frameLabel =
     job.currentFrame === null
@@ -107,6 +107,18 @@ const RenderJobRow = ({ job, now }: RenderJobRowProps) => {
       ) : null}
     </div>
   );
+};
+
+const renderJobDetail = (job: RenderJobState): string => {
+  if (job.status === "pending") return "Aguardando a vez deste arquivo.";
+  if (job.status === "running") {
+    return job.currentFrame === null
+      ? "Gerando o arquivo..."
+      : `Gerando o quadro ${job.currentFrame} de ${job.totalFrames}...`;
+  }
+  if (job.status === "done") return "Arquivo gerado com sucesso.";
+  if (job.status === "cancelled") return "A geração deste arquivo foi cancelada.";
+  return "Não foi possível gerar este arquivo.";
 };
 
 interface RenderOutputSettingProps {
@@ -236,7 +248,7 @@ export const RenderPanel = () => {
 
         {settingsLoading ? (
           <div className="render-panel__settings-state">
-            Carregando caminhos...
+            Preparando as opções de saída...
           </div>
         ) : settingsError ? (
           <div className="render-panel__settings-state render-panel__settings-state--error">

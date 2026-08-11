@@ -6,9 +6,10 @@ import LinksPanel from "../features/main/LinksPanel";
 import LoginWindow from "../features/auth/LoginWindow";
 import SecondaryWindow from "../features/secondary/SecondaryWindow";
 import { useAutoHideToast } from "../hooks/useAutoHideToast";
-import { pollSecureSession } from "../services/auth";
+import { authErrorMessage, pollSecureSession } from "../services/auth";
 import { commandNames, invokeAction, invokeCommand } from "../services/tauriCommands";
 import { DEFAULT_SETTINGS, normalizeSettings } from "../utils/settings";
+import { publicErrorMessage } from "../utils/publicErrors";
 import { currentWindowLabel, isSecondaryWindowRoute } from "../utils/windowRouting";
 import "../styles/App.css";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -252,14 +253,14 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
           return applyValidatedAuth(flow.session);
         }
         if (flow?.code === "network_error") {
-          showToast(flow.message || "Não foi possível renovar a licença agora.", "error");
+          showToast(authErrorMessage(flow), "error");
         }
         return null;
       })();
       try {
         await authRefreshPromiseRef.current;
       } catch (error) {
-        showToast(String(error || "Não foi possível renovar a licença."), "error");
+        showToast(authErrorMessage(error), "error");
       } finally {
         authRefreshPromiseRef.current = null;
         authRefreshInFlightRef.current = false;
@@ -320,7 +321,10 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
       .then((config) => {
         if (mounted) setAppConfig(normalizeSettings(config));
       })
-      .catch((e) => showError(String(e || "Não foi possível carregar as configurações.")));
+      .catch((error) => showError(publicErrorMessage(
+        error,
+        "Não foi possível carregar as configurações.",
+      )));
 
     return () => {
       mounted = false;

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { commandNames, invokeAction, invokeCommand } from "../../services/tauriCommands";
 import refreshIcon from "../../assets/icones/history.svg";
+import { publicErrorMessage } from "../../utils/publicErrors";
 
 const REGION_TOAST_MS = 2600;
 
@@ -164,7 +165,10 @@ function DuplicateIdenticalModal({
       setStatus(successMessage, "success");
       showSuccess?.(successMessage);
     } catch (caught) {
-      const error = caught instanceof Error ? caught.message : String(caught || "Não foi possível gerar o JSON.");
+      const error = publicErrorMessage(
+        caught,
+        "Não foi possível criar o arquivo com os nomes dos vídeos.",
+      );
       setStatus(error, "error");
       showError?.(error);
     } finally {
@@ -199,7 +203,10 @@ function DuplicateIdenticalModal({
       setStatus(successMessage, "success");
       showSuccess?.(successMessage);
     } catch (caught) {
-      const error = caught instanceof Error ? caught.message : String(caught || "Não foi possível atualizar o JSON.");
+      const error = publicErrorMessage(
+        caught,
+        "Não foi possível atualizar o arquivo com os nomes dos vídeos.",
+      );
       setStatus(error, "error");
       showError?.(error);
     } finally {
@@ -242,7 +249,10 @@ function DuplicateIdenticalModal({
       setStatus(successMessage, "success");
       showSuccess?.(successMessage);
     } catch (caught) {
-      const error = caught instanceof Error ? caught.message : String(caught || "Não foi possível importar o JSON.");
+      const error = publicErrorMessage(
+        caught,
+        "Não foi possível ler o arquivo com os nomes dos vídeos.",
+      );
       setStatus(error, "error");
       showError?.(error);
     } finally {
@@ -475,7 +485,7 @@ function DuplicateIdenticalModal({
 
       if (closeOnSuccess && onClose) onClose();
     } catch (caught) {
-      const error = caught instanceof Error ? caught.message : "Não foi possível duplicar o MP4.";
+      const error = publicErrorMessage(caught, "Não foi possível duplicar o vídeo.");
       setStatus(error, "error");
       showError?.(error);
     } finally {

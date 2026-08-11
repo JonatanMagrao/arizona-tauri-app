@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getMessage } from "../../../utils/errors";
+import { getPublicErrorMessage } from "../../../utils/errors";
+import {
+  createDiagnosticOperationId,
+  recordDiagnosticFailure,
+  recordLocalDiagnostic,
+} from "../../../services/localDiagnostics";
 import type {
   AerenderOutputPlan,
   PrepareAerenderRenderPlanResult,
@@ -88,6 +93,7 @@ export const useAerenderRender = () => {
   const [now, setNow] = useState(() => Date.now());
   const currentRunRef = useRef<AerenderRunHandle | null>(null);
   const cancelRequestedRef = useRef(false);
+  const operationIdRef = useRef("");
 
   const isBusy = state.status === "preparing" || state.status === "running";
 
@@ -106,7 +112,7 @@ export const useAerenderRender = () => {
       ...current,
       settingsLoading: true,
       settingsError: "",
-      message: "Carregando caminhos...",
+      message: "Preparando as opções de saída...",
     }));
 
     try {
@@ -125,7 +131,17 @@ export const useAerenderRender = () => {
         outputSettings: plan.outputs,
       }));
     } catch (caught) {
-      const message = getMessage(caught);
+      const message = getPublicErrorMessage(
+        caught,
+        "Não foi possível preparar as opções de render deste projeto.",
+      );
+      recordDiagnosticFailure(
+        "render",
+        "carregar_plano",
+        "Não foi possível carregar as configurações de render do projeto.",
+        caught,
+        { code: "render_plan_load_failed", runtime: "extendscript" }
+      );
       setState((current) => ({
         ...current,
         settingsLoading: false,
@@ -151,6 +167,13 @@ export const useAerenderRender = () => {
   const cancelRender = useCallback(() => {
     cancelRequestedRef.current = true;
     currentRunRef.current?.cancel();
+    recordLocalDiagnostic({
+      component: "render",
+      action: "cancelar",
+      status: "requested",
+      operationId: operationIdRef.current || undefined,
+      message: "O usuário pediu para cancelar a exportação.",
+    });
     setState((current) => ({
       ...current,
       message: "Cancelando render...",
@@ -159,8 +182,18 @@ export const useAerenderRender = () => {
 
   const startRender = useCallback(async () => {
     const totalStartedAt = Date.now();
+    const operationId = createDiagnosticOperationId("aerender");
+    operationIdRef.current = operationId;
     cancelRequestedRef.current = false;
     currentRunRef.current = null;
+    recordLocalDiagnostic({
+      component: "render",
+      action: "exportar",
+      status: "started",
+      operationId,
+      message: "Renderização dos arquivos iniciada.",
+      details: { outputCount: state.outputSettings.length },
+    });
 
     setState((current) => ({
       ...current,
@@ -183,6 +216,19 @@ export const useAerenderRender = () => {
         );
       }
 
+      recordLocalDiagnostic({
+        component: "render",
+        action: "preparar_plano",
+        status: "completed",
+        runtime: "extendscript",
+        operationId,
+        message: "Projeto salvo e plano de render preparado.",
+        details: {
+          durationMs: prepareDurationMs,
+          outputCount: preparedPlan.outputs.length,
+        },
+      });
+
       const plan = applyOutputSettings(preparedPlan, state.outputSettings);
 
       if (cancelRequestedRef.current) {
@@ -193,6 +239,14 @@ export const useAerenderRender = () => {
           totalFinishedAt: Date.now(),
           prepareDurationMs,
         }));
+        recordLocalDiagnostic({
+          component: "render",
+          action: "exportar",
+          status: "cancelled",
+          operationId,
+          message: "Render cancelado antes de iniciar os arquivos.",
+          details: { durationMs: Date.now() - totalStartedAt },
+        });
         return;
       }
 
@@ -213,6 +267,14 @@ export const useAerenderRender = () => {
         }
 
         const jobStartedAt = Date.now();
+        recordLocalDiagnostic({
+          component: "render",
+          action: "renderizar_saida",
+          status: "started",
+          operationId,
+          message: "Render de uma saída iniciado.",
+          details: { outputId: output.id },
+        });
         setState((current) => ({
           ...current,
           jobs: updateJob(current.jobs, output.id, {
@@ -263,6 +325,19 @@ export const useAerenderRender = () => {
               lastLog: result.lastLog,
             }),
           }));
+          recordLocalDiagnostic({
+            component: "render",
+            action: "renderizar_saida",
+            status: "completed",
+            operationId,
+            message: "Uma saída foi renderizada e validada.",
+            details: {
+              outputId: output.id,
+              durationMs: result.durationMs,
+              outputSizeBytes: result.outputSizeBytes,
+              exitCode: result.exitCode,
+            },
+          });
         } catch (caught) {
           currentRunRef.current = null;
 
@@ -275,10 +350,24 @@ export const useAerenderRender = () => {
                 durationMs: Date.now() - jobStartedAt,
               }),
             }));
+            recordLocalDiagnostic({
+              component: "render",
+              action: "renderizar_saida",
+              status: "cancelled",
+              operationId,
+              message: "O render da saída atual foi cancelado.",
+              details: {
+                outputId: output.id,
+                durationMs: Date.now() - jobStartedAt,
+              },
+            });
             throw caught;
           }
 
-          const message = getMessage(caught);
+          const message = getPublicErrorMessage(
+            caught,
+            `Não foi possível gerar ${output.label}.`,
+          );
           setState((current) => ({
             ...current,
             jobs: updateJob(current.jobs, output.id, {
@@ -288,6 +377,20 @@ export const useAerenderRender = () => {
               error: message,
             }),
           }));
+          recordDiagnosticFailure(
+            "render",
+            "renderizar_saida",
+            "O Arizona não conseguiu concluir uma das saídas.",
+            caught,
+            {
+              code: "aerender_output_failed",
+              operationId,
+              details: {
+                outputId: output.id,
+                durationMs: Date.now() - jobStartedAt,
+              },
+            }
+          );
           throw caught;
         }
       }
@@ -302,6 +405,14 @@ export const useAerenderRender = () => {
             job.status === "pending" ? { ...job, status: "cancelled" } : job
           ),
         }));
+        recordLocalDiagnostic({
+          component: "render",
+          action: "exportar",
+          status: "cancelled",
+          operationId,
+          message: "A exportação foi cancelada pelo usuário.",
+          details: { durationMs: Date.now() - totalStartedAt },
+        });
         return;
       }
 
@@ -311,6 +422,17 @@ export const useAerenderRender = () => {
         message: "Render concluido.",
         totalFinishedAt: Date.now(),
       }));
+      recordLocalDiagnostic({
+        component: "render",
+        action: "exportar",
+        status: "completed",
+        operationId,
+        message: "Todas as saídas foram renderizadas.",
+        details: {
+          durationMs: Date.now() - totalStartedAt,
+          outputCount: plan.outputs.length,
+        },
+      });
     } catch (caught) {
       const wasCancelled =
         caught instanceof AerenderCancelledError || cancelRequestedRef.current;
@@ -318,9 +440,38 @@ export const useAerenderRender = () => {
       setState((current) => ({
         ...current,
         status: wasCancelled ? "cancelled" : "error",
-        message: wasCancelled ? "Render cancelado." : getMessage(caught),
+        message: wasCancelled
+          ? "Render cancelado."
+          : getPublicErrorMessage(
+              caught,
+              "Não foi possível concluir a exportação dos arquivos.",
+            ),
         totalFinishedAt: Date.now(),
       }));
+      if (wasCancelled) {
+        recordLocalDiagnostic({
+          component: "render",
+          action: "exportar",
+          status: "cancelled",
+          operationId,
+          message: "A exportação foi cancelada pelo usuário.",
+          details: { durationMs: Date.now() - totalStartedAt },
+        });
+      } else {
+        recordDiagnosticFailure(
+          "render",
+          "exportar",
+          "A exportação dos arquivos foi interrompida antes de terminar.",
+          caught,
+          {
+            code: "aerender_flow_failed",
+            operationId,
+            details: { durationMs: Date.now() - totalStartedAt },
+          }
+        );
+      }
+    } finally {
+      operationIdRef.current = "";
     }
   }, [state.outputSettings]);
 

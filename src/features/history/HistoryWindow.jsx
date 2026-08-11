@@ -540,8 +540,8 @@ function ProductImportHistoryRow({ entry }) {
           </div>
         </div>
         <div className="history-product-paths">
-          <span title={sourcePath}>Origem: {sourcePath || "Path indisponível"}</span>
-          <span title={productPath}>Destino: {productPath || "Path indisponível"}</span>
+          <span title={sourcePath}>Origem: {sourcePath || "Origem indisponível"}</span>
+          <span title={productPath}>Destino: {productPath || "Destino indisponível"}</span>
         </div>
         {isSnapshotOpen && <ProductImportSnapshot report={report} />}
       </div>

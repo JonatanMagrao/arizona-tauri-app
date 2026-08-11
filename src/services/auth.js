@@ -1,4 +1,5 @@
 import { commandNames, invokeCommand } from "./tauriCommands";
+import { publicErrorMessage } from "../utils/publicErrors";
 
 export function resumeSecureSession({ appVersion = "" } = {}) {
   return invokeCommand(commandNames.authResume, { appVersion });
@@ -34,7 +35,6 @@ export async function releaseCurrentDevice() {
 
 export function releaseDeviceErrorMessage(error) {
   const code = String(error?.code || "");
-  const message = String(error?.message || error || "");
 
   if (code === "invalid_user_token") return "Sessão expirada. Entre novamente.";
   if (code === "organization_not_active") return "Licença inativa.";
@@ -45,12 +45,12 @@ export function releaseDeviceErrorMessage(error) {
   }
   if (code === "rate_limited") return "Limite de tentativas atingido. Aguarde.";
   if (code === "device_switch_interval") {
-    return message || "Esta máquina ainda não completou o intervalo mínimo entre trocas.";
+    return publicErrorMessage(
+      error,
+      "Este computador ainda não completou o intervalo mínimo entre trocas.",
+    );
   }
-  if (code === "network_error" || message.includes("network_error")) {
-    return "Não foi possível conectar ao Supabase.";
-  }
-  return message || "Operação não concluída.";
+  return publicErrorMessage(error, "Não foi possível liberar este computador agora.");
 }
 
 export function normalizeEmail(value) {
@@ -58,7 +58,5 @@ export function normalizeEmail(value) {
 }
 
 export function authErrorMessage(error) {
-  const message = String(error?.message || error || "");
-  if (message.includes("network_error")) return "Não foi possível conectar ao Supabase.";
-  return message || "Não foi possível confirmar o acesso.";
+  return publicErrorMessage(error, "Não foi possível confirmar o acesso.");
 }

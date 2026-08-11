@@ -95,9 +95,13 @@ pub fn start_warmup(app: AppHandle, jobao_cod: String, products_directory: PathB
                     }
                 }
                 Err(error) => {
-                    eprintln!(
-                        "Nao foi possivel preparar previews do Jobao {}: {}",
-                        jobao_cod, error
+                    crate::diagnostics::error(
+                        &app,
+                        "previews",
+                        "preparar_cache",
+                        "product_preview_warmup_failed",
+                        "Não foi possível preparar as imagens temporárias dos produtos deste projeto.",
+                        Some(serde_json::json!({ "technicalMessage": error })),
                     );
                 }
             }
@@ -231,10 +235,9 @@ fn run_preview_tasks(
         if is_psd_path(Path::new(&task.input_path)) {
             match render_psd_preview(task) {
                 Ok(()) => continue,
-                Err(error) => eprintln!(
-                    "Render PSD interno indisponivel para {}: {}. Tentando thumbnail do Windows.",
-                    task.input_path, error
-                ),
+                // Falhar aqui é esperado em alguns PSDs; o thumbnail do Windows
+                // ainda pode concluir a tarefa e só a falha final é registrada.
+                Err(_) => {}
             }
         }
 

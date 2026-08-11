@@ -82,7 +82,7 @@ export type ArizonaBridgeLicenseState = {
 type LicenseListener = (state: ArizonaBridgeLicenseState) => void;
 
 const DEFAULT_LOCKED_MESSAGE =
-  "Plugin bloqueado. Valide a licença novamente no Arizona App.";
+  "O painel está indisponível. Confirme seu acesso novamente no Arizona App.";
 
 let refreshTimer: number | null = null;
 let initialized = false;

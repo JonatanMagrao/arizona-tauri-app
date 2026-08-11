@@ -106,8 +106,7 @@ Fluxo atual:
     licenÃ§a, liberando devices, removendo membros, lendo a auditoria e zerando
     tempos â€” apenas **Gerar cÃ³digo** exige licenÃ§a ativa. JÃ¡ a GestÃ£o dentro do
     Arizona App exige licenÃ§a ativa: durante a suspensÃ£o os gestores nÃ£o
-    gerenciam; somente o master, por este painel. A telemetria (`track-event`)
-    tambÃ©m Ã© recusada enquanto a licenÃ§a estiver pausada ou expirada.
+    gerenciam; somente o master, por este painel.
 12. A v2.1.1 foi aposentada e estÃ¡ bloqueada no backend: ela nÃ£o envia o
     fingerprint e toda validaÃ§Ã£o dela falha com `device_not_active` ("Update
     the app to continue."). O usuÃ¡rio precisa instalar a 2.2.0. Ativar na

@@ -78,7 +78,6 @@ export const evalTS = <
   return new Promise(function (resolve, reject) {
     const formattedArgs = args
       .map((arg) => {
-        console.log(JSON.stringify(arg));
         return `${JSON.stringify(arg)}`;
       })
       .join(",");
@@ -88,7 +87,9 @@ export const evalTS = <
           var res = host["${ns}"].${functionName}(${formattedArgs});
           JSON.stringify(res);
         }catch(e){
-          e.fileName = new File(e.fileName).fsName;
+          if (e && e.fileName) {
+            e.fileName = new File(e.fileName).fsName;
+          }
           JSON.stringify(e);
         }`,
       (res: string) => {

@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { createClient } from "@supabase/supabase-js";
 import { adminConfig } from "./config.js";
+import { adminPublicErrorMessage } from "./publicErrors.js";
 import {
   adminSessionExpiryReason,
   nextAdminSessionExpiryAt,
@@ -328,7 +329,7 @@ export default function AdminApp() {
       } catch (error) {
         clearAdminSession();
         replaceAdminSession(null);
-        showToast(errorMessage(error), "error");
+        showToast(adminPublicErrorMessage(error), "error");
       } finally {
         setIsBusy(false);
       }
@@ -365,7 +366,7 @@ export default function AdminApp() {
         }
       } catch (error) {
         if (isCurrent) {
-          const message = errorMessage(error);
+          const message = adminPublicErrorMessage(error);
           setLicenseLoadError(message);
           setLicenseLoadState("error");
           if (isInvalidAdminSessionError(error)) {
@@ -487,7 +488,7 @@ export default function AdminApp() {
       });
       setAuditLoadState("ready");
     } catch (error) {
-      const message = errorMessage(error);
+      const message = adminPublicErrorMessage(error);
       setAuditLoadError(message);
       setAuditLoadState("error");
       if (isInvalidAdminSessionError(error)) {
@@ -587,10 +588,10 @@ export default function AdminApp() {
         },
       });
       if (error) throw error;
-      if (!data?.url) throw new Error("O Supabase nao retornou a URL de acesso Google.");
+      if (!data?.url) throw new Error("Não foi possível iniciar o acesso com Google.");
     } catch (error) {
       setIsBusy(false);
-      showToast(errorMessage(error), "error");
+      showToast(adminPublicErrorMessage(error), "error");
     }
   }
 
@@ -604,7 +605,7 @@ export default function AdminApp() {
       showToast("Sessão encerrada.", "success");
     } catch {
       showToast(
-        "A sessão foi encerrada neste navegador, mas não foi possível confirmar a revogação remota.",
+        "Você saiu deste navegador, mas o encerramento nos outros acessos não pôde ser confirmado.",
         "error",
       );
     } finally {
@@ -702,7 +703,7 @@ export default function AdminApp() {
     };
 
     if (users.some((user) => !user.name || !user.email)) {
-      showToast("Revise nome e email dos usuarios preenchidos.", "error");
+      showToast("Preencha o nome e o e-mail de todos os usuários adicionados.", "error");
       return;
     }
 
@@ -712,17 +713,17 @@ export default function AdminApp() {
     }
 
     if (new Set(users.map((user) => user.email)).size !== users.length) {
-      showToast("Ha emails de usuarios duplicados.", "error");
+      showToast("Há usuários com o mesmo e-mail. Revise os cadastros.", "error");
       return;
     }
 
     if (users.some((user) => domainFromEmail(user.email) !== arizonaDomain)) {
-      showToast("Emails de usuarios precisam usar arizona.global.", "error");
+      showToast("Os e-mails dos usuários precisam usar o domínio arizona.global.", "error");
       return;
     }
 
     if (!Number.isInteger(payload.seatsAllowed) || payload.seatsAllowed < 1) {
-      showToast("Seats precisa ser pelo menos 1.", "error");
+      showToast("A licença precisa ter pelo menos uma vaga.", "error");
       return;
     }
 
@@ -731,7 +732,7 @@ export default function AdminApp() {
       || payload.dailyAuthResetHour < 0
       || payload.dailyAuthResetHour > 23
     ) {
-      showToast("Escolha um horario valido para a renovacao diaria.", "error");
+      showToast("Escolha um horário válido para a renovação diária.", "error");
       return;
     }
 
@@ -746,17 +747,17 @@ export default function AdminApp() {
     }
 
     if (users.length > payload.seatsAllowed) {
-      showToast("Usuarios nao podem passar do total de seats.", "error");
+      showToast("A quantidade de usuários ultrapassa as vagas disponíveis.", "error");
       return;
     }
 
     if (!payload.licenseIsIndefinite && !licenseExpiresOn) {
-      showToast("Informe uma data limite valida.", "error");
+      showToast("Informe uma data limite válida.", "error");
       return;
     }
 
     if (!payload.licenseIsIndefinite && licenseExpiresOn < todayDateInput()) {
-      showToast("A data limite nao pode estar no passado.", "error");
+      showToast("A data limite não pode estar no passado.", "error");
       return;
     }
 
@@ -787,7 +788,7 @@ export default function AdminApp() {
           );
           if (result?.activation) generatedCodes.push(result.activation);
         } catch (error) {
-          generationErrors.push(errorMessage(error));
+          generationErrors.push(adminPublicErrorMessage(error));
         }
       }
 
@@ -806,20 +807,20 @@ export default function AdminApp() {
 
       if (generationErrors.length) {
         showToast(
-          `Licenca salva, mas o codigo nao foi gerado: ${generationErrors[0]}`,
+          `Licença salva, mas o código não foi gerado: ${generationErrors[0]}`,
           "error",
         );
       } else if (generatedCodes.length) {
-        showToast("Licenca salva. Use \"Ver codigo\" na linha de cada usuario.", "success");
+        showToast("Licença salva. Use \"Ver código\" na linha de cada usuário.", "success");
       } else {
-        showToast("Licenca salva.", "success");
+        showToast("Licença salva.", "success");
       }
     });
   }
 
   async function handleSuspendOrganization() {
     if (!hasCurrentLicense) {
-      showToast("Licenca ainda nao carregada.", "error");
+      showToast("A licença ainda não foi carregada. Tente novamente.", "error");
       return;
     }
 
@@ -874,7 +875,7 @@ export default function AdminApp() {
   async function handleGenerateActivationCode(user, anchor = null) {
     const organizationId = currentLicense?.organization?.id;
     if (!organizationId || !user?.memberId) {
-      showToast("Salve o usuario antes de gerar o codigo.", "error");
+      showToast("Salve o usuário antes de gerar o código.", "error");
       return;
     }
 
@@ -886,14 +887,14 @@ export default function AdminApp() {
         activeSession.accessToken,
       );
       if (!result?.activation) {
-        throw new Error("O Supabase nao retornou o codigo de ativacao.");
+        throw new Error("O código de ativação não foi recebido. Tente novamente.");
       }
       rememberActivationCodes([result.activation]);
       setActivationPopover({
         memberId: result.activation.memberId,
         anchor: anchor || null,
       });
-      showToast("Codigo gerado. Copie antes de fechar o painel.", "success");
+      showToast("Código gerado. Copie-o antes de fechar o painel.", "success");
     });
   }
 
@@ -920,9 +921,9 @@ export default function AdminApp() {
   async function handleCopyActivationCode(activation) {
     try {
       await navigator.clipboard.writeText(activation.code);
-      showToast("Codigo copiado.", "success");
+      showToast("Código copiado.", "success");
     } catch {
-      showToast("Nao foi possivel copiar. Selecione o codigo manualmente.", "error");
+      showToast("Não foi possível copiar. Selecione o código manualmente.", "error");
     }
   }
 
@@ -943,7 +944,7 @@ export default function AdminApp() {
     const deviceId = user.activeDevice?.id;
 
     if (!organizationId || !user.memberId || !deviceId) {
-      showToast("Nenhuma maquina ativa para liberar.", "error");
+      showToast("Este usuário não possui um computador ativo para liberar.", "error");
       return;
     }
 
@@ -966,14 +967,14 @@ export default function AdminApp() {
           licenseUser.id === user.memberId ? { ...licenseUser, activeDevice: null } : licenseUser
         )),
       } : current);
-      showToast("Maquina liberada para este usuario.", "success");
+      showToast("O computador foi liberado para este usuário.", "success");
     });
   }
 
   async function handleResetUserRateLimits(user) {
     const organizationId = currentLicense?.organization?.id;
     if (!organizationId || !user.memberId) {
-      showToast("Salve o usuario antes de zerar os tempos.", "error");
+      showToast("Salve o usuário antes de reiniciar os limites de acesso.", "error");
       return;
     }
 
@@ -1006,18 +1007,18 @@ export default function AdminApp() {
 
     if (!user.memberId) {
       clearDraftUser(user.id);
-      showToast("Linha de usuario limpa.", "success");
+      showToast("Os dados deste usuário foram removidos da linha.", "success");
       return;
     }
 
     const organizationId = currentLicense?.organization?.id;
     if (!organizationId) {
-      showToast("Licenca ainda nao carregada.", "error");
+      showToast("A licença ainda não foi carregada. Tente novamente.", "error");
       return;
     }
 
     const confirmed = window.confirm(
-      "Limpar este usuario libera o seat e revoga o device ativo. Deseja continuar?",
+      "Remover este usuário libera sua vaga e encerra o acesso no computador atual. Deseja continuar?",
     );
     if (!confirmed) return;
 
@@ -1034,7 +1035,7 @@ export default function AdminApp() {
         users: (current.users || []).filter((licenseUser) => licenseUser.id !== user.memberId),
         consumedSeats: Math.max(0, Number(current.consumedSeats || 0) - 1),
       } : current);
-      showToast("Usuario removido e seat liberado.", "success");
+      showToast("Usuário removido e vaga liberada.", "success");
     });
   }
 
@@ -1065,7 +1066,7 @@ export default function AdminApp() {
         clearAdminSession();
         replaceAdminSession(null);
       }
-      showToast(errorMessage(error), "error");
+      showToast(adminPublicErrorMessage(error), "error");
     } finally {
       setIsBusy(false);
     }
@@ -1106,7 +1107,7 @@ export default function AdminApp() {
       try {
         data = JSON.parse(text);
       } catch {
-        const error = new Error(`Resposta invalida do Supabase Auth (${response.status}).`);
+        const error = new Error("Não foi possível entender a resposta do serviço.");
         error.code = response.status;
         throw error;
       }
@@ -1133,7 +1134,7 @@ export default function AdminApp() {
   async function validSession() {
     const activeSession = sessionRef.current;
     if (!activeSession?.accessToken) {
-      throw new Error("Entre com o acesso master.");
+      throw new Error("Entre com a conta administradora para continuar.");
     }
 
     const expiryReason = adminSessionExpiryReason(activeSession);
@@ -1315,7 +1316,7 @@ export default function AdminApp() {
           <section className="panel panel--auth panel--login" aria-labelledby="authTitle">
             <div className="panel-header">
               <div className="panel-title">
-                <span className="eyebrow">Conta master</span>
+                <span className="eyebrow">Conta administradora</span>
                 <h2 id="authTitle">Acesse o painel</h2>
               </div>
             </div>
@@ -1332,7 +1333,7 @@ export default function AdminApp() {
                 <span className="google-login-button__mark" aria-hidden="true">G</span>
                 {isBusy ? "Conectando..." : "Entrar com Google"}
               </button>
-              <small>Somente a conta master autorizada pode abrir este painel.</small>
+              <small>Somente a conta administradora autorizada pode abrir este painel.</small>
             </div>
           </section>
         ) : licenseLoadState !== "ready" ? (
@@ -1406,7 +1407,7 @@ export default function AdminApp() {
                 <span className="domain-badge">@arizona.global</span>
                 <span className="seat-badge">
                   <strong>{availableSeats}</strong>
-                  {availableSeats === 1 ? " seat disponível" : " seats disponíveis"}
+                  {availableSeats === 1 ? " vaga disponível" : " vagas disponíveis"}
                 </span>
                 {hasCurrentLicense ? (
                   <span
@@ -1463,7 +1464,7 @@ export default function AdminApp() {
 
                 <div className="license-settings">
                   <label className="field field--compact">
-                    <span>Seats</span>
+                    <span>Vagas</span>
                     <input
                       type="number"
                       min="1"
@@ -1851,7 +1852,7 @@ function AdminNavigation({
               </svg>
             </span>
             <span className="admin-nav__copy">
-              <strong>Logs de atividade</strong>
+              <strong>Histórico de atividades</strong>
             </span>
           </button>
 
@@ -1883,7 +1884,7 @@ function AdminNavigation({
         <span>
           <small>Organização</small>
           <strong>arizona.global</strong>
-          <em>{`${availableSeats} de ${seatsAllowed || 0} seats disponíveis`}</em>
+          <em>{`${availableSeats} de ${seatsAllowed || 0} vagas disponíveis`}</em>
         </span>
       </div>
     </aside>
@@ -1905,7 +1906,7 @@ function AuditLogPage({
   const [dateTo, setDateTo] = useState("");
   const filters = [
     { value: "all", label: "Todos" },
-    { value: "devices", label: "Dispositivos" },
+    { value: "devices", label: "Computadores" },
     { value: "access", label: "Ativação" },
     { value: "members", label: "Usuários" },
     { value: "license", label: "Licença" },
@@ -1943,8 +1944,8 @@ function AuditLogPage({
       <header className="audit-page__header">
         <div>
           <span className="eyebrow">Rastreabilidade</span>
-          <h2 id="auditPageTitle">Logs de atividade</h2>
-          <p>Acompanhe ações administrativas, ativações e mudanças de dispositivo.</p>
+          <h2 id="auditPageTitle">Histórico de atividades</h2>
+          <p>Acompanhe ações administrativas, ativações e mudanças de computadores.</p>
         </div>
         <div className="audit-page__header-actions">
           <span className="audit-total">
@@ -1974,12 +1975,12 @@ function AuditLogPage({
           </svg>
           <input
             type="search"
-            placeholder="Buscar por pessoa, ação ou dispositivo"
+            placeholder="Buscar por pessoa, ação ou computador"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
         </label>
-        <div className="audit-filters" aria-label="Filtrar logs">
+        <div className="audit-filters" aria-label="Filtrar registros">
           {filters.map((filter) => (
             <button
               className={category === filter.value ? "is-selected" : ""}
@@ -2057,7 +2058,7 @@ function AuditLogPage({
               </svg>
             </span>
             <h3>Nenhuma atividade registrada</h3>
-            <p>As próximas ações administrativas e de dispositivos aparecerão aqui.</p>
+            <p>As próximas ações administrativas e de computadores aparecerão aqui.</p>
           </div>
         ) : visibleEvents.length === 0 ? (
           <div className="audit-empty">
@@ -2160,7 +2161,7 @@ function AuditIdentity({ identity, fallback, target = false }) {
 
 function AuditLogSkeleton() {
   return (
-    <div className="audit-skeleton" aria-label="Carregando logs">
+    <div className="audit-skeleton" aria-label="Carregando registros">
       {Array.from({ length: 6 }, (_, index) => (
         <span key={index}>
           <i />
@@ -3187,17 +3188,17 @@ function auditIdentityName(identity) {
   if (!identity) return "";
   if (identity.kind === "organization") return identity.name || "Arizona";
   if (identity.kind === "device") {
-    return identity.name || identity.memberName || identity.email || "Dispositivo";
+    return identity.name || identity.memberName || identity.email || "Computador";
   }
   return identity.name || identity.email || (
-    identity.kind === "master" ? "Administrador master" : "Usuário"
+    identity.kind === "master" ? "Administrador principal" : "Usuário"
   );
 }
 
 function auditRoleLabel(role, kind) {
-  if (kind === "device") return "Dispositivo";
+  if (kind === "device") return "Computador";
   if (kind === "organization") return "Organização";
-  if (role === "master" || kind === "master") return "Master";
+  if (role === "master" || kind === "master") return "Administrador principal";
   if (role === "admin") return "Gestor";
   if (role === "user") return "Usuário";
   return "";
@@ -3205,8 +3206,8 @@ function auditRoleLabel(role, kind) {
 
 function auditSourceLabel(source) {
   return {
-    admin_web_panel: "Admin web",
-    master_license_panel: "Admin web",
+    admin_web_panel: "Painel administrativo",
+    master_license_panel: "Painel administrativo",
     tauri_admin_panel: "Gestão no Arizona App",
     tauri_passwordless_login: "Arizona App",
     tauri_passwordless_activation: "Arizona App",
@@ -3219,22 +3220,22 @@ function auditActionInfo(action) {
       category: "devices",
       tone: "success",
       icon: "device",
-      label: "Dispositivo ativado",
-      description: (event) => `${auditIdentityName(event.target) || "Um dispositivo"} foi vinculado à conta.`,
+      label: "Computador ativado",
+      description: (event) => `${auditIdentityName(event.target) || "Um computador"} foi vinculado à conta.`,
     },
     "device.released": {
       category: "devices",
       tone: "warning",
       icon: "device",
-      label: "Dispositivo liberado",
-      description: (event) => `${auditIdentityName(event.target) || "Um dispositivo"} foi liberado por um responsável.`,
+      label: "Computador liberado",
+      description: (event) => `${auditIdentityName(event.target) || "Um computador"} foi liberado por um responsável.`,
     },
     "device.self_released": {
       category: "devices",
       tone: "neutral",
       icon: "device",
-      label: "Dispositivo autoliberado",
-      description: () => "O próprio usuário liberou o dispositivo autenticado.",
+      label: "Computador liberado pelo usuário",
+      description: () => "O próprio usuário liberou o computador associado à sua conta.",
     },
     "activation_code.generated": {
       category: "access",
@@ -3252,14 +3253,14 @@ function auditActionInfo(action) {
       tone: "success",
       icon: "key",
       label: "Ativação concluída",
-      description: () => "O código de ativação foi validado e consumido.",
+      description: () => "O usuário confirmou o código e concluiu a ativação.",
     },
     "member.recovery_code_consumed": {
       category: "access",
       tone: "success",
       icon: "key",
       label: "Recuperação concluída",
-      description: () => "O código de recuperação foi validado e consumido.",
+      description: () => "O usuário confirmou o código e recuperou seu acesso.",
     },
     "member.added": {
       category: "members",
@@ -3300,7 +3301,7 @@ function auditActionInfo(action) {
       tone: "warning",
       icon: "shield",
       label: "Autenticador redefinido",
-      description: () => "O TOTP e as sessões vinculadas foram redefinidos pelo master.",
+      description: () => "O aplicativo autenticador e as sessões vinculadas foram redefinidos pelo administrador principal.",
     },
     "member.rate_limits_reset": {
       category: "security",
@@ -3332,12 +3333,12 @@ function auditActionInfo(action) {
       category: "license",
       tone: "primary",
       icon: "license",
-      label: "Seats alterados",
+      label: "Vagas alteradas",
       description: (event) => {
         const previous = event.context?.previousSeatsAllowed;
         const current = event.context?.seatsAllowed;
         return Number.isFinite(Number(previous)) && Number.isFinite(Number(current))
-          ? `Capacidade alterada de ${previous} para ${current} seats.`
+          ? `Quantidade de vagas alterada de ${previous} para ${current}.`
           : "A capacidade de usuários da licença foi alterada.";
       },
     },
@@ -3348,7 +3349,7 @@ function auditActionInfo(action) {
     tone: "neutral",
     icon: "history",
     label: "Atividade registrada",
-    description: () => String(action || "Evento de auditoria"),
+    description: () => "Uma atividade do sistema foi registrada.",
   };
 }
 
@@ -3435,76 +3436,4 @@ function monthLabel(date) {
     year: "numeric",
   }).format(date);
   return formatted.charAt(0).toUpperCase() + formatted.slice(1);
-}
-
-function errorMessage(error) {
-  const code = String(error?.code || "");
-  const message = String(error?.message || "");
-
-  if (code === "invalid_credentials" || message.toLowerCase().includes("invalid login")) {
-    return "Email ou senha invalidos.";
-  }
-  if (code === "email_not_confirmed" || message.toLowerCase().includes("email not confirmed")) {
-    return "Email ainda nao confirmado no Supabase Auth.";
-  }
-  if (code === "forbidden") return "Acesso master nao autorizado.";
-  if (code === "invalid_publishable_key") return "Chave publica invalida no painel admin.";
-  if (code === "invalid_user_token") return "Sessao expirada. Entre novamente com Google.";
-  if (code === "admin_google_oauth_required") return "Entre novamente com sua conta Google.";
-  if (code === "admin_session_expired") return "Sessão administrativa expirada. Entre novamente.";
-  if (code === "organization_not_active") {
-    return "Licença suspensa. Reative a licença para usar esta ação.";
-  }
-  if (code === "organization_not_found") return "Licença ainda não cadastrada.";
-  if (code === "invalid_status") return "Status de licença inválido.";
-  if (code === "bad_code_verifier" || code === "flow_state_not_found") {
-    return "O acesso Google expirou. Inicie o login novamente.";
-  }
-  if (code === "rate_limited") {
-    const remaining = Number(error?.retryAfterSeconds || 0);
-    return remaining > 0
-      ? `Muitas tentativas. Tente novamente em ${formatDuration(remaining)}.`
-      : "Muitas tentativas. Aguarde antes de tentar novamente.";
-  }
-  if (code === "function_config_error") return "Configuracao da Edge Function incompleta.";
-  if (code === "function_permission_error") return "Edge Function sem permissao para gravar licencas.";
-  if (code === "seat_limit_exceeded") return "Nao ha seats disponiveis.";
-  if (code === "seats_below_existing_members") return "Seats menor que os usuarios ja cadastrados.";
-  if (code === "too_many_users") return "Usuarios nao podem passar do total de seats.";
-  if (code === "organization_already_exists") return "Licenca ja cadastrada.";
-  if (code === "missing_user_name") return "Informe o nome do usuario.";
-  if (code === "invalid_user_email") return "Informe um email de usuario valido.";
-  if (code === "missing_admin_name") return "Informe o nome do usuario.";
-  if (code === "invalid_admin_email") return "Informe um email de usuario valido.";
-  if (code === "invalid_license_expires_on") return "Informe uma data limite valida.";
-  if (code === "invalid_daily_auth_reset_hour") return "Escolha um horario valido para a renovacao diaria.";
-  if (code === "invalid_access_policy") return "Revise os limites e tempos das politicas de acesso.";
-  if (code === "device_switch_interval") {
-    const remaining = Number(error?.retryAfterSeconds || 0);
-    return remaining > 0
-      ? `A maquina atual podera ser liberada em ${formatDuration(remaining)}.`
-      : "A maquina atual ainda nao completou o intervalo minimo entre trocas.";
-  }
-  if (code === "license_expired") return "Licenca expirada.";
-  if (code === "device_limit_reached") return "Usuario ja possui uma maquina ativa. Libere o device antes de usar outra.";
-  if (code === "device_not_active") return "Device bloqueado. Libere ou cadastre uma nova maquina.";
-  if (code === "member_not_found") return "Usuario nao encontrado.";
-  if (code === "protected_identity") return "A identidade master nao pode ser resetada por esta acao.";
-  if (code === "invalid_allowed_email_domain") return "Informe um dominio permitido valido.";
-  if (code === "admin_email_domain_not_allowed") return "Email do usuario precisa usar arizona.global.";
-  if (code === "email_domain_not_allowed") return "Email fora do dominio permitido.";
-
-  return message || "Operacao nao concluida.";
-}
-
-function formatDuration(totalSeconds) {
-  const seconds = Math.max(0, Math.ceil(Number(totalSeconds) || 0));
-  const days = Math.floor(seconds / 86400);
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const remainder = seconds % 60;
-  if (days) return `${days}d ${Math.floor((seconds % 86400) / 3600)}h`;
-  if (hours) return `${hours}h ${String(minutes).padStart(2, "0")}min`;
-  if (minutes) return `${minutes}min ${String(remainder).padStart(2, "0")}s`;
-  return `${remainder}s`;
 }

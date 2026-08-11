@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getMessage } from "../../../utils/errors";
+import { getPublicErrorMessage } from "../../../utils/errors";
+import {
+  createDiagnosticOperationId,
+  recordDiagnosticFailure,
+  recordLocalDiagnostic,
+} from "../../../services/localDiagnostics";
 import {
   loadOffersEditorSnapshot,
   openOfferPrecompForEditor,
@@ -89,7 +94,18 @@ export const useOffersEditor = ({
         setSnapshot(nextSnapshot);
         return true;
       } catch (caught) {
-        onStatus(getMessage(caught));
+        const message = getPublicErrorMessage(
+          caught,
+          "Não foi possível carregar as ofertas deste projeto.",
+        );
+        onStatus(message);
+        recordDiagnosticFailure(
+          "ofertas",
+          "carregar_painel",
+          "Não foi possível carregar as ofertas do projeto.",
+          caught,
+          { code: "offers_snapshot_failed", runtime: "extendscript" }
+        );
         return false;
       } finally {
         setLoading(false);
@@ -100,18 +116,74 @@ export const useOffersEditor = ({
 
   const runOfferAction = useCallback(
     async (
+      actionName: string,
+      actionLabel: string,
       action: () => Promise<OfferEditorActionResult>
     ) => {
+      const operationId = createDiagnosticOperationId(`offers-${actionName}`);
+      const startedAt = Date.now();
+      recordLocalDiagnostic({
+        component: "ofertas",
+        action: actionName,
+        status: "started",
+        runtime: "extendscript",
+        operationId,
+        message: `${actionLabel}: ação iniciada no After Effects.`,
+      });
       try {
         const result = await action();
-        onStatus(result.message);
+        const publicMessage = getPublicErrorMessage(
+          result.message,
+          result.ok
+            ? "Alteração concluída."
+            : "Não foi possível concluir esta alteração na oferta.",
+        );
+        onStatus(publicMessage);
 
         if (!result.ok) {
-          appendLog(result.message || "Acao de ofertas falhou.");
+          appendLog(publicMessage);
+          recordLocalDiagnostic({
+            level: "error",
+            component: "ofertas",
+            action: actionName,
+            status: "failed",
+            code: "offers_action_rejected",
+            runtime: "extendscript",
+            operationId,
+            message: `${actionLabel}: o After Effects não conseguiu concluir a ação.`,
+            details: {
+              durationMs: Date.now() - startedAt,
+              errorCount: result.errors?.length || 0,
+            },
+          });
+        } else {
+          recordLocalDiagnostic({
+            level: result.errors?.length > 0 ? "warning" : "info",
+            component: "ofertas",
+            action: actionName,
+            status: result.errors?.length > 0 ? "completed_with_warnings" : "completed",
+            code: result.errors?.length > 0 ? "offers_action_partial" : undefined,
+            runtime: "extendscript",
+            operationId,
+            message: result.errors?.length > 0
+              ? `${actionLabel}: ação concluída com avisos.`
+              : `${actionLabel}: ação concluída.`,
+            details: {
+              durationMs: Date.now() - startedAt,
+              errorCount: result.errors?.length || 0,
+            },
+          });
         }
 
         if (result.errors?.length > 0) {
-          appendLog(result.errors);
+          appendLog(
+            result.errors.map((error) =>
+              getPublicErrorMessage(
+                error,
+                "Uma parte da alteração não pôde ser concluída.",
+              )
+            )
+          );
         }
 
         selectedOfferLayerIndexRef.current =
@@ -119,9 +191,24 @@ export const useOffersEditor = ({
           selectedOfferLayerIndexRef.current;
         await refreshOffers(selectedOfferLayerIndexRef.current);
       } catch (caught) {
-        const message = getMessage(caught);
+        const message = getPublicErrorMessage(
+          caught,
+          "Não foi possível concluir esta alteração na oferta.",
+        );
         onStatus(message);
         appendLog(message);
+        recordDiagnosticFailure(
+          "ofertas",
+          actionName,
+          `${actionLabel}: ocorreu um erro ao conversar com o After Effects.`,
+          caught,
+          {
+            code: "offers_host_action_failed",
+            operationId,
+            runtime: "extendscript",
+            details: { durationMs: Date.now() - startedAt },
+          }
+        );
       }
     },
     [appendLog, onStatus, refreshOffers]
@@ -129,19 +216,23 @@ export const useOffersEditor = ({
 
   const selectOffer = useCallback(
     (offerLayerIndex: number) =>
-      runOfferAction(() => selectOfferForEditor(offerLayerIndex)),
+      runOfferAction("selecionar_oferta", "Selecionar oferta", () =>
+        selectOfferForEditor(offerLayerIndex)
+      ),
     [runOfferAction]
   );
 
   const openOfferPrecomp = useCallback(
     (offerLayerIndex: number) =>
-      runOfferAction(() => openOfferPrecompForEditor(offerLayerIndex)),
+      runOfferAction("abrir_precomposicao", "Abrir pré-composição da oferta", () =>
+        openOfferPrecompForEditor(offerLayerIndex)
+      ),
     [runOfferAction]
   );
 
   const updateDescription = useCallback(
     (offerLayerIndex: number, productIndex: number, value: string) =>
-      runOfferAction(() =>
+      runOfferAction("atualizar_descricao", "Atualizar descrição", () =>
         updateOfferDescription(
           offerLayerIndex,
           productIndex,
@@ -159,7 +250,7 @@ export const useOffersEditor = ({
       value: string,
       fieldIndex?: number
     ) =>
-      runOfferAction(() =>
+      runOfferAction("atualizar_campo", "Atualizar campo da oferta", () =>
         updateOfferField(
           offerLayerIndex,
           productIndex,
@@ -178,7 +269,7 @@ export const useOffersEditor = ({
       optionGroupId: string,
       selectedIndex: number
     ) =>
-      runOfferAction(() =>
+      runOfferAction("alterar_opcao", "Alterar opção da oferta", () =>
         updateOfferOption(
           offerLayerIndex,
           productIndex,
@@ -195,7 +286,7 @@ export const useOffersEditor = ({
       productIndex: number,
       target: OfferInstallmentJumpTarget
     ) =>
-      runOfferAction(() =>
+      runOfferAction("ajustar_parcelamento", "Ajustar salto do parcelamento", () =>
         updateOfferInstallmentJump(offerLayerIndex, productIndex, target)
       ),
     [runOfferAction]
@@ -203,13 +294,15 @@ export const useOffersEditor = ({
 
   const updateLegalText = useCallback(
     (offerLayerIndex: number, value: string) =>
-      runOfferAction(() => updateOfferLegalText(offerLayerIndex, value)),
+      runOfferAction("atualizar_legal", "Atualizar texto legal", () =>
+        updateOfferLegalText(offerLayerIndex, value)
+      ),
     [runOfferAction]
   );
 
   const updateLegalControl = useCallback(
     (offerLayerIndex: number, controlId: string, enabled: boolean) =>
-      runOfferAction(() =>
+      runOfferAction("alterar_controle_legal", "Alterar controle legal", () =>
         updateOfferLegalControl(offerLayerIndex, controlId, enabled)
       ),
     [runOfferAction]
@@ -217,7 +310,7 @@ export const useOffersEditor = ({
 
   const updateLegalControlValue = useCallback(
     (offerLayerIndex: number, controlId: string, value: string) =>
-      runOfferAction(() =>
+      runOfferAction("atualizar_valor_legal", "Atualizar valor legal", () =>
         updateOfferLegalControlValue(offerLayerIndex, controlId, value)
       ),
     [runOfferAction]
@@ -225,7 +318,7 @@ export const useOffersEditor = ({
 
   const updateLegalControlOption = useCallback(
     (offerLayerIndex: number, controlId: string, selectedIndex: number) =>
-      runOfferAction(() =>
+      runOfferAction("selecionar_opcao_legal", "Selecionar opção legal", () =>
         updateOfferLegalControlOption(offerLayerIndex, controlId, selectedIndex)
       ),
     [runOfferAction]
@@ -238,7 +331,7 @@ export const useOffersEditor = ({
       targetProductIndex: number,
       openOfferPrecomp: boolean
     ) =>
-      runOfferAction(() =>
+      runOfferAction("trocar_produtos", "Trocar produtos da oferta", () =>
         swapOfferProducts(
           offerLayerIndex,
           sourceProductIndex,
@@ -251,7 +344,7 @@ export const useOffersEditor = ({
 
   const updateDescriptionExpression = useCallback(
     (offerLayerIndex: number, productIndex: number, enabled: boolean) =>
-      runOfferAction(() =>
+      runOfferAction("alternar_expressao", "Alterar expressão da descrição", () =>
         updateOfferDescriptionExpression(
           offerLayerIndex,
           productIndex,
@@ -263,7 +356,7 @@ export const useOffersEditor = ({
 
   const swapOffers = useCallback(
     (sourceOfferLayerIndex: number, targetOfferLayerIndex: number) =>
-      runOfferAction(() =>
+      runOfferAction("trocar_ofertas", "Trocar ofertas", () =>
         swapOfferSources(sourceOfferLayerIndex, targetOfferLayerIndex)
       ),
     [runOfferAction]
@@ -276,7 +369,7 @@ export const useOffersEditor = ({
       filePath: string,
       openOfferPrecomp: boolean
     ) =>
-      runOfferAction(() =>
+      runOfferAction("substituir_imagem", "Substituir imagem do produto", () =>
         replaceOfferProductImage(
           offerLayerIndex,
           productIndex,
@@ -294,25 +387,80 @@ export const useOffersEditor = ({
 
     lastUndoAtRef.current = now;
     undoInFlightRef.current = true;
+    const operationId = createDiagnosticOperationId("offers-undo");
+    const startedAt = Date.now();
+    recordLocalDiagnostic({
+      component: "ofertas",
+      action: "desfazer",
+      status: "started",
+      runtime: "extendscript",
+      operationId,
+      message: "Desfazer última alteração: ação iniciada no After Effects.",
+    });
 
     try {
       const result = await undoOffersEditorAction();
-      onStatus(result.message);
+      const publicMessage = getPublicErrorMessage(
+        result.message,
+        result.ok
+          ? "A última alteração foi desfeita."
+          : "Não foi possível desfazer a última alteração.",
+      );
+      onStatus(publicMessage);
 
       if (!result.ok) {
-        appendLog(result.message || "Undo nao executado.");
+        appendLog(publicMessage);
       }
 
       if (result.errors?.length > 0) {
-        appendLog(result.errors);
+        appendLog(
+          result.errors.map((error) =>
+            getPublicErrorMessage(
+              error,
+              "Uma parte da alteração não pôde ser desfeita.",
+            )
+          )
+        );
       }
+
+      recordLocalDiagnostic({
+        level: result.ok ? (result.errors?.length > 0 ? "warning" : "info") : "error",
+        component: "ofertas",
+        action: "desfazer",
+        status: result.ok ? (result.errors?.length > 0 ? "completed_with_warnings" : "completed") : "failed",
+        code: result.ok ? (result.errors?.length > 0 ? "offers_undo_partial" : undefined) : "offers_undo_rejected",
+        runtime: "extendscript",
+        operationId,
+        message: result.ok
+          ? "A última alteração das ofertas foi desfeita."
+          : "O After Effects não conseguiu desfazer a última alteração.",
+        details: {
+          durationMs: Date.now() - startedAt,
+          errorCount: result.errors?.length || 0,
+        },
+      });
 
       await wait(UNDO_REFRESH_DELAY_MS);
       return await refreshOffers(selectedOfferLayerIndexRef.current);
     } catch (caught) {
-      const message = getMessage(caught);
+      const message = getPublicErrorMessage(
+        caught,
+        "Não foi possível desfazer a última alteração.",
+      );
       onStatus(message);
       appendLog(message);
+      recordDiagnosticFailure(
+        "ofertas",
+        "desfazer",
+        "Ocorreu um erro ao desfazer a última alteração.",
+        caught,
+        {
+          code: "offers_undo_failed",
+          operationId,
+          runtime: "extendscript",
+          details: { durationMs: Date.now() - startedAt },
+        }
+      );
       return false;
     } finally {
       undoInFlightRef.current = false;

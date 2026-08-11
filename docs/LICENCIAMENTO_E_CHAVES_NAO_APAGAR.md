@@ -480,7 +480,7 @@ hora da renovação diária do dia seguinte, em `America/Sao_Paulo`, e não mais
 `23:59:59.999Z`. O cálculo fica no helper `licenseExpiryInstant`
 (`ADMIN/supabase/functions/_shared/auth-cycle.ts`) e é usado por
 `validate-license`, `app-activate`, `app-activate-device`,
-`admin-generate-activation-code` e `track-event`. O corte atinge o Tauri e a extensão CEP ao
+`admin-generate-activation-code`. O corte atinge o Tauri e a extensão CEP ao
 mesmo tempo: o app percebe na próxima verificação de 30 segundos e o recibo
 assinado já carrega esse limite, que o painel relê a cada 5 segundos. Como o
 prazo está dentro do recibo e da sessão local, o bloqueio também vale offline.

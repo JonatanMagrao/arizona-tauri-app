@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import AdminWindow from "../admin/AdminWindow";
 import DuplicateIdenticalModal from "../duplicates/DuplicateIdenticalModal";
 import HistoryWindow from "../history/HistoryWindow";
@@ -13,6 +13,7 @@ import { useAutoHideToast } from "../../hooks/useAutoHideToast";
 import { commandNames, invokeAction, invokeCommand } from "../../services/tauriCommands";
 import { formatDuration } from "../../utils/formatters";
 import { normalizeProductReport } from "../../utils/productReport";
+import { publicErrorMessage } from "../../utils/publicErrors";
 import {
   DEFAULT_SETTINGS,
   normalizeFourDigits,
@@ -87,6 +88,7 @@ const AFTER_EFFECTS_SHORTCUT_FIELDS = Object.freeze(
 const SETTINGS_TABS = Object.freeze({
   GENERAL: "general",
   AFTER_SHORTCUTS: "afterShortcuts",
+  DIAGNOSTICS: "diagnostics",
   EXTENSION: "extension",
 });
 
@@ -400,7 +402,10 @@ function SettingsView({ auth, showError, showSuccess }) {
         setSettingsDraft(normalized);
         setShortcutDraft(normalized);
       })
-      .catch((error) => showError(String(error || "Não foi possível carregar as configurações.")))
+      .catch((error) => showError(publicErrorMessage(
+        error,
+        "Não foi possível carregar as configurações.",
+      )))
       .finally(() => {
         if (mounted) setIsLoading(false);
       });
@@ -471,7 +476,7 @@ function SettingsView({ auth, showError, showSuccess }) {
         showSuccess(successMessage);
         return normalized;
       } catch (error) {
-        showError(String(error || "Não foi possível salvar as configurações."));
+        showError(publicErrorMessage(error, "Não foi possível salvar as configurações."));
         return null;
       } finally {
         setIsSaving(false);
@@ -535,7 +540,7 @@ function SettingsView({ auth, showError, showSuccess }) {
     try {
       await invokeCommand(commandNames.setAfterShortcutRecording, { recording: false });
     } catch (error) {
-      showError(String(error || "Nao foi possivel restaurar os atalhos do After."));
+      showError(publicErrorMessage(error, "Não foi possível reativar os atalhos do After Effects."));
     } finally {
       setIsShortcutRecordingTransition(false);
     }
@@ -558,7 +563,7 @@ function SettingsView({ auth, showError, showSuccess }) {
       }));
       setRecordingShortcutField(field);
     } catch (error) {
-      showError(String(error || "Nao foi possivel suspender os atalhos do After."));
+      showError(publicErrorMessage(error, "Não foi possível pausar os atalhos do After Effects."));
     } finally {
       setIsShortcutRecordingTransition(false);
     }
@@ -592,12 +597,12 @@ function SettingsView({ auth, showError, showSuccess }) {
       showSuccess(successMessage);
     } catch (error) {
       setShortcutDraft((config) => ({ ...config, [field]: previousShortcut }));
-      showError(String(error || "Não foi possível salvar o atalho."));
+      showError(publicErrorMessage(error, "Não foi possível salvar o atalho."));
     } finally {
       try {
         await invokeCommand(commandNames.setAfterShortcutRecording, { recording: false });
       } catch (error) {
-        showError(String(error || "Nao foi possivel restaurar os atalhos do After."));
+        showError(publicErrorMessage(error, "Não foi possível reativar os atalhos do After Effects."));
       }
       setSavingShortcutField("");
       setSavingShortcutOperation("");
@@ -627,7 +632,7 @@ function SettingsView({ auth, showError, showSuccess }) {
       showSuccess(successMessage);
     } catch (error) {
       setShortcutDraft(previousSettings);
-      showError(String(error || "Não foi possível atualizar os atalhos."));
+      showError(publicErrorMessage(error, "Não foi possível atualizar os atalhos."));
     } finally {
       setSavingShortcutField("");
       setSavingShortcutOperation("");
@@ -721,7 +726,7 @@ function SettingsView({ auth, showError, showSuccess }) {
         );
       }
     } catch (error) {
-      showError(String(error || "Não foi possível selecionar a pasta."));
+      showError(publicErrorMessage(error, "Não foi possível selecionar a pasta."));
     } finally {
       setChoosingField("");
     }
@@ -739,7 +744,7 @@ function SettingsView({ auth, showError, showSuccess }) {
 
   const requestReleaseDeviceAndExit = () => {
     if (!auth?.organizationId || !auth?.currentMemberId) {
-      showError("Sessao incompleta. Entre novamente para liberar este dispositivo.");
+      showError("Sua sessão está incompleta. Entre novamente para liberar este computador.");
       return;
     }
 
@@ -748,7 +753,7 @@ function SettingsView({ auth, showError, showSuccess }) {
 
   const releaseDeviceAndExit = async () => {
     if (!auth?.organizationId || !auth?.currentMemberId) {
-      showError("Sessao incompleta. Entre novamente para liberar este dispositivo.");
+      showError("Sua sessão está incompleta. Entre novamente para liberar este computador.");
       return;
     }
 
@@ -826,6 +831,18 @@ function SettingsView({ auth, showError, showSuccess }) {
               aria-selected={activeSettingsTab === SETTINGS_TABS.EXTENSION}
             >
               Extensão
+            </button>
+            <button
+              type="button"
+              className={`settings-tab ${activeSettingsTab === SETTINGS_TABS.DIAGNOSTICS ? "settings-tab--active" : ""}`}
+              onClick={() => {
+                cancelShortcutRecording();
+                setActiveSettingsTab(SETTINGS_TABS.DIAGNOSTICS);
+              }}
+              role="tab"
+              aria-selected={activeSettingsTab === SETTINGS_TABS.DIAGNOSTICS}
+            >
+              Diagnóstico
             </button>
           </nav>
           {appInfo.version && <span className="settings-version">v{appInfo.version}</span>}
@@ -1024,6 +1041,10 @@ function SettingsView({ auth, showError, showSuccess }) {
             <ExtensionSettingsPanel showError={showError} showSuccess={showSuccess} />
           )}
 
+          {activeSettingsTab === SETTINGS_TABS.DIAGNOSTICS && (
+            <DiagnosticsSettingsPanel showError={showError} showSuccess={showSuccess} />
+          )}
+
           <footer className="settings-actions settings-actions--window">
             <div className="settings-credit">
               {appInfo.authorName && (
@@ -1085,6 +1106,192 @@ function SettingsView({ auth, showError, showSuccess }) {
         )}
       </section>
     </main>
+  );
+}
+
+function DiagnosticsSettingsPanel({ showError, showSuccess }) {
+  const [status, setStatus] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [busyAction, setBusyAction] = useState("");
+
+  const refreshStatus = async () => {
+    try {
+      const nextStatus = await invokeCommand(commandNames.diagnosticsStatus);
+      setStatus(normalizeDiagnosticsStatus(nextStatus));
+    } catch (error) {
+      showError(publicErrorMessage(error, "Não foi possível consultar os diagnósticos locais."));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void refreshStatus();
+  }, []);
+
+  const changeDirectory = async (directory) => {
+    setBusyAction("directory");
+    try {
+      const nextStatus = normalizeDiagnosticsStatus(
+        await invokeCommand(commandNames.diagnosticsSetDirectory, { directory })
+      );
+      setStatus(nextStatus);
+      const moved = nextStatus.movedFiles;
+      if (nextStatus.warnings.length > 0) {
+        showError(nextStatus.warnings.join(" "));
+      } else {
+        showSuccess(
+          moved === 1
+            ? "Pasta alterada e 1 arquivo de diagnóstico foi movido."
+            : `Pasta alterada e ${moved} arquivos de diagnóstico foram movidos.`
+        );
+      }
+    } catch (error) {
+      showError(publicErrorMessage(error, "Não foi possível alterar a pasta dos diagnósticos."));
+    } finally {
+      setBusyAction("");
+    }
+  };
+
+  const chooseDirectory = async () => {
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: "Selecionar pasta dos diagnósticos",
+        defaultPath: status?.directory || undefined,
+      });
+      const directory = Array.isArray(selected) ? selected[0] : selected;
+      if (typeof directory === "string" && directory.trim()) {
+        await changeDirectory(directory.trim());
+      }
+    } catch (error) {
+      showError(publicErrorMessage(error, "Não foi possível selecionar a pasta."));
+    }
+  };
+
+  const openDirectory = async () => {
+    setBusyAction("open");
+    try {
+      await invokeCommand(commandNames.diagnosticsOpenDirectory);
+    } catch (error) {
+      showError(publicErrorMessage(error, "Não foi possível abrir a pasta dos diagnósticos."));
+    } finally {
+      setBusyAction("");
+    }
+  };
+
+  const exportDiagnostics = async () => {
+    try {
+      const destination = await save({
+        title: "Exportar diagnóstico do Arizona",
+        defaultPath: `Arizona-diagnostico-${localDateStamp()}.zip`,
+        filters: [{ name: "Arquivo ZIP", extensions: ["zip"] }],
+      });
+      if (typeof destination !== "string" || !destination.trim()) return;
+
+      setBusyAction("export");
+      const result = await invokeCommand(commandNames.diagnosticsExport, {
+        destination: destination.trim(),
+      });
+      showSuccess(
+        Number(result?.fileCount) === 1
+          ? "Diagnóstico exportado com 1 arquivo."
+          : `Diagnóstico exportado com ${Number(result?.fileCount) || 0} arquivos.`
+      );
+      await refreshStatus();
+    } catch (error) {
+      showError(
+        "Não foi possível exportar o diagnóstico. Verifique a pasta dos registros, o destino escolhido e tente novamente."
+      );
+    } finally {
+      setBusyAction("");
+    }
+  };
+
+  const busy = isLoading || Boolean(busyAction);
+  const fileCount = Number(status?.fileCount) || 0;
+
+  return (
+    <section className="settings-tab-panel settings-diagnostics" role="tabpanel" aria-label="Diagnóstico local">
+      <div className="settings-diagnostics-card">
+        <header>
+          <div>
+            <h2>Registros locais do Arizona</h2>
+            <p>
+              O aplicativo e a extensão registram apenas informações técnicas neste computador.
+              Nada é enviado automaticamente.
+            </p>
+          </div>
+          <span className="settings-diagnostics-retention">
+            {status?.retentionDays || 14} dias
+          </span>
+        </header>
+
+        <label className="settings-field settings-diagnostics-path">
+          <span>Pasta dos registros</span>
+          <div className="settings-path-row settings-path-row--clearable">
+            <input
+              className="input settings-drive-input"
+              type="text"
+              value={status?.directory || "Carregando..."}
+              title={status?.directory || ""}
+              readOnly
+              disabled={isLoading}
+            />
+            <button type="button" className="btn btn-outline" onClick={chooseDirectory} disabled={busy}>
+              {busyAction === "directory" ? "Movendo..." : "Escolher"}
+            </button>
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={() => changeDirectory(null)}
+              disabled={busy || (!status?.isCustom && status?.warnings?.length === 0)}
+            >
+              Padrão
+            </button>
+          </div>
+        </label>
+
+        <dl className="settings-diagnostics-summary">
+          <div>
+            <dt>Arquivos atuais</dt>
+            <dd>{fileCount}</dd>
+          </div>
+          <div>
+            <dt>Espaço utilizado</dt>
+            <dd>{formatFileSize(status?.totalSizeBytes)}</dd>
+          </div>
+          <div>
+            <dt>Limpeza automática</dt>
+            <dd>após {status?.retentionDays || 14} dias</dd>
+          </div>
+        </dl>
+
+        <p className="settings-diagnostics-note">
+          E-mails, credenciais, recibos de licença e códigos de ativação são removidos dos registros.
+          Ao ocorrer um erro, o arquivo inclui uma trilha curta das ações anteriores para facilitar o suporte.
+        </p>
+
+        {status?.warnings?.length > 0 && (
+          <div className="settings-diagnostics-warning" role="status">
+            {status.warnings.map((message) => <p key={message}>{message}</p>)}
+            {status.usingFallback && status.activeDirectory && (
+              <p>Destino temporário: {status.activeDirectory}</p>
+            )}
+          </div>
+        )}
+
+        <div className="settings-diagnostics-actions">
+          <button type="button" className="btn btn-outline" onClick={openDirectory} disabled={busy}>
+            {busyAction === "open" ? "Abrindo..." : "Abrir pasta"}
+          </button>
+          <button type="button" className="btn btn-primary" onClick={exportDiagnostics} disabled={busy}>
+            {busyAction === "export" ? "Exportando..." : "Exportar diagnóstico"}
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -1154,7 +1361,7 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
   const selectZxpFile = async (path) => {
     const filePath = String(path || "").trim();
     if (!filePath.toLowerCase().endsWith(".zxp")) {
-      showError("Selecione um arquivo .zxp.");
+      showError("Selecione um arquivo de instalação válido do painel.");
       return;
     }
     setIsInspecting(true);
@@ -1168,7 +1375,7 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
         trusted: Boolean(inspection?.trusted),
       });
     } catch (error) {
-      showError(cepErrorMessage(error, "Não foi possível ler o arquivo .zxp."));
+      showError(cepErrorMessage(error, "Não foi possível ler o arquivo de instalação do painel."));
     } finally {
       setIsInspecting(false);
     }
@@ -1178,7 +1385,7 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
     if (isInspecting || isInstalling) return;
     if (installBlocked) return;
     if (paths.length !== 1 || !String(paths[0] || "").toLowerCase().endsWith(".zxp")) {
-      showError("Arraste um único arquivo .zxp.");
+      showError("Arraste apenas um arquivo de instalação do painel.");
       return;
     }
     selectZxpFile(paths[0]);
@@ -1222,15 +1429,15 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
     try {
       const selected = await open({
         multiple: false,
-        title: "Selecionar extensão (.zxp)",
-        filters: [{ name: "Extensão CEP", extensions: ["zxp"] }],
+        title: "Selecionar arquivo de instalação do painel (.zxp)",
+        filters: [{ name: "Painel Arizona", extensions: ["zxp"] }],
       });
       const path = Array.isArray(selected) ? selected[0] : selected;
       if (typeof path === "string" && path.trim()) {
         await selectZxpFile(path);
       }
     } catch (error) {
-      showError(String(error || "Não foi possível selecionar o arquivo."));
+      showError(publicErrorMessage(error, "Não foi possível selecionar o arquivo."));
     }
   };
 
@@ -1268,9 +1475,9 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
       const result = await invokeCommand(commandNames.setCepDebugMode, { enabled: nextEnabled });
       const enabled = Boolean(result?.enabled);
       setIsDebugEnabled(enabled);
-      showSuccess(enabled ? "Depuração do painel CEP ativada." : "Depuração do painel CEP desativada.");
+      showSuccess(enabled ? "Modo de diagnóstico do painel ativado." : "Modo de diagnóstico do painel desativado.");
     } catch (error) {
-      showError(cepErrorMessage(error, "Não foi possível alterar a depuração do painel CEP."));
+      showError(cepErrorMessage(error, "Não foi possível alterar o modo de diagnóstico do painel."));
     } finally {
       setIsTogglingDebug(false);
     }
@@ -1290,7 +1497,7 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
   }, [isInstallConfirmOpen, isInstalling]);
 
   return (
-    <section className="settings-tab-panel settings-extension" role="tabpanel" aria-label="Extensão CEP">
+    <section className="settings-tab-panel settings-extension" role="tabpanel" aria-label="Extensão do After Effects">
       <div className="settings-ext-card">
         <header className="settings-ext-card__header">
           <h2>Extensão Arizona (After Effects)</h2>
@@ -1390,7 +1597,7 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
 
       <div className="settings-ext-debug">
         <div className="settings-ext-debug__text">
-          <span>Depuração do painel CEP (After Effects)</span>
+          <span>Modo de diagnóstico do painel (After Effects)</span>
           <p className="settings-ext-hint">
             Ligue apenas se o painel Arizona não aparecer no After Effects. Requer reiniciar o After
             Effects e afrouxa a verificação de assinatura das extensões.
@@ -1401,7 +1608,7 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
           className={`settings-ext-switch ${isDebugEnabled ? "settings-ext-switch--on" : ""}`}
           role="switch"
           aria-checked={isDebugEnabled}
-          aria-label="Depuração do painel CEP (After Effects)"
+          aria-label="Modo de diagnóstico do painel (After Effects)"
           onClick={toggleDebugMode}
           disabled={isTogglingDebug || !isDebugKnown}
         >
@@ -1920,7 +2127,10 @@ function normalizeSecondaryState(payload) {
   const mediaPath = String(payload?.mediaPath || payload?.media_path || "").trim();
   const mediaTitle = String(payload?.mediaTitle || payload?.media_title || "").trim();
   const mediaLoading = Boolean(payload?.mediaLoading ?? payload?.media_loading);
-  const mediaError = String(payload?.mediaError || payload?.media_error || "").trim();
+  const rawMediaError = String(payload?.mediaError || payload?.media_error || "").trim();
+  const mediaError = rawMediaError
+    ? publicErrorMessage(rawMediaError, "Não foi possível carregar esta mídia.")
+    : "";
   const roteiroDocument = normalizeRoteiroDocument(payload?.roteiroDocument || payload?.roteiro_document);
   const rawMediaKind = String(payload?.mediaKind || payload?.media_kind || "").trim().toLowerCase();
   const mediaKind = rawMediaKind === "audio" ? "audio" : "video";
@@ -2016,6 +2226,43 @@ function normalizeSessionAuth(value) {
   };
 }
 
+function normalizeDiagnosticsStatus(value) {
+  return {
+    directory: String(value?.directory || "").trim(),
+    activeDirectory: String(value?.activeDirectory || value?.directory || "").trim(),
+    defaultDirectory: String(value?.defaultDirectory || "").trim(),
+    isCustom: Boolean(value?.isCustom),
+    usingFallback: Boolean(value?.usingFallback),
+    retentionDays: Math.max(1, Number(value?.retentionDays) || 14),
+    fileCount: Math.max(0, Number(value?.fileCount) || 0),
+    totalSizeBytes: Math.max(0, Number(value?.totalSizeBytes) || 0),
+    movedFiles: Math.max(0, Number(value?.movedFiles) || 0),
+    warnings: Array.isArray(value?.warnings)
+      ? value.warnings
+        .map((message) => publicErrorMessage(
+          message,
+          "Alguns registros antigos não puderam ser movidos. Os novos registros continuarão sendo salvos na pasta ativa.",
+        ))
+        .filter(Boolean)
+      : [],
+  };
+}
+
+function formatFileSize(value) {
+  const bytes = Math.max(0, Number(value) || 0);
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} KB`;
+  return `${(bytes / (1024 * 1024)).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} MB`;
+}
+
+function localDateStamp() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function normalizeAppInfo(info) {
   return {
     version: String(info?.version || "").trim(),
@@ -2047,7 +2294,7 @@ function cepErrorMessage(error, fallback = "Operação não concluída.") {
   }
   if (code === "cep_zxp_unreadable") return "Não foi possível ler o arquivo. Verifique se ele ainda existe.";
   if (code === "cep_install_failed") return "A instalação falhou e nada foi alterado.";
-  return match?.[2] || text || fallback;
+  return publicErrorMessage(error, fallback);
 }
 
 function shortcutFromKeyboardEvent(event) {
@@ -2168,7 +2415,7 @@ function audioMimeType(path) {
 
 function playbackErrorMessage(path) {
   if (fileExtension(path) === "mov") {
-    return "Não foi possível reproduzir o MOV nesta janela. Se o arquivo usa ProRes, Animation ou outro codec QuickTime, o WebView do Windows não consegue decodificar.";
+    return "Este vídeo não pode ser reproduzido dentro do Arizona App. Abra-o no visualizador do Windows.";
   }
 
   return "Não foi possível reproduzir a mídia.";

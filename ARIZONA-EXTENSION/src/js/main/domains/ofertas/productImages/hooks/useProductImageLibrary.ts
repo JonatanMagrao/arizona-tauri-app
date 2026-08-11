@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { fs } from "../../../../../lib/cep/node";
 import { loadProjectProductsDirectory } from "../services/projectProductsDirectory";
 import { clearPreviewCache } from "../services/previewCache";
+import { recordDiagnosticFailure } from "../../../../services/localDiagnostics";
 import type { LocalImage } from "../types";
 import {
   isNodeAvailable,
@@ -51,8 +52,15 @@ export const useProductImageLibrary = () => {
         const nextImages = scanImageDirectory(normalizedDirectory);
 
         setImages(nextImages);
-      } catch {
+      } catch (caught) {
         setImages([]);
+        recordDiagnosticFailure(
+          "previews",
+          "ler_pasta_produtos",
+          "Não foi possível ler a pasta de imagens dos produtos.",
+          caught,
+          { code: "product_images_scan_failed" }
+        );
       }
     },
     [hasNodeAccess]
@@ -67,8 +75,15 @@ export const useProductImageLibrary = () => {
     try {
       const productsDirectory = await loadProjectProductsDirectory();
       scanDirectory(productsDirectory);
-    } catch {
+    } catch (caught) {
       setImages([]);
+      recordDiagnosticFailure(
+        "previews",
+        "localizar_pasta_produtos",
+        "Não foi possível localizar a pasta de produtos do projeto.",
+        caught,
+        { code: "project_products_directory_failed", runtime: "extendscript" }
+      );
     }
   }, [hasNodeAccess, scanDirectory]);
 

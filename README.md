@@ -64,6 +64,19 @@ repositório) e a impressão digital pública aceita fica em
 `INSTALLER/cep-trusted-cert.json`, versionada. É essa assinatura que dispensa o
 `PlayerDebugMode` nas máquinas dos clientes.
 
+## Diagnóstico local
+
+O Arizona App e a extensão CEP mantêm diagnósticos técnicos somente na máquina,
+em arquivos JSONL diários separados. A pasta padrão é
+`%LOCALAPPDATA%\com.pc.arizona-app\logs`; em **Configurações > Diagnóstico** é
+possível escolher outra pasta local, abrir os arquivos ou exportar um ZIP para o
+suporte. O sistema conserva o dia atual e os 13 dias anteriores.
+
+Não há envio automático desses logs ao Supabase ou a outro serviço. O usuário
+precisa exportar e compartilhar o pacote conscientemente. O formato, a
+sanitização, a migração de pasta e os limites de privacidade estão em
+[DIAGNOSTICOS_LOCAIS.md](./docs/DIAGNOSTICOS_LOCAIS.md).
+
 ## Instalação da extensão CEP
 
 O instalador Full oficial é `perMachine` e instala a árvore assinada em:
@@ -156,9 +169,10 @@ tratado como criptografia ou como uma fronteira de seguranca.
 O índice de documentos operacionais e propostas vigentes está em
 [docs/README.md](./docs/README.md).
 
-Revisões em andamento:
+Documentos em destaque:
 
+- [Diagnósticos locais do Tauri e CEP](./docs/DIAGNOSTICOS_LOCAIS.md)
 - [Visualizador de MP4 e limitação de MOV](./docs/REVISAO_VISUALIZADOR_MP4_MOV.md)
-- [Privacidade, registros operacionais, diagnóstico e feedback](./docs/roadmap-privacidade-telemetria.md)
+- [Privacidade, registros operacionais e feedback](./docs/roadmap-privacidade-telemetria.md)
 - [Atualizações independentes do Tauri e CEP](./docs/arquitetura-atualizacoes-independentes-tauri-cep.md)
 - [Cache compartilhado de previews dos produtos](./docs/CACHE_PREVIEWS_PRODUTOS.md)

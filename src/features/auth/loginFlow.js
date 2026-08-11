@@ -1,10 +1,12 @@
+import { publicErrorMessage } from "../../utils/publicErrors.js";
+
 export const DEFAULT_RATE_LIMIT_RETRY_SECONDS = 60;
 
 export const RESUME_NETWORK_RETRY_MS = 15000;
 export const RESUME_BLOCKED_RETRY_MS = 60000;
 
 export const OUTDATED_BACKEND_MESSAGE =
-  "O servidor ainda exige o autenticador. Backend desatualizado — contate o suporte.";
+  "Não foi possível confirmar seu acesso com esta versão do aplicativo. Atualize o Arizona App ou contate o suporte.";
 
 const RATE_LIMIT_CODES = new Set([
   "rate_limited",
@@ -80,7 +82,7 @@ export function authFlowErrorMessage(flow) {
   if (RATE_LIMIT_CODES.has(code)) {
     return "Muitas tentativas. Aguarde o tempo indicado antes de tentar novamente.";
   }
-  return String(flow?.message || "").trim() || "Não foi possível confirmar o acesso.";
+  return publicErrorMessage(flow, "Não foi possível confirmar o acesso.");
 }
 
 function positiveSeconds(value) {

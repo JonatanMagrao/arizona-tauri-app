@@ -1,7 +1,8 @@
 import { useCallback, useRef } from "react";
 import { createPreviewPatch } from "../services/previewService";
 import type { LocalImage } from "../types";
-import { getMessage } from "../../../../utils/errors";
+import { getPublicErrorMessage } from "../../../../utils/errors";
+import { recordDiagnosticFailure } from "../../../../services/localDiagnostics";
 
 interface UseImagePreviewsOptions {
   hasNodeAccess: boolean;
@@ -33,8 +34,21 @@ export const useProductImagePreviews = ({
       } catch (caught) {
         updateImage(image.fullPath, {
           previewStatus: "error",
-          error: getMessage(caught),
+          error: getPublicErrorMessage(
+            caught,
+            "Não foi possível mostrar esta imagem.",
+          ),
         });
+        recordDiagnosticFailure(
+          "previews",
+          "gerar_preview",
+          "Não foi possível preparar a imagem de visualização de um produto.",
+          caught,
+          {
+            code: "product_preview_failed",
+            details: { fileType: image.extension || "unknown" },
+          }
+        );
       } finally {
         loadingPreviewPaths.current.delete(image.fullPath);
       }

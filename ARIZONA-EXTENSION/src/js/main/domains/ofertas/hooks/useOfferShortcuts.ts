@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { csi } from "../../../../lib/utils/bolt";
-import { getMessage } from "../../../utils/errors";
+import { getPublicErrorMessage } from "../../../utils/errors";
 import { isEditableOfferTextControl } from "../utils/keyboard";
 
 interface UseOfferShortcutsOptions {
@@ -53,10 +53,20 @@ export const useOfferShortcuts = ({
 
       try {
         void Promise.resolve(onUndo()).catch((caught) =>
-          onStatus(getMessage(caught))
+          onStatus(
+            getPublicErrorMessage(
+              caught,
+              "Não foi possível desfazer a última alteração.",
+            )
+          )
         );
       } catch (caught) {
-        onStatus(getMessage(caught));
+        onStatus(
+          getPublicErrorMessage(
+            caught,
+            "Não foi possível desfazer a última alteração.",
+          )
+        );
       }
     };
 

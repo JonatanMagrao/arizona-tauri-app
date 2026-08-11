@@ -137,6 +137,22 @@ cd ADMIN
 npx supabase functions deploy --project-ref <PROJECT_REF> --use-api --no-verify-jwt
 ```
 
+A telemetria tecnica remota do aplicativo foi aposentada. A Function
+`track-event` nao faz mais parte do codigo publicado e a migration
+`20260811120000_remove_remote_app_telemetry.sql` remove sua tabela. Apagar o
+diretorio local de uma Function nao apaga uma versao que ja esteja no projeto
+remoto; durante a publicacao dessa retirada, remova-a explicitamente e confirme
+a lista restante:
+
+```powershell
+cd ADMIN
+npx supabase functions delete track-event --project-ref <PROJECT_REF>
+npx supabase functions list --project-ref <PROJECT_REF>
+```
+
+Essa retirada nao alcanca `licensing.audit_log`, auditorias de relogio, sessoes
+de licenca ou os demais controles de rate limit.
+
 O ciclo de desinstalacao do Tauri depende de `app-release-device`. Para publicar
 somente essa funcao, sem alterar secrets ou as demais functions:
 

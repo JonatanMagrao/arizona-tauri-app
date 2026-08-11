@@ -1,4 +1,5 @@
 import { commandNames, invokeCommand } from "./tauriCommands";
+import { publicErrorMessage } from "../utils/publicErrors";
 
 export async function listAdminMembers() {
   return invokeAdmin(commandNames.adminListMembers);
@@ -29,28 +30,31 @@ export async function releaseCurrentDevice() {
 
 export function adminErrorMessage(error) {
   const code = String(error?.code || "");
-  const message = String(error?.message || error || "");
 
   if (code === "forbidden") return "Acesso não autorizado.";
   if (code === "invalid_user_token") return "Sessão expirada. Entre novamente.";
-  if (code === "daily_mfa_required") return "Confirme o autenticador para continuar.";
+  if (code === "daily_mfa_required") {
+    return "Confirme sua identidade no aplicativo autenticador para continuar.";
+  }
   if (code === "organization_not_active") return "Licença inativa.";
   if (code === "license_expired") return "Licença expirada.";
   if (code === "seat_limit_exceeded") return "Não há vagas disponíveis.";
   if (code === "member_already_exists") return "Este e-mail já está cadastrado.";
   if (code === "email_domain_not_allowed") return "E-mail fora do domínio permitido.";
-  if (code === "protected_identity") return "Esta identidade só pode ser gerenciada pelo master.";
+  if (code === "protected_identity") {
+    return "Este usuário só pode ser gerenciado pelo administrador principal.";
+  }
   if (code === "member_not_found") return "Usuário não encontrado.";
   if (code === "invalid_email") return "Informe um e-mail válido.";
   if (code === "missing_name") return "Informe o nome do usuário.";
   if (code === "rate_limited") return "Limite de tentativas atingido. Aguarde.";
   if (code === "device_switch_interval") {
-    return message || "Esta máquina ainda não completou o intervalo mínimo entre trocas.";
+    return publicErrorMessage(
+      error,
+      "Este computador ainda não completou o intervalo mínimo entre trocas.",
+    );
   }
-  if (code === "network_error" || message.includes("network_error")) {
-    return "Não foi possível conectar ao Supabase.";
-  }
-  return message || "Operação não concluída.";
+  return publicErrorMessage(error, "Não foi possível concluir esta ação de gestão.");
 }
 
 async function invokeAdmin(command, args = {}) {

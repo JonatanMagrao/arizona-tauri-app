@@ -196,7 +196,7 @@ export const RoteiroPanel = ({ onOpenOfferInOffers }: RoteiroPanelProps) => {
                           type="button"
                           onClick={() => void openOfferPrecomp(info)}
                           disabled={offerActionLoading}
-                          title="Abrir precomp"
+                          title="Abrir esta oferta no After Effects"
                         >
                           {formatOfferNumber(offerIndex)}
                         </button>
@@ -241,7 +241,7 @@ export const RoteiroPanel = ({ onOpenOfferInOffers }: RoteiroPanelProps) => {
                             title={
                               seg.action === "fix"
                                 ? "Corrigir no After"
-                                : "Abrir precomp"
+                                : "Abrir esta oferta no After Effects"
                             }
                           >
                             {seg.text}
@@ -268,9 +268,9 @@ export const RoteiroPanel = ({ onOpenOfferInOffers }: RoteiroPanelProps) => {
         className="roteiro-marker-button"
         onClick={() => void adjustMarkers()}
         disabled={markerAdjusting}
-        title="Mover markers 2 a 6 para o fim da precomp"
+        title="Ajustar os tempos das ofertas ao final do roteiro"
       >
-        {markerAdjusting ? "..." : "Ajuste Marker"}
+        {markerAdjusting ? "..." : "Ajustar tempos"}
       </button>
 
       <button

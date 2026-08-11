@@ -1,7 +1,8 @@
 # Roadmap de privacidade, registros operacionais e diagnóstico
 
-**Status:** planejamento — nenhuma implementação autorizada por este documento  
-**Atualizado em:** 06/08/2026
+**Status:** diagnóstico local implementado; governança e feedback continuam em planejamento
+
+**Atualizado em:** 11/08/2026
 **Escopo:** Arizona App (Tauri), extensão CEP apenas quando relacionada à licença
 e ao diagnóstico, Admin e Supabase de licenciamento
 
@@ -21,13 +22,15 @@ responsáveis pelo produto e pela Arizona Global.
 | Frente | Decisão | Identificação pessoal | Situação |
 |---|---|---:|---|
 | Acesso, licença e auditoria | Manter, minimizar e tornar transparente | Sim, quando necessária para atribuir a ação | Parte já existe |
-| Diagnóstico de erros | Preparar para uma implementação futura controlada | Somente quando necessária ao suporte | Ainda não implementado no cliente |
-| Uso de funcionalidades por pessoa | Não implementar agora | Não aplicável | Em aberto |
+| Diagnóstico de erros | Manter somente na máquina, com saneamento, rotação e exportação consciente | Não pretendida pelo desenho | Implementado no Tauri e no CEP |
+| Uso de funcionalidades por pessoa | Não implementar; remover a infraestrutura remota sem cliente ativo | Não aplicável | Função e tabela removidas |
 | Sugestões e feedbacks | Criar futuramente um canal explícito e separado | Sim, com transparência para permitir retorno | Ainda não implementado |
 
-A terceira frente permanece deliberadamente fora do escopo. Não serão
-registrados cliques, frequência de uso de recursos nem perfis individuais de
-comportamento até que exista uma nova decisão expressa.
+A terceira frente permanece deliberadamente fora do escopo. A função
+`track-event` e a tabela `licensing.app_events`, que não tinham cliente ativo,
+foram removidas. Não serão registrados cliques, frequência de uso de recursos
+nem perfis individuais de comportamento até que exista uma nova decisão
+expressa.
 
 ## 1. O que existe hoje
 
@@ -59,13 +62,19 @@ preferências, histórico e caminhos usados pelas funções do aplicativo. Esses
 itens precisam constar no inventário de privacidade mesmo quando não são
 enviados ao Supabase.
 
-### 1.3 O que não deve ser anunciado como existente
+Tauri e CEP também mantêm diagnósticos técnicos em JSONL separados. A pasta é
+configurável pelo usuário, os arquivos têm retenção automática de 14 dias e
+avisos/erros podem conter uma trilha de até 12 ações técnicas anteriores. Não há
+envio automático; o conteúdo só sai da máquina quando o usuário exporta um ZIP
+e decide compartilhá-lo. O contrato completo está em
+[Diagnósticos locais](./DIAGNOSTICOS_LOCAIS.md).
 
-- Não foi encontrada chamada do Tauri ou da extensão CEP para a função
-  `track-event`. A existência da função e da tabela `licensing.app_events` não
-  significa que exista telemetria de uso ativa no cliente.
-- O Tauri e a extensão já produzem alguns códigos de erro localmente, mas não
-  enviam hoje um relatório remoto estruturado com erro e sequência de ações.
+### 1.3 O que não existe como coleta remota do produto
+
+- A função `track-event` e a tabela `licensing.app_events` foram removidas da
+  arquitetura suportada. Tauri e CEP não enviam telemetria de funcionalidades.
+- O relatório estruturado de erro e sua sequência curta de ações existem apenas
+  localmente. Não há upload silencioso nem fila de envio remoto.
 - Não existe hoje um canal próprio no Tauri para enviar sugestões, problemas ou
   outros feedbacks ao responsável pelo produto.
 - Logs próprios da infraestrutura Supabase devem entrar no inventário de
@@ -115,20 +124,24 @@ sem outra finalidade documentada, análise jurídica e aviso prévio.
 
 #### 2.3 Definir e aplicar retenção real
 
-A função `licensing.purge_operational_data` contém hoje os seguintes padrões
-técnicos:
+A limpeza de dados operacionais remotos mantém os seguintes padrões técnicos no
+backend:
 
 | Categoria | Padrão presente na função |
 |---|---:|
 | Sessões inativas | 14 dias |
 | Auditorias de relógio | 30 dias |
-| Eventos de aplicativo | 90 dias |
 | Eventos de limite | 2 dias |
 | Códigos de ativação encerrados | 90 dias |
 
 Esses valores só podem aparecer como compromisso no produto depois de confirmar
 que a limpeza está agendada e funcionando em produção. Não foi encontrado no
 repositório um agendamento dessa função.
+
+`licensing.app_events` não integra mais esse inventário porque a tabela e a
+função `track-event` foram removidas. Separadamente, os diagnósticos locais têm
+retenção implementada de 14 dias de calendário; essa limpeza acontece na
+máquina e não depende de `licensing.purge_operational_data`.
 
 Também faltam decisões explícitas para:
 
@@ -187,11 +200,12 @@ Não usar a frase “ao continuar, você concorda com a coleta” para dados
 obrigatórios. O aviso serve para transparência; ele não deve simular uma escolha
 que o usuário não possui.
 
-#### Revisão futura de erros, alerts e toasts do Tauri e do CEP
+#### Revisão contínua de erros, alerts e toasts do Tauri e do CEP
 
-Esta revisão está planejada para uma etapa mais final do produto e **não está
-implementada agora**. Ela deverá abranger, em conjunto, as mensagens do Arizona
-App e da extensão CEP.
+Os registros técnicos estruturados e a trilha anterior à falha já foram
+implantados no Arizona App e na extensão CEP. A revisão integral das mensagens
+visíveis ainda é uma etapa de produto e deverá abranger alerts, banners e
+toasts dos dois componentes.
 
 A interface deve mostrar uma mensagem humana, breve e orientada à próxima ação.
 Ela não deve expor nome de fornecedor, URL, tabela, função remota, código SQL,
@@ -207,7 +221,7 @@ sincronizado ou versão incompatível. Não transformar toda falha em uma mensag
 genérica: o usuário precisa entender o que pode fazer, sem receber o detalhe
 técnico do backend.
 
-A implementação futura deverá:
+A manutenção das mensagens deverá:
 
 - manter um catálogo compartilhado de códigos e textos, aplicado nos limites de
   apresentação de cada projeto, sem importar código entre Tauri e CEP;
@@ -224,33 +238,29 @@ Ocultar o nome do fornecedor na interface melhora a segurança de apresentação
 a clareza, mas não substitui autenticação, autorização e proteção das
 credenciais. A segurança não pode depender somente dessa ocultação.
 
-O diagnóstico completo deverá seguir um canal separado da mensagem visível.
-Antes de implementá-lo, será necessário decidir entre:
+O diagnóstico completo segue um canal local separado da mensagem visível. A
+decisão vigente é manter um registro diário rotativo, com prazo curto e
+exportação consciente para suporte. Não existe destino remoto ou modelo
+híbrido: o ZIP somente deixa a máquina por ação posterior do usuário. Formato,
+pasta, migração e exportação estão definidos em
+[Diagnósticos locais](./DIAGNOSTICOS_LOCAIS.md).
 
-1. um registro local circular, com acesso restrito na máquina, prazo curto e
-   exportação consciente para suporte; ou
-2. envio remoto controlado, por um serviço intermediário autenticado, com
-   saneamento, consentimento/transparência aplicável, retenção definida e acesso
-   restrito — sem permitir que Tauri ou CEP gravem detalhes livremente no banco.
+Qualquer proposta futura de envio remoto exige uma nova decisão técnica,
+jurídica e de produto. Ela não pode reaproveitar silenciosamente a auditoria de
+licença nem reintroduzir `track-event` ou `licensing.app_events` como um canal
+genérico.
 
-Também pode ser adotado um modelo híbrido: dados técnicos ficam localmente e
-somente um conjunto enumerado e saneado é enviado quando autorizado. A escolha
-de destino remoto não está tomada; usar o serviço de dados atual é uma opção a
-avaliar, não uma decisão deste documento. Até essa definição, não ativar envio
-automático de exceções nem persistir logs técnicos novos com conteúdo livre.
+### Etapa 2 — diagnóstico de erros local implementado
 
-### Etapa 2 — diagnóstico de erros, somente depois da Etapa 0
+O formato vigente registra somente contexto técnico necessário:
 
-O diagnóstico futuro deve coletar apenas:
+- código de erro enumerado, quando conhecido;
+- origem, componente, ação, estado e mensagem técnica curta;
+- horário, identificadores efêmeros da execução e correlação de operação no CEP;
+- detalhes limitados e saneados;
+- no máximo as 12 ações técnicas anteriores em eventos de aviso ou erro.
 
-- código de erro enumerado;
-- componente e etapa técnica;
-- versão do app/extensão;
-- resultado e horário;
-- identificador do usuário/dispositivo somente quando necessário;
-- no máximo os últimos 10 a 20 identificadores de ações técnicas permitidas.
-
-Não coletar:
+Não devem ser coletados:
 
 - conteúdo, nome ou caminho de projeto/arquivo;
 - texto digitado, clipboard, título de janela ou captura de tela;
@@ -258,27 +268,33 @@ Não coletar:
 - token, senha, OTP, código de ativação ou recibo;
 - mensagem livre sem saneamento.
 
-Antes de reutilizar `track-event`, substituir metadados genéricos por uma lista
-estrita de campos permitidos para cada evento, com limite de tamanho. O
-saneamento baseado apenas no nome da chave não é uma barreira suficiente.
+Os gravadores aplicam limites de tamanho, profundidade e quantidade e removem
+padrões de e-mail, credencial, token, código, URL com parâmetros e caminho. O
+saneamento é defesa adicional; cada novo ponto de instrumentação ainda precisa
+evitar esses dados na origem.
 
-Outros requisitos:
+Outros requisitos vigentes:
 
-- buffer local circular, limitado por quantidade e idade;
-- envio em background com fila limitada, backoff e jitter;
-- erro de envio nunca bloqueia a interface;
-- retenção remota proposta de 90 dias, a validar;
+- arquivos diários separados para Tauri e CEP, sem escrita concorrente no mesmo
+  arquivo;
+- retenção automática do dia atual e dos 13 anteriores;
+- erro de gravação nunca bloqueia a interface ou a operação principal;
+- filas locais limitadas a 512 eventos e escrita sequencial assíncrona, com
+  descarte de melhor esforço em vez de bloquear a interface quando saturadas;
+- nenhuma fila de upload, backoff de rede ou envio remoto;
+- exportação explícita em ZIP, sem sessão de autenticação, recibo ou
+  configuração;
 - sinais de integridade tratados como indícios, nunca como prova automática de
   burla;
 - revisão humana antes de qualquer bloqueio adicional ou conclusão sobre uma
   pessoa;
 - testes que comprovem a ausência dos campos proibidos.
 
-### Etapa 3 — telemetria de funcionalidades em aberto
+### Etapa 3 — telemetria de funcionalidades fora do produto
 
 Nesta etapa não será feito nenhum trabalho de implementação:
 
-- não ligar o cliente à função `track-event` para registrar uso;
+- não recriar `track-event` ou `licensing.app_events` para registrar uso;
 - não criar eventos de clique;
 - não registrar frequência de recursos por pessoa;
 - não acrescentar toggle de analytics como se a coleta já existisse;
@@ -362,7 +378,8 @@ de conteúdo confidencial, malware, armazenamento e retenção.
 #### Armazenamento e acompanhamento
 
 O conteúdo do feedback deve ter finalidade e armazenamento próprios. Não
-reutilizar `licensing.audit_log` nem `licensing.app_events`.
+reutilizar `licensing.audit_log`. A tabela `licensing.app_events` não existe
+mais e não deve ser recriada oportunisticamente para receber feedback.
 
 Um desenho futuro poderá usar uma Edge Function dedicada e uma tabela isolada,
 com nomes como `feedback-submit` e `product_feedback`. Isso é apenas uma
@@ -458,13 +475,15 @@ Texto-base:
 > **O que permanece na máquina**  
 > Credenciais protegidas pelo sistema operacional, recibos de licença,
 > preferências, histórico e caminhos necessários às funções locais do
-> aplicativo podem permanecer no dispositivo.
+> aplicativo podem permanecer no dispositivo. Diagnósticos técnicos do Tauri e
+> da extensão CEP permanecem em arquivos locais por até 14 dias.
 >
 > **O que não enviamos atualmente**  
 > O Tauri e a extensão CEP não enviam telemetria sobre quais funcionalidades
 > cada pessoa utiliza. Também não enviam automaticamente o conteúdo dos projetos
-> ou arquivos como parte do licenciamento. Relatórios remotos estruturados de
-> diagnóstico do Tauri/CEP ainda não estão ativos.
+> ou arquivos como parte do licenciamento. Os diagnósticos locais não são
+> enviados automaticamente; um pacote só pode ser compartilhado depois que o
+> usuário o exporta conscientemente.
 >
 > **Quem pode acessar**  
 > O tratamento é realizado por {{OPERADOR}} seguindo as finalidades e instruções
@@ -515,16 +534,22 @@ prazos depois que a rotina de limpeza for verificada em produção.
 
 Não mostrar esse banner para correções meramente editoriais.
 
-### 3.7 Mensagem reservada para o diagnóstico futuro
+### 3.7 Tauri — Configurações > Diagnóstico
 
-**Não exibir enquanto o envio estruturado de erros não estiver ativo.**
+**Posição:** aba permanente na janela de Configurações.
 
-> **Diagnóstico técnico**  
-> Para identificar e corrigir falhas, o {{NOME_DO_PRODUTO}} pode enviar o código
-> do erro, a versão do componente, o estado técnico e uma sequência curta de
-> ações do próprio aplicativo anteriores à falha. Esse diagnóstico não inclui
-> conteúdo ou caminho de arquivos, texto digitado, capturas de tela, senhas,
-> tokens ou códigos de autenticação.
+> **Registros locais do Arizona**
+>
+> O aplicativo e a extensão registram apenas informações técnicas neste
+> computador. Nada é enviado automaticamente. E-mails, credenciais, recibos de
+> licença e códigos de ativação são removidos dos registros. Ao ocorrer um erro,
+> o arquivo inclui uma trilha curta das ações anteriores para facilitar o
+> suporte.
+
+A área mostra a pasta, a retenção de 14 dias, a quantidade de arquivos e o
+espaço usado. As ações **Escolher**, **Padrão**, **Abrir pasta** e **Exportar
+diagnóstico** tornam a localização e o compartilhamento decisões visíveis do
+usuário.
 
 ### 3.8 Tauri — Configurações > Ajuda e feedback
 
@@ -615,22 +640,22 @@ Cláusula-base para revisão jurídica:
 > avaliação de necessidade e atualização prévia das informações fornecidas aos
 > titulares.
 
-## 5. Ordem recomendada de execução futura
+## 5. Ordem recomendada para o trabalho restante
 
 1. Aprovar inventário, papéis, finalidades e proibições.
 2. Definir retenções ainda abertas e confirmar o agendamento de limpeza.
 3. Finalizar aviso de privacidade e aditivo contratual.
-4. Implementar somente as mensagens relativas ao tratamento que já existe.
-5. Aprovar o desenho e a retenção do canal voluntário de feedback.
-6. Implementar o formulário no Tauri e a caixa restrita no Admin.
-7. Validar acesso, exportação, exclusão e procedimento de incidente.
-8. Desenhar o catálogo fechado de erros e seus campos permitidos.
-9. Fazer revisão técnica e jurídica antes de ativar diagnóstico remoto.
-10. Manter telemetria de funcionalidades fora do produto até nova decisão.
+4. Concluir as mensagens relativas ao tratamento que já existe.
+5. Manter e testar o contrato local de diagnóstico em cada release, incluindo
+   retenção, mudança de pasta, saneamento e exportação.
+6. Aprovar o desenho e a retenção do canal voluntário de feedback.
+7. Implementar o formulário no Tauri e a caixa restrita no Admin.
+8. Validar acesso, exportação, exclusão e procedimento de incidente.
+9. Manter telemetria de funcionalidades fora do produto até nova decisão.
 
-Qualquer etapa que envolva migration, banco, Edge Function, segredo, deploy,
-Tauri ou extensão deve ser apresentada e aprovada separadamente antes da
-execução. Como o produto está em beta de produção, a proposta deverá incluir
+Qualquer etapa restante que envolva migration, banco, Edge Function, segredo,
+deploy, Tauri ou extensão deve ser apresentada e aprovada separadamente antes
+da execução. Como o produto está em beta de produção, a proposta deverá incluir
 testes, compatibilidade, implantação gradual e forma de reversão.
 
 ## 6. Critérios gerais de conclusão
@@ -642,10 +667,15 @@ testes, compatibilidade, implantação gradual e forma de reversão.
 - A nomenclatura não sugere monitoramento de jornada ou produtividade.
 - O Admin continua restrito e suas ações sensíveis permanecem auditáveis.
 - A rotina de exclusão é executada e monitorada, não apenas declarada.
+- O diagnóstico técnico permanece local, saneado, separado por componente e
+  limitado a 14 dias; exportar não envia o pacote automaticamente.
+- A auditoria essencial em `licensing.audit_log` não é confundida com
+  diagnóstico nem usada como telemetria de funcionalidades.
 - Feedbacks só são enviados por ação expressa, com contexto visível e
   armazenamento separado.
 - Nenhuma telemetria de uso individual foi habilitada.
-- O diagnóstico futuro não aceita metadados livres.
+- Novos eventos de diagnóstico respeitam o contrato fechado e não adicionam
+  conteúdo livre do usuário.
 
 ## 7. Referências
 
@@ -654,4 +684,5 @@ testes, compatibilidade, implantação gradual e forma de reversão.
 - [ANPD — Guia dos agentes de tratamento](https://www.gov.br/anpd/pt-br/assuntos/noticias/nova-versao-do-guia-dos-agentes-de-tratamento)
 - [ANPD — Relatório de Impacto à Proteção de Dados Pessoais](https://www.gov.br/anpd/pt-br/canais_atendimento/agente-de-tratamento/relatorio-de-impacto-a-protecao-de-dados-pessoais-ripd)
 - [ANPD — Comunicação de incidente de segurança](https://www.gov.br/anpd/pt-br/canais_atendimento/agente-de-tratamento/comunicado-de-incidente-de-seguranca-cis)
+- [Contrato de diagnósticos locais](./DIAGNOSTICOS_LOCAIS.md)
 - [Arquitetura de licenciamento](./LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md)

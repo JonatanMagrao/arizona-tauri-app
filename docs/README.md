@@ -15,6 +15,8 @@ histórico continua disponível no Git.
   regra para decidir quando uma alteração exige Tauri, CEP ou somente backend.
 - [Cache compartilhado de previews dos produtos](./CACHE_PREVIEWS_PRODUTOS.md):
   contrato operacional de aquecimento por Jobão entre o Tauri e o CEP.
+- [Diagnósticos locais](./DIAGNOSTICOS_LOCAIS.md): contrato JSONL compartilhado,
+  pasta configurável, retenção de 14 dias, migração e exportação para suporte.
 
 ## Revisões e propostas
 
@@ -24,7 +26,8 @@ histórico continua disponível no Git.
 - [Visualizador de MP4 e limitação de MOV](./REVISAO_VISUALIZADOR_MP4_MOV.md):
   revisão do acesso a arquivos, fallback e mensagens para o usuário.
 - [Privacidade, diagnóstico e feedback](./roadmap-privacidade-telemetria.md):
-  planejamento ainda não autorizado para implementação.
+  decisão vigente de diagnóstico somente local e roadmap das frentes de
+  privacidade e feedback que ainda dependem de aprovação.
 - [Atualizações independentes do Tauri e CEP](./arquitetura-atualizacoes-independentes-tauri-cep.md):
   proposta de longo prazo para distribuição separada dos componentes.
 
