@@ -205,6 +205,72 @@ body{
   padding: 22px 30px 18px;
 }
 
+.login-panel--centered{
+  grid-template-rows: minmax(0, 1fr);
+  place-items: center;
+  align-content: stretch;
+}
+
+.login-startup,
+.login-status{
+  width: min(100%, 320px);
+  display: grid;
+  justify-items: center;
+  gap: 18px;
+  text-align: center;
+}
+
+.login-startup__logo,
+.login-status__logo{
+  width: 68px;
+  height: 68px;
+  object-fit: contain;
+  filter: drop-shadow(0 10px 20px rgba(0,0,0,.28));
+}
+
+.login-startup__spinner{
+  width: 22px;
+  height: 22px;
+  border: 2px solid rgba(255,255,255,.14);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: login-startup-spin .75s linear infinite;
+}
+
+.login-startup h1,
+.login-status h1{
+  margin: 0;
+  color: var(--text);
+  font-size: 23px;
+  line-height: 1.15;
+  font-weight: 850;
+}
+
+.login-startup p,
+.login-status__message{
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.login-status__note{
+  margin: 9px 0 0;
+  color: #c5cad1;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.login-status__retry{
+  width: 100%;
+  min-height: 40px;
+  border-radius: 8px;
+}
+
+@keyframes login-startup-spin{
+  to{ transform: rotate(360deg); }
+}
+
 .login-brand{
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr);
@@ -297,22 +363,22 @@ body{
   line-height: 1.25;
 }
 
-  .login-hint{
+.login-hint{
   margin: 0;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.4;
-    text-align: center;
-  }
+  text-align: center;
+}
 
-  .login-hint--warning{
-    width: 100%;
-    border: 1px solid #66501f;
-    border-radius: 8px;
-    background: rgba(245, 158, 11, .08);
-    color: #f4c96b;
-    padding: 8px 10px;
-  }
+.login-hint--warning{
+  width: 100%;
+  border: 1px solid #66501f;
+  border-radius: 8px;
+  background: rgba(245, 158, 11, .08);
+  color: #f4c96b;
+  padding: 8px 10px;
+}
 
 .login-message--error{
   border-color: #5a1f2a;
@@ -2899,6 +2965,10 @@ textarea:focus{
 }
 
 @media (prefers-reduced-motion: reduce){
+  .login-startup__spinner{
+    animation: none;
+  }
+
   .media-loading__spinner{
     animation-duration: 1.8s;
   }

@@ -121,13 +121,26 @@ function AuthenticatedAppWindow() {
   }, []);
 
   useEffect(() => {
+    let mounted = true;
+    let receivedAuthEvent = false;
     const handleAuthChange = (event) => {
+      receivedAuthEvent = true;
       applyAuthSession(event.detail || window.__ARIZONA_AUTH_SESSION__ || null);
     };
 
     window.addEventListener("arizona-auth:login", handleAuthChange);
     window.addEventListener("arizona-auth:update", handleAuthChange);
+    // The access check can finish while this WebView is still loading. Reading
+    // the in-memory session closes that handoff race; an event received after
+    // this effect starts always wins over the command's snapshot.
+    invokeCommand(commandNames.authCurrentSession)
+      .then((session) => {
+        if (mounted && !receivedAuthEvent) applyAuthSession(session || null);
+      })
+      .catch(() => {});
+
     return () => {
+      mounted = false;
       window.removeEventListener("arizona-auth:login", handleAuthChange);
       window.removeEventListener("arizona-auth:update", handleAuthChange);
     };

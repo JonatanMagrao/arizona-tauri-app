@@ -6,6 +6,7 @@ export const commandNames = Object.freeze({
   afterEffectsActionCommand: "after_effects_action_command",
   appInfo: "app_info",
   authActivate: "auth_activate",
+  authCurrentSession: "auth_current_session",
   authPoll: "auth_poll",
   authResume: "auth_resume",
   cepBridgeStatus: "cep_bridge_status",

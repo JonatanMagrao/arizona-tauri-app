@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   DEFAULT_RATE_LIMIT_RETRY_SECONDS,
+  LOGIN_SCREENS,
   OUTDATED_BACKEND_MESSAGE,
   RESUME_BLOCKED_RETRY_MS,
   RESUME_NETWORK_RETRY_MS,
   acquireSubmission,
+  automaticResumeRetryDelayMs,
   authFlowErrorMessage,
   authRetryState,
+  loginScreenForFlow,
   normalizeAuthFlow,
   releaseSubmission,
   resumeRetryDelayMs,
@@ -22,7 +25,7 @@ test("submission lock is acquired only once until it is released", () => {
   assert.equal(acquireSubmission(lock), true);
 });
 
-test("uses the server retry delay for Supabase rate limits", () => {
+test("uses the retry delay returned by the access service", () => {
   assert.deepEqual(
     authRetryState({
       code: "over_request_rate_limit",
@@ -37,6 +40,58 @@ test("uses the server retry delay for Supabase rate limits", () => {
   );
 });
 
+test("shows activation only after the access check asks for user input", () => {
+  assert.equal(
+    loginScreenForFlow({ state: "activation_required" }),
+    LOGIN_SCREENS.ACTIVATION,
+  );
+  assert.equal(
+    loginScreenForFlow({ state: "authenticated" }),
+    LOGIN_SCREENS.CHECKING,
+  );
+});
+
+test("separates connection failures from license blocks during resume", () => {
+  assert.equal(
+    loginScreenForFlow({ state: "error", code: "network_error" }),
+    LOGIN_SCREENS.CONNECTION,
+  );
+  assert.equal(
+    loginScreenForFlow({ state: "error", code: "license_expired" }),
+    LOGIN_SCREENS.BLOCKED,
+  );
+  assert.equal(
+    loginScreenForFlow({ state: "error", code: "organization_not_active" }),
+    LOGIN_SCREENS.BLOCKED,
+  );
+});
+
+test("keeps the form available when activation itself cannot finish", () => {
+  for (const code of ["network_error", "rate_limited", "activation_invalid", "device_limit_reached"]) {
+    assert.equal(
+      loginScreenForFlow({ state: "error", code }, { source: "activation" }),
+      LOGIN_SCREENS.ACTIVATION,
+      `code=${code}`,
+    );
+  }
+});
+
+test("reopens activation when the saved access can no longer be used", () => {
+  for (const code of [
+    "device_activation_expired",
+    "device_not_active",
+    "device_revoked",
+    "invalid_user_token",
+    "member_not_authorized",
+  ]) {
+    assert.equal(
+      loginScreenForFlow({ state: "error", code }),
+      LOGIN_SCREENS.ACTIVATION,
+      `code=${code}`,
+    );
+  }
+});
+
 test("applies a safe local delay when a rate limit omits retry-after", () => {
   const retry = authRetryState({ code: "over_request_rate_limit" });
 
@@ -45,11 +100,13 @@ test("applies a safe local delay when a rate limit omits retry-after", () => {
 });
 
 test("maps an outdated backend that still demands MFA to an error state", () => {
-  const flow = normalizeAuthFlow({ state: "error", code: "daily_mfa_required" });
+  const flow = normalizeAuthFlow({ state: "daily_mfa_required" });
 
   assert.equal(flow.state, "error");
+  assert.equal(flow.code, "daily_mfa_required");
   assert.equal(flow.message, OUTDATED_BACKEND_MESSAGE);
   assert.equal(authFlowErrorMessage(flow), OUTDATED_BACKEND_MESSAGE);
+  assert.equal(loginScreenForFlow(flow), LOGIN_SCREENS.BLOCKED);
 });
 
 test("keeps the supported auth flow states untouched", () => {
@@ -65,6 +122,30 @@ test("silently retries resume for network drops and reversible org blocks", () =
   assert.equal(resumeRetryDelayMs("license_expired"), RESUME_BLOCKED_RETRY_MS);
   assert.equal(resumeRetryDelayMs("organization_not_active"), RESUME_BLOCKED_RETRY_MS);
   assert.equal(resumeRetryDelayMs(" License_Expired "), RESUME_BLOCKED_RETRY_MS);
+});
+
+test("recovers an activation if the connection drops after the code may have been accepted", () => {
+  assert.equal(
+    automaticResumeRetryDelayMs(
+      { state: "error", code: "network_error" },
+      { source: "activation" },
+    ),
+    RESUME_NETWORK_RETRY_MS,
+  );
+  assert.equal(
+    automaticResumeRetryDelayMs(
+      { state: "error", code: "license_expired" },
+      { source: "activation" },
+    ),
+    RESUME_BLOCKED_RETRY_MS,
+  );
+  assert.equal(
+    automaticResumeRetryDelayMs(
+      { state: "error", code: "activation_invalid" },
+      { source: "activation" },
+    ),
+    null,
+  );
 });
 
 test("never schedules a resume retry for terminal or unknown codes", () => {

@@ -7,10 +7,15 @@ import {
   resumeSecureSession,
 } from "../../services/auth";
 import { commandNames, invokeCommand } from "../../services/tauriCommands";
+import { publicErrorCode } from "../../utils/publicErrors";
+import { startAuthBootstrap } from "./authBootstrap";
 import {
+  LOGIN_SCREENS,
   acquireSubmission,
+  automaticResumeRetryDelayMs,
   authFlowErrorMessage,
   authRetryState,
+  loginScreenForFlow,
   normalizeAuthFlow,
   releaseSubmission,
   resumeRetryDelayMs,
@@ -21,19 +26,23 @@ import closeIcon from "../../assets/icones/close.svg";
 import minimizeIcon from "../../assets/icones/minimize.svg";
 
 function LoginWindow() {
+  const [screen, setScreen] = useState(LOGIN_SCREENS.CHECKING);
   const [draft, setDraft] = useState({ email: "", activationCode: "" });
   const [appInfo, setAppInfo] = useState({ version: "" });
   const [hint, setHint] = useState("");
   const [toast, setToast] = useState({ message: "", variant: "error" });
+  const [statusCode, setStatusCode] = useState("");
   const [retryUntil, setRetryUntil] = useState(0);
   const [retryRemainingSeconds, setRetryRemainingSeconds] = useState(0);
-  const [isBusy, setIsBusy] = useState(false);
+  const [isBusy, setIsBusy] = useState(true);
   const retryUntilRef = useRef(0);
   const submitInFlightRef = useRef(false);
   const mountedRef = useRef(false);
   const appVersionRef = useRef("");
   const resumeRetryTimerRef = useRef(null);
   const resumeInFlightRef = useRef(false);
+  const requestGenerationRef = useRef(0);
+  const activeRequestRef = useRef({ generation: 0, source: "resume" });
 
   const canSubmit = useMemo(() => {
     if (isBusy || retryRemainingSeconds > 0) return false;
@@ -67,76 +76,35 @@ function LoginWindow() {
     }
   };
 
+  const beginRequest = (source) => {
+    const generation = requestGenerationRef.current + 1;
+    requestGenerationRef.current = generation;
+    activeRequestRef.current = { generation, source };
+    return generation;
+  };
+
+  const finishRequest = (generation) => {
+    if (!mountedRef.current || generation !== requestGenerationRef.current) return;
+    setIsBusy(false);
+    activeRequestRef.current = { generation, source: "external" };
+  };
+
   const scheduleResumeRetry = (delayMs) => {
-    if (!mountedRef.current || resumeRetryTimerRef.current) return;
+    if (!mountedRef.current || resumeRetryTimerRef.current || delayMs == null) return;
     resumeRetryTimerRef.current = setTimeout(() => {
       resumeRetryTimerRef.current = null;
-      resumeSession();
+      resumeSession({ showChecking: false });
     }, delayMs);
   };
 
-  const resumeSession = async () => {
-    if (resumeInFlightRef.current) return;
-    resumeInFlightRef.current = true;
-    try {
-      const flow = await resumeSecureSession({ appVersion: appVersionRef.current });
-      if (!mountedRef.current) return;
-      applyFlow(flow);
-    } catch (error) {
-      if (!mountedRef.current) return;
-      setToast({ message: authErrorMessage(error), variant: "error" });
-      if (String(error?.message || error || "").includes("network_error")) {
-        scheduleResumeRetry(resumeRetryDelayMs("network_error"));
-      }
-    } finally {
-      resumeInFlightRef.current = false;
-    }
-  };
-
-  useEffect(() => {
-    mountedRef.current = true;
-
-    const applyExternalFlow = (event) => {
-      if (mountedRef.current) applyFlow(event.detail);
-    };
-    window.addEventListener("arizona-auth:flow", applyExternalFlow);
-
-    async function boot() {
-      setIsBusy(true);
-      try {
-        const info = await invokeCommand(commandNames.appInfo);
-        const version = String(info?.version || "").trim();
-        if (!mountedRef.current) return;
-        appVersionRef.current = version;
-        setAppInfo({ version });
-        await resumeSession();
-      } catch (error) {
-        if (mountedRef.current) setToast({ message: authErrorMessage(error), variant: "error" });
-      } finally {
-        if (mountedRef.current) setIsBusy(false);
-      }
-    }
-
-    boot();
-    return () => {
-      mountedRef.current = false;
-      clearResumeRetry();
-      window.removeEventListener("arizona-auth:flow", applyExternalFlow);
-    };
-  }, []);
-
-  const applyFlow = (rawFlow) => {
+  const applyFlow = (rawFlow, { source = "resume" } = {}) => {
     const flow = normalizeAuthFlow(rawFlow);
     if (!flow) return;
-    // Single-flight: any new flow replaces the pending silent resume retry.
-    // network_error keeps its 15s cadence; the reversible org-wide blocks
-    // (license_expired / organization_not_active) retry every 60s until the
-    // license returns; every other state stops the timer.
+
     clearResumeRetry();
-    const resumeDelay = flow.state === "authenticated" ? null : resumeRetryDelayMs(flow.code);
-    if (resumeDelay != null) scheduleResumeRetry(resumeDelay);
     setHint("");
     setToast({ message: "", variant: "error" });
+
     const retry = authRetryState(flow);
     if (retry.isRetryBlocked && retry.retryAfterSeconds > 0) {
       const nextRetryUntil = Date.now() + retry.retryAfterSeconds * 1000;
@@ -148,23 +116,122 @@ function LoginWindow() {
       setRetryUntil(0);
       setRetryRemainingSeconds(0);
     }
+
+    scheduleResumeRetry(automaticResumeRetryDelayMs(flow, { source }));
+
     if (flow.email) {
       setDraft((current) => ({ ...current, email: normalizeEmail(flow.email) }));
     }
 
+    setStatusCode(String(flow.code || "").trim().toLowerCase());
+
     if (flow.state === "authenticated") {
+      setScreen(LOGIN_SCREENS.CHECKING);
+      setHint("Acesso confirmado. Abrindo o Arizona...");
       setDraft((current) => ({ ...current, activationCode: "" }));
       return;
     }
 
-    if (flow.state === "error") {
-      if (!retry.isRetryBlocked || retry.retryAfterSeconds <= 0) {
-        setToast({ message: authFlowErrorMessage(flow), variant: "error" });
+    const nextScreen = loginScreenForFlow(flow, { source });
+    const message = flow.message || flow.code
+      ? authFlowErrorMessage(flow)
+      : "";
+    setScreen(nextScreen);
+
+    if (nextScreen === LOGIN_SCREENS.ACTIVATION) {
+      if (flow.code || flow.state === "error") {
+        if (!retry.isRetryBlocked || retry.retryAfterSeconds <= 0) {
+          setToast({ message, variant: "error" });
+        }
+      } else if (flow.message) {
+        setHint(flow.message);
       }
-    } else if (flow.message) {
-      setHint(flow.message);
+      return;
+    }
+
+    setHint(
+      message
+      || (nextScreen === LOGIN_SCREENS.CONNECTION
+        ? "Não conseguimos verificar seu acesso agora."
+        : "Seu acesso não está disponível neste momento."),
+    );
+  };
+
+  const applyRequestError = (error, source) => {
+    applyFlow({
+      state: "error",
+      code: publicErrorCode(error),
+      message: authErrorMessage(error),
+    }, { source });
+  };
+
+  const resumeSession = async ({ showChecking = false } = {}) => {
+    if (resumeInFlightRef.current || submitInFlightRef.current) return;
+
+    clearResumeRetry();
+    resumeInFlightRef.current = true;
+    const generation = beginRequest("resume");
+    setIsBusy(true);
+    if (showChecking) {
+      setScreen(LOGIN_SCREENS.CHECKING);
+      setHint("Estamos verificando seu acesso.");
+      setToast({ message: "", variant: "error" });
+    }
+
+    try {
+      const flow = await resumeSecureSession({ appVersion: appVersionRef.current });
+      if (!mountedRef.current || generation !== requestGenerationRef.current) return;
+      applyFlow(flow, { source: "resume" });
+    } catch (error) {
+      if (!mountedRef.current || generation !== requestGenerationRef.current) return;
+      applyRequestError(error, "resume");
+    } finally {
+      resumeInFlightRef.current = false;
+      finishRequest(generation);
     }
   };
+
+  useEffect(() => {
+    mountedRef.current = true;
+    let cancelled = false;
+    const generation = beginRequest("resume");
+    const startup = startAuthBootstrap();
+
+    const applyExternalFlow = (event) => {
+      if (!mountedRef.current) return;
+      const source = activeRequestRef.current.source === "activation"
+        ? "activation"
+        : "resume";
+      applyFlow(event.detail, { source });
+    };
+    window.addEventListener("arizona-auth:flow", applyExternalFlow);
+
+    startup.appInfo.then((info) => {
+      if (cancelled || !mountedRef.current) return;
+      appVersionRef.current = info.version;
+      setAppInfo(info);
+    });
+
+    startup.auth.then(({ flow, error }) => {
+      if (
+        cancelled
+        || !mountedRef.current
+        || generation !== requestGenerationRef.current
+      ) {
+        return;
+      }
+      if (error) applyRequestError(error, "resume");
+      else applyFlow(flow, { source: "resume" });
+      finishRequest(generation);
+    });
+
+    return () => {
+      cancelled = true;
+      mountedRef.current = false;
+      clearResumeRetry();
+      window.removeEventListener("arizona-auth:flow", applyExternalFlow);
+    };
+  }, []);
 
   const updateDraft = (field, value) => {
     const nextValue = field === "activationCode" ? formatActivationCode(value) : value;
@@ -177,25 +244,35 @@ function LoginWindow() {
     if (
       !canSubmit
       || retryUntilRef.current > Date.now()
+      || resumeInFlightRef.current
       || !acquireSubmission(submitInFlightRef)
     ) {
       return;
     }
 
+    clearResumeRetry();
+    const generation = beginRequest("activation");
     setIsBusy(true);
     try {
       const flow = await activateWithCode({
         email: normalizeEmail(draft.email),
         code: normalizeActivationCode(draft.activationCode),
-        appVersion: appInfo.version,
+        appVersion: appVersionRef.current,
       });
-      applyFlow(flow);
+      if (!mountedRef.current || generation !== requestGenerationRef.current) return;
+      applyFlow(flow, { source: "activation" });
     } catch (error) {
-      setToast({ message: authErrorMessage(error), variant: "error" });
+      if (!mountedRef.current || generation !== requestGenerationRef.current) return;
+      applyRequestError(error, "activation");
     } finally {
       releaseSubmission(submitInFlightRef);
-      setIsBusy(false);
+      finishRequest(generation);
     }
+  };
+
+  const retryNow = () => {
+    if (isBusy || retryRemainingSeconds > 0) return;
+    resumeSession({ showChecking: true });
   };
 
   const minimizeWindow = () => getCurrentWindow().minimize().catch(() => {});
@@ -207,13 +284,13 @@ function LoginWindow() {
     }
   };
 
+  const statusHasAutomaticRetry = resumeRetryDelayMs(statusCode) != null
+    || (screen === LOGIN_SCREENS.CONNECTION && retryRemainingSeconds > 0);
+
   return (
     <main className="login-shell">
       <header className="app-titlebar" aria-label="Barra da janela">
-        <div
-          className="app-titlebar__brand"
-          title="Arizona App"
-        >
+        <div className="app-titlebar__brand" title="Arizona App">
           <img
             className="app-titlebar__logo"
             src={appLogo}
@@ -245,66 +322,123 @@ function LoginWindow() {
         </div>
       </header>
 
-      <section className="login-panel" aria-labelledby="loginTitle">
-        {appInfo.version && <span className="login-version">v{appInfo.version}</span>}
-        <div className="login-brand">
-          <img src={appLogo} alt="" aria-hidden="true" />
-          <div>
-            <h1 id="loginTitle">Ativar acesso</h1>
-            <p className="login-subtitle">Use o código entregue pelo seu gestor.</p>
+      {screen === LOGIN_SCREENS.CHECKING && (
+        <section
+          className="login-panel login-panel--centered"
+          aria-labelledby="startupTitle"
+          aria-busy="true"
+        >
+          {appInfo.version && <span className="login-version">v{appInfo.version}</span>}
+          <div className="login-startup" role="status" aria-live="polite">
+            <img className="login-startup__logo" src={appLogo} alt="" aria-hidden="true" />
+            <span className="login-startup__spinner" aria-hidden="true" />
+            <div>
+              <h1 id="startupTitle">Iniciando o Arizona</h1>
+              <p>{hint || "Estamos verificando seu acesso."}</p>
+            </div>
           </div>
-        </div>
+        </section>
+      )}
 
-        <form className="login-form" onSubmit={submit} noValidate>
-          <label className="login-field">
-            <span>E-mail</span>
-            <input
-              className="input"
-              type="email"
-              autoComplete="email"
-              value={draft.email}
-              onChange={(event) => updateDraft("email", event.target.value)}
-              disabled={isBusy}
-            />
-          </label>
-          <label className="login-field">
-            <span>Código de ativação</span>
-            <input
-              className="input login-code-input"
-              type="text"
-              inputMode="text"
-              autoComplete="one-time-code"
-              maxLength={14}
-              value={draft.activationCode}
-              onChange={(event) => updateDraft("activationCode", event.target.value)}
-              disabled={isBusy}
-              placeholder="XXXX-XXXX-XXXX"
-            />
-          </label>
+      {(screen === LOGIN_SCREENS.CONNECTION || screen === LOGIN_SCREENS.BLOCKED) && (
+        <section className="login-panel login-panel--centered" aria-labelledby="statusTitle">
+          {appInfo.version && <span className="login-version">v{appInfo.version}</span>}
+          <div className="login-status">
+            <img className="login-status__logo" src={appLogo} alt="" aria-hidden="true" />
+            <div>
+              <h1 id="statusTitle">
+                {screen === LOGIN_SCREENS.CONNECTION
+                  ? "Não conseguimos verificar seu acesso"
+                  : "Seu acesso não está disponível"}
+              </h1>
+              <p className="login-status__message" role="alert">{hint}</p>
+              {statusHasAutomaticRetry && (
+                <p className="login-status__note">
+                  O Arizona continuará verificando automaticamente.
+                </p>
+              )}
+            </div>
 
-          <button className="btn btn-primary login-submit" type="submit" disabled={!canSubmit}>
-            {isBusy ? "Validando..." : "Continuar"}
-          </button>
-        </form>
+            {retryRemainingSeconds > 0 && (
+              <p className="login-hint login-hint--warning" role="status">
+                {`Tente novamente em ${formatDuration(retryRemainingSeconds)}.`}
+              </p>
+            )}
 
-        {hint && (
-          <p className="login-hint" role="status">
-            {hint}
-          </p>
-        )}
-
-        {retryRemainingSeconds > 0 && (
-          <p className="login-hint login-hint--warning" role="status">
-            {`Muitas tentativas. Tente novamente em ${formatDuration(retryRemainingSeconds)}.`}
-          </p>
-        )}
-
-        {toast.message && (
-          <div className={`login-message login-message--${toast.variant}`} role="alert">
-            {toast.message}
+            <button
+              className="btn btn-primary login-status__retry"
+              type="button"
+              onClick={retryNow}
+              disabled={isBusy || retryRemainingSeconds > 0}
+            >
+              {isBusy ? "Verificando..." : "Tentar novamente"}
+            </button>
           </div>
-        )}
-      </section>
+        </section>
+      )}
+
+      {screen === LOGIN_SCREENS.ACTIVATION && (
+        <section className="login-panel" aria-labelledby="loginTitle">
+          {appInfo.version && <span className="login-version">v{appInfo.version}</span>}
+          <div className="login-brand">
+            <img src={appLogo} alt="" aria-hidden="true" />
+            <div>
+              <h1 id="loginTitle">Ativar acesso</h1>
+              <p className="login-subtitle">Use o código entregue pelo seu gestor.</p>
+            </div>
+          </div>
+
+          <form className="login-form" onSubmit={submit} noValidate>
+            <label className="login-field">
+              <span>E-mail</span>
+              <input
+                className="input"
+                type="email"
+                autoComplete="email"
+                value={draft.email}
+                onChange={(event) => updateDraft("email", event.target.value)}
+                disabled={isBusy}
+              />
+            </label>
+            <label className="login-field">
+              <span>Código de ativação</span>
+              <input
+                className="input login-code-input"
+                type="text"
+                inputMode="text"
+                autoComplete="one-time-code"
+                maxLength={14}
+                value={draft.activationCode}
+                onChange={(event) => updateDraft("activationCode", event.target.value)}
+                disabled={isBusy}
+                placeholder="XXXX-XXXX-XXXX"
+              />
+            </label>
+
+            <button className="btn btn-primary login-submit" type="submit" disabled={!canSubmit}>
+              {isBusy ? "Validando..." : "Continuar"}
+            </button>
+          </form>
+
+          {hint && (
+            <p className="login-hint" role="status">
+              {hint}
+            </p>
+          )}
+
+          {retryRemainingSeconds > 0 && (
+            <p className="login-hint login-hint--warning" role="status">
+              {`Muitas tentativas. Tente novamente em ${formatDuration(retryRemainingSeconds)}.`}
+            </p>
+          )}
+
+          {toast.message && (
+            <div className={`login-message login-message--${toast.variant}`} role="alert">
+              {toast.message}
+            </div>
+          )}
+        </section>
+      )}
     </main>
   );
 }

@@ -18,7 +18,9 @@
         "height": 560,
         "center": true,
         "resizable": false,
-        "decorations": false
+        "decorations": false,
+        "backgroundColor": "#111316",
+        "visible": false
       },
       {
         "label": "app",
@@ -28,6 +30,7 @@
         "center": true,
         "resizable": false,
         "decorations": false,
+        "backgroundColor": "#111316",
         "visible": false
       },
       {
@@ -44,6 +47,7 @@
         "maximizable": true,
         "closable": true,
         "decorations": false,
+        "backgroundColor": "#111316",
         "visible": false
       }
     ],

@@ -24,12 +24,12 @@ use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Mutex,
 };
 use tauri::{
-    AppHandle, LogicalSize, Manager, PhysicalPosition, PhysicalSize, State, WebviewWindow, Window,
-    WindowEvent,
+    webview::PageLoadEvent, AppHandle, LogicalSize, Manager, PhysicalPosition, PhysicalSize, State,
+    WebviewWindow, Window, WindowEvent,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
@@ -45,6 +45,7 @@ pub fn clear_local_auth_for_uninstall_cli() -> i32 {
 struct AuthState {
     session: Mutex<Option<AuthSession>>,
     operation: Mutex<()>,
+    login_window_ready: AtomicBool,
 }
 
 impl AuthState {
@@ -241,6 +242,17 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_opener::init())
+        .on_page_load(|webview, payload| {
+            if webview.label() != LOGIN_WINDOW_LABEL
+                || payload.event() != PageLoadEvent::Finished
+            {
+                return;
+            }
+
+            let app = webview.app_handle();
+            let auth_state = app.state::<AuthState>();
+            let _ = reveal_login_window_when_ready(app, &auth_state);
+        })
         .on_window_event(|window, event| {
             if window.label() != APP_WINDOW_LABEL {
                 return;
@@ -292,6 +304,7 @@ pub fn run() {
             set_after_shortcut_recording,
             auth_resume,
             auth_activate,
+            auth_current_session,
             auth_poll,
             restrict_admin_session,
             exit_app,
@@ -935,6 +948,44 @@ async fn auth_resume(app: AppHandle, app_version: String) -> Result<AuthFlowResp
     .await
 }
 
+#[tauri::command]
+fn auth_current_session(auth_state: State<AuthState>) -> Result<Option<PublicAuthSession>, String> {
+    let session = auth_state
+        .session
+        .lock()
+        .map_err(|_| "Não foi possível consultar o acesso atual.".to_string())?;
+    Ok(session.as_ref().map(public_session))
+}
+
+fn reveal_login_window_when_ready(
+    app: &AppHandle,
+    auth_state: &State<AuthState>,
+) -> Result<(), String> {
+    auth_state
+        .login_window_ready
+        .store(true, Ordering::Release);
+
+    // Keep this guard until the show decision is complete. If authentication
+    // finishes concurrently, it will store the session afterwards and then
+    // hide this window while revealing the authenticated app.
+    let session = auth_state
+        .session
+        .lock()
+        .map_err(|_| "Não foi possível preparar a janela inicial.".to_string())?;
+    if session.is_some() {
+        return Ok(());
+    }
+
+    let login_window = app
+        .get_webview_window(LOGIN_WINDOW_LABEL)
+        .ok_or_else(|| "A janela inicial não foi encontrada.".to_string())?;
+    if !login_window.is_visible().unwrap_or(false) {
+        login_window.show().map_err(|error| error.to_string())?;
+        login_window.set_focus().map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 fn auth_resume_blocking(
     app: &AppHandle,
     auth_state: &State<AuthState>,
@@ -1377,15 +1428,25 @@ fn unidentifiable_machine_flow() -> Option<AuthFlowResponse> {
 fn device_request_body(app: &AppHandle, app_version: &str) -> Result<serde_json::Value, String> {
     let install_id = load_or_create_install_id(app)?;
     let stored = read_secure_auth_record(&secure_auth_entry()?)?;
+    let app_version = resolved_app_version(app_version, &app.package_info().version.to_string());
     Ok(serde_json::json!({
         "installId": install_id,
-        "appVersion": app_version.trim(),
+        "appVersion": app_version,
         "deviceLabel": std::env::var("COMPUTERNAME").unwrap_or_else(|_| "Windows".to_string()),
         "deviceFingerprintHash": device_identity::device_fingerprint_hash(),
         "clientLocalTime": now_iso(),
         "lastServerTimeSeen": stored.as_ref().and_then(|record| record.server_time.clone()),
         "lastLocalTimeSeen": stored.as_ref().and_then(|record| record.local_time.clone()),
     }))
+}
+
+fn resolved_app_version(requested: &str, package_version: &str) -> String {
+    let requested = requested.trim();
+    if requested.is_empty() {
+        package_version.trim().to_string()
+    } else {
+        requested.to_string()
+    }
 }
 
 fn load_or_create_install_id(app: &AppHandle) -> Result<String, String> {
@@ -1600,7 +1661,9 @@ fn apply_auth_flow_ui(
         // The 60s renewal retry re-enters here while blocked; stealing the OS
         // focus every cycle would make the machine unusable for other work, so
         // an already visible login window is only updated, never re-focused.
-        if !login_window.is_visible().unwrap_or(false) {
+        if auth_state.login_window_ready.load(Ordering::Acquire)
+            && !login_window.is_visible().unwrap_or(false)
+        {
             let _ = login_window.show();
             let _ = login_window.set_focus();
         }
@@ -1723,7 +1786,11 @@ fn api_error_flow(error: &auth::ApiError, email: Option<String>) -> AuthFlowResp
         "invalid_refresh_token"
         | "refresh_token_not_found"
         | "invalid_grant"
-        | "device_activation_expired" => "activation_required",
+        | "invalid_user_token"
+        | "device_activation_expired"
+        | "device_not_active"
+        | "device_revoked"
+        | "member_not_authorized" => "activation_required",
         _ => "error",
     };
     let message = match code {
@@ -1746,6 +1813,9 @@ fn api_error_flow(error: &auth::ApiError, email: Option<String>) -> AuthFlowResp
         "device_activation_expired" => {
             "Esta sessão é antiga demais para cadastrar a máquina. Solicite um novo código de ativação."
         }
+        "invalid_refresh_token" | "refresh_token_not_found" | "invalid_grant" | "invalid_user_token" => {
+            "Seu acesso salvo expirou. Insira um novo código de ativação."
+        }
         "device_cooldown" => "Aguarde antes de cadastrar outra máquina.",
         "device_identity_required" => "Não foi possível identificar esta máquina. Contate o suporte.",
         "organization_not_active" => {
@@ -1754,7 +1824,9 @@ fn api_error_flow(error: &auth::ApiError, email: Option<String>) -> AuthFlowResp
         "license_expired" => {
             "A licença da empresa expirou. O acesso volta automaticamente quando ela for renovada."
         }
-        "member_not_authorized" => "Este usuário não está autorizado.",
+        "member_not_authorized" => {
+            "Este usuário não tem mais acesso. Use outro acesso ou peça ajuda ao seu gestor."
+        }
         "rate_limited" => "Muitas tentativas. Aguarde antes de tentar novamente.",
         "network_error" => {
             "Não foi possível acessar o serviço agora. Verifique sua conexão com a internet e tente novamente."
@@ -1995,7 +2067,9 @@ mod device_release_tests {
 
 #[cfg(test)]
 mod auth_flow_tests {
-    use super::{api_error_flow, should_forget_secure_auth_on_resume_error, AuthState};
+    use super::{
+        api_error_flow, resolved_app_version, should_forget_secure_auth_on_resume_error, AuthState,
+    };
     use crate::auth::{self, ApiError};
 
     fn api_error(code: &str) -> ApiError {
@@ -2003,6 +2077,30 @@ mod auth_flow_tests {
             code: code.to_string(),
             message: "test".to_string(),
             retry_after_seconds: None,
+        }
+    }
+
+    #[test]
+    fn uses_the_packaged_version_when_bootstrap_starts_before_app_info() {
+        assert_eq!(resolved_app_version("", "2.2.0"), "2.2.0");
+        assert_eq!(resolved_app_version("  ", "2.2.0"), "2.2.0");
+        assert_eq!(resolved_app_version(" 2.3.1 ", "2.2.0"), "2.3.1");
+    }
+
+    #[test]
+    fn credential_erasing_denials_reopen_activation() {
+        for code in [
+            "device_activation_expired",
+            "device_not_active",
+            "device_revoked",
+            "invalid_grant",
+            "invalid_refresh_token",
+            "invalid_user_token",
+            "member_not_authorized",
+            "refresh_token_not_found",
+        ] {
+            let flow = api_error_flow(&api_error(code), None);
+            assert_eq!(flow.state, "activation_required", "code={code}");
         }
     }
 
