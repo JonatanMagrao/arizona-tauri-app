@@ -6,6 +6,14 @@ import {
   applyCardInstallmentJump,
   CARD_INSTALLMENT_MECHANIC_TYPE,
 } from "../mechanics/parcelamento";
+import {
+  applyDeXPorYInstallmentJump,
+  DE_X_POR_Y_INSTALLMENT_MECHANIC_TYPE,
+} from "../mechanics/deXPorYParcelamento";
+import {
+  applySharedMechanicJump,
+  DE_X_POR_Y_DISCOUNT_TAKE_PAY_MECHANIC_TYPE,
+} from "../mechanics/deXPorYDescontoLeveXPagueY";
 import { applyOptionGroupSelection } from "../mechanics/shared";
 import { findOptionGroup, updateOfferProduct } from "./shared";
 
@@ -45,14 +53,27 @@ export const updateOfferInstallmentJump = (
     productIndex,
     "Atualizar jump do parcelamento",
     (product) => {
-      if (product.mechanic.type !== CARD_INSTALLMENT_MECHANIC_TYPE) {
-        throw new Error("Jump disponivel apenas para parcelamento CRF.");
+      if (product.mechanic.type === CARD_INSTALLMENT_MECHANIC_TYPE) {
+        applyCardInstallmentJump(product, target);
+      } else if (
+        product.mechanic.type === DE_X_POR_Y_INSTALLMENT_MECHANIC_TYPE
+      ) {
+        applyDeXPorYInstallmentJump(product, target);
+      } else if (
+        product.mechanic.type ===
+        DE_X_POR_Y_DISCOUNT_TAKE_PAY_MECHANIC_TYPE
+      ) {
+        applySharedMechanicJump(product, target);
+      } else {
+        throw new Error("Jump disponivel apenas para parcelamento.");
       }
 
-      applyCardInstallmentJump(product, target);
       return target === "preco-cheio"
         ? "Jump aplicado em Preco Cheio."
-        : "Jump aplicado em Preco Parcela.";
+        : product.mechanic.type ===
+            DE_X_POR_Y_DISCOUNT_TAKE_PAY_MECHANIC_TYPE
+          ? "Jump aplicado em Preco."
+          : "Jump aplicado em Preco Parcela.";
     }
   );
 };

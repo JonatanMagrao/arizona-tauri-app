@@ -205,6 +205,7 @@ export const toPublicOfferDetails = (
       optionGroups.push({
         id: optionGroup.id,
         type: optionGroup.type,
+        placement: optionGroup.placement,
         label: optionGroup.label,
         options,
         selectedIndex: optionGroup.selectedIndex,
@@ -259,6 +260,7 @@ export const toPublicOfferDetails = (
       optionGroup = {
         id: control.optionGroup.id,
         type: control.optionGroup.type,
+        placement: control.optionGroup.placement,
         label: control.optionGroup.label,
         options,
         selectedIndex: control.optionGroup.selectedIndex,

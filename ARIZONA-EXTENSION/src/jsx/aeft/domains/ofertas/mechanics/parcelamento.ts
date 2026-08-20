@@ -15,11 +15,25 @@ export const CARD_INSTALLMENT_MECHANIC_TYPE =
   "De Por Parcelamento Cartao Carrefour";
 
 const CARD_INSTALLMENT_JUMP_MARKER_INDEX = 2;
-const CARD_INSTALLMENT_MARKER_LAYER_INDEX = 2;
-const CARD_INSTALLMENT_FULL_PRICE_LAYER_INDEX = 3;
-const CARD_INSTALLMENT_PRICE_LAYER_INDEX = 4;
 
-interface CardInstallmentJumpLayers {
+export interface InstallmentJumpDefinition {
+  markerLayerIndex: number;
+  fullPriceLayerIndex: number;
+  installmentPriceLayerIndex: number;
+  context: string;
+  markerLayerName?: string;
+  fullPriceLayerName?: string;
+  installmentPriceLayerName?: string;
+}
+
+const CARD_INSTALLMENT_JUMP_DEFINITION: InstallmentJumpDefinition = {
+  markerLayerIndex: 2,
+  fullPriceLayerIndex: 3,
+  installmentPriceLayerIndex: 4,
+  context: "parcelamento CRF",
+};
+
+interface InstallmentJumpLayers {
   source: CompItem;
   markerLayer: Layer;
   fullPriceLayer: Layer;
@@ -66,14 +80,18 @@ export function readCardInstallmentMechanic(
         { label: "De/Por Cartao/Plano" },
       ]),
     ],
-    installmentJump: readCardInstallmentJump(source),
+    installmentJump: readInstallmentJump(
+      source,
+      CARD_INSTALLMENT_JUMP_DEFINITION
+    ),
   };
 }
 
-const readCardInstallmentJump = (
-  source: CompItem | null
+export const readInstallmentJump = (
+  source: CompItem | null,
+  definition: InstallmentJumpDefinition
 ): OfferInstallmentJump => {
-  const layers = resolveCardInstallmentJumpLayers(source, false);
+  const layers = resolveInstallmentJumpLayers(source, definition, false);
 
   if (layers === null) {
     return {
@@ -96,23 +114,26 @@ const readCardInstallmentJump = (
   };
 };
 
-const resolveCardInstallmentJumpLayers = (
+const resolveInstallmentJumpLayers = (
   source: CompItem | null,
+  definition: InstallmentJumpDefinition,
   shouldThrow: boolean
-): CardInstallmentJumpLayers | null => {
+): InstallmentJumpLayers | null => {
   if (source === null) {
-    if (shouldThrow) throw new Error("Precomp do parcelamento nao encontrada.");
+    if (shouldThrow) {
+      throw new Error("Precomp de " + definition.context + " nao encontrada.");
+    }
     return null;
   }
 
-  const markerLayer = getLayerByIndex(source, CARD_INSTALLMENT_MARKER_LAYER_INDEX);
+  const markerLayer = getLayerByIndex(source, definition.markerLayerIndex);
   const fullPriceLayer = getLayerByIndex(
     source,
-    CARD_INSTALLMENT_FULL_PRICE_LAYER_INDEX
+    definition.fullPriceLayerIndex
   );
   const installmentPriceLayer = getLayerByIndex(
     source,
-    CARD_INSTALLMENT_PRICE_LAYER_INDEX
+    definition.installmentPriceLayerIndex
   );
 
   if (
@@ -121,16 +142,28 @@ const resolveCardInstallmentJumpLayers = (
     installmentPriceLayer === null
   ) {
     if (shouldThrow) {
-      throw new Error(
-        "Nao encontrei as layers de jump do parcelamento CRF."
-      );
+      throw new Error("Nao encontrei as layers de jump de " + definition.context + ".");
+    }
+    return null;
+  }
+
+  if (
+    !hasExpectedLayerName(markerLayer, definition.markerLayerName) ||
+    !hasExpectedLayerName(fullPriceLayer, definition.fullPriceLayerName) ||
+    !hasExpectedLayerName(
+      installmentPriceLayer,
+      definition.installmentPriceLayerName
+    )
+  ) {
+    if (shouldThrow) {
+      throw new Error("As layers de jump de " + definition.context + " mudaram.");
     }
     return null;
   }
 
   if (markerLayer.marker.numKeys < CARD_INSTALLMENT_JUMP_MARKER_INDEX) {
     if (shouldThrow) {
-      throw new Error("Marker de jump do parcelamento CRF nao encontrado.");
+      throw new Error("Marker de jump de " + definition.context + " nao encontrado.");
     }
     return null;
   }
@@ -143,6 +176,13 @@ const resolveCardInstallmentJumpLayers = (
     markerTime: markerLayer.marker.keyTime(CARD_INSTALLMENT_JUMP_MARKER_INDEX),
   };
 };
+
+const hasExpectedLayerName = (
+  layer: Layer,
+  expectedName?: string
+): boolean =>
+  typeof expectedName === "undefined" ||
+  String(layer.name).toLowerCase() === expectedName.toLowerCase();
 
 const getProductMechanicSource = (
   product: InternalOfferProduct
@@ -166,21 +206,23 @@ const moveLayerInPointTo = (layer: Layer, targetTime: number): void => {
   layer.startTime += targetTime - layer.inPoint;
 };
 
-export const applyCardInstallmentJump = (
+export const applyInstallmentJump = (
   product: InternalOfferProduct,
-  target: OfferInstallmentJumpTarget
+  target: OfferInstallmentJumpTarget,
+  definition: InstallmentJumpDefinition
 ): void => {
   if (target !== "preco-cheio" && target !== "preco-parcela") {
     throw new Error("Jump invalido.");
   }
 
-  const layers = resolveCardInstallmentJumpLayers(
+  const layers = resolveInstallmentJumpLayers(
     getProductMechanicSource(product),
+    definition,
     true
   );
 
   if (layers === null) {
-    throw new Error("Jump do parcelamento CRF nao encontrado.");
+    throw new Error("Jump de " + definition.context + " nao encontrado.");
   }
 
   if (target === "preco-cheio") {
@@ -192,3 +234,9 @@ export const applyCardInstallmentJump = (
   moveLayerInPointTo(layers.installmentPriceLayer, layers.markerTime);
   moveLayerInPointTo(layers.fullPriceLayer, layers.source.duration);
 };
+
+export const applyCardInstallmentJump = (
+  product: InternalOfferProduct,
+  target: OfferInstallmentJumpTarget
+): void =>
+  applyInstallmentJump(product, target, CARD_INSTALLMENT_JUMP_DEFINITION);

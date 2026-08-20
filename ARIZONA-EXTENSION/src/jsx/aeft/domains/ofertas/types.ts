@@ -1,5 +1,6 @@
 export type OfferFieldFormat = "integer" | "percent" | "price" | "text";
 export type OfferOptionGroupType = "controller" | "layers";
+export type OfferOptionGroupPlacement = "controls" | "header";
 export type OfferInstallmentJumpTarget = "preco-cheio" | "preco-parcela";
 
 export interface MechanicReaderMap {
@@ -143,6 +144,7 @@ export interface OfferOption {
 export interface OfferOptionGroup {
   id: string;
   type: OfferOptionGroupType;
+  placement?: OfferOptionGroupPlacement;
   label: string;
   options: OfferOption[];
   selectedIndex: number;

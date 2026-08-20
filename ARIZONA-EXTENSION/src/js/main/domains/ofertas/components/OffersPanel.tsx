@@ -391,10 +391,20 @@ const getImageTitle = (image: OfferImageInfo | null) => {
   return details.join("\n");
 };
 
+const getHeaderOptionGroup = (product: OfferProduct) =>
+  product.mechanic.optionGroups.find(
+    (optionGroup) => optionGroup.placement === "header"
+  );
+
+const getControlOptionGroups = (product: OfferProduct) =>
+  product.mechanic.optionGroups.filter(
+    (optionGroup) => optionGroup.placement !== "header"
+  );
+
 const getOfferCardSize = (product: OfferProduct): OfferCardSize => {
   const type = product.mechanic.type.toLowerCase();
   const controlCount =
-    product.mechanic.fields.length + product.mechanic.optionGroups.length;
+    product.mechanic.fields.length + getControlOptionGroups(product).length;
 
   if (type.indexOf("parcelamento") >= 0 || controlCount >= 5) {
     return "tall";
@@ -670,15 +680,18 @@ const OfferFieldControl = ({
 const OfferOptionControl = ({
   optionGroup,
   className = "",
+  showLabel = true,
   onChange,
 }: {
   optionGroup: OfferOptionGroup;
   className?: string;
+  showLabel?: boolean;
   onChange: (selectedIndex: number) => void;
 }) => (
   <label className={["offer-editor-field", className].filter(Boolean).join(" ")}>
-    <span>{optionGroup.label}</span>
+    {showLabel ? <span>{optionGroup.label}</span> : null}
     <select
+      aria-label={!showLabel ? optionGroup.label : undefined}
       value={optionGroup.selectedIndex >= 0 ? optionGroup.selectedIndex : ""}
       disabled={!optionGroup.enabled}
       onChange={(event) => onChange(Number(event.target.value))}
@@ -708,6 +721,11 @@ const OfferInstallmentJumpControl = ({
 }) => {
   const installmentJump = product.mechanic.installmentJump;
   if (!installmentJump) return null;
+  const alternateTargetLabel =
+    product.mechanic.type.toLowerCase() ===
+    "de x por y | x% desconto | leve x pague y"
+      ? "Preco"
+      : "Preco Parcela";
 
   return (
     <label
@@ -722,7 +740,7 @@ const OfferInstallmentJumpControl = ({
         }
       >
         <option value="preco-cheio">Preco Cheio</option>
-        <option value="preco-parcela">Preco Parcela</option>
+        <option value="preco-parcela">{alternateTargetLabel}</option>
       </select>
     </label>
   );
@@ -748,16 +766,38 @@ const ProductEditor = ({
   onProductDragStart,
   onSwapProducts,
 }: ProductEditorProps) => {
-  const priceFields = getPriceFields(product);
-  const extraFields = getExtraFields(product);
+  const headerOptionGroup = getHeaderOptionGroup(product);
+  const controlOptionGroups = getControlOptionGroups(product);
+  const hideFullPriceFromField =
+    product.mechanic.type.toLowerCase() === "de x por y parcelamento" &&
+    headerOptionGroup?.id === "mechanicCondition" &&
+    headerOptionGroup.selectedIndex >= 0 &&
+    headerOptionGroup.selectedIndex <= 2;
+  const hideSharedMechanicQuantity =
+    product.mechanic.type.toLowerCase() ===
+      "de x por y | x% desconto | leve x pague y" &&
+    headerOptionGroup?.id === "mechanicType" &&
+    headerOptionGroup.selectedIndex !== 2 &&
+    headerOptionGroup.selectedIndex !== 4;
+  const priceFields = getPriceFields(product).filter(
+    ({ field }) => !hideFullPriceFromField || field.id !== "preco-de"
+  );
+  const extraFields = getExtraFields(product).filter(
+    ({ field }) =>
+      !hideSharedMechanicQuantity || field.id !== "quantidade-x"
+  );
   const [isMechanicMenuOpen, setIsMechanicMenuOpen] = useState(false);
   const [pendingMechanic, setPendingMechanic] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
+  const isCurrentQuantityField = (field: OfferTextField) =>
+    isQuantityXField(field) ||
+    (product.mechanic.type.toLowerCase() === "de x por y parcelamento" &&
+      isInstallmentsField(field));
   const quantityFieldEntry = extraFields.find(({ field }) =>
-    isQuantityXField(field)
+    isCurrentQuantityField(field)
   );
   const extraFieldsWithoutQuantity = extraFields.filter(
-    ({ field }) => !isQuantityXField(field)
+    ({ field }) => !isCurrentQuantityField(field)
   );
   const skuName = getOfferSkuName(product);
   const descriptionRows = getOfferDescriptionRows(product.description.value);
@@ -766,7 +806,7 @@ const ProductEditor = ({
     product.description.expressionEnabled === true;
   const descriptionActivation =
     useDoubleClickActivation<HTMLTextAreaElement>(
-      product.description.enabled && !descriptionExpressionEnabled
+      product.description.enabled
     );
   const skipNextDescriptionBlurCommitRef = useRef(false);
   const descriptionEditStartValueRef = useRef(
@@ -774,9 +814,16 @@ const ProductEditor = ({
   );
   const hasInstallmentJump = product.mechanic.installmentJump !== undefined &&
     product.mechanic.installmentJump !== null;
+  const placeInstallmentJumpWithQuantity =
+    hasInstallmentJump &&
+    product.mechanic.type.toLowerCase() === "de x por y parcelamento" &&
+    !hideFullPriceFromField;
+  const useSharedMechanicControlsLayout =
+    product.mechanic.type.toLowerCase() ===
+    "de x por y | x% desconto | leve x pague y";
   const hasExtraControls =
     extraFields.length > 0 ||
-    product.mechanic.optionGroups.length > 0 ||
+    controlOptionGroups.length > 0 ||
     hasInstallmentJump;
   const hasControls =
     priceFields.length > 0 || hasExtraControls || product.unsupported;
@@ -784,13 +831,13 @@ const ProductEditor = ({
     product.mechanic.type.toLowerCase() === "simples" &&
     priceFields.length === 1 &&
     extraFields.length === 0 &&
-    product.mechanic.optionGroups.length === 1;
+    controlOptionGroups.length === 1;
   const useQuantityControlsLayout =
     priceFields.length >= 2 && quantityFieldEntry !== undefined;
   const hasQuantitySecondaryControls =
     extraFieldsWithoutQuantity.length > 0 ||
-    product.mechanic.optionGroups.length > 0 ||
-    hasInstallmentJump;
+    controlOptionGroups.length > 0 ||
+    (hasInstallmentJump && !placeInstallmentJumpWithQuantity);
   const dialogTitleId =
     "offer-mechanic-change-title-" + offerLayerIndex + "-" + product.index;
   const canDropDraggedProduct =
@@ -957,12 +1004,28 @@ const ProductEditor = ({
       </div>
 
       <header className="offer-product-header">
-        <span
-          className="offer-product-mechanic"
-          title={product.mechanic.type}
-        >
-          {product.mechanic.type}
-        </span>
+        {headerOptionGroup ? (
+          <OfferOptionControl
+            optionGroup={headerOptionGroup}
+            className="offer-product-mechanic-selector"
+            showLabel={false}
+            onChange={(selectedIndex) =>
+              onOptionChange(
+                offerLayerIndex,
+                product.index,
+                headerOptionGroup.id,
+                selectedIndex
+              )
+            }
+          />
+        ) : (
+          <span
+            className="offer-product-mechanic"
+            title={product.mechanic.type}
+          >
+            {product.mechanic.type}
+          </span>
+        )}
       </header>
 
       <div className="offer-product-summary">
@@ -989,11 +1052,7 @@ const ProductEditor = ({
             spellCheck={false}
             readOnly={!descriptionActivation.isEditing}
             rows={descriptionRows}
-            title={
-              descriptionExpressionEnabled
-                ? "Texto controlado pela expressao do descritivo"
-                : "Clique duas vezes para editar"
-            }
+            title="Clique duas vezes para editar"
             onBlur={(event) => {
               if (skipNextDescriptionBlurCommitRef.current) {
                 skipNextDescriptionBlurCommitRef.current = false;
@@ -1084,7 +1143,7 @@ const ProductEditor = ({
                 />
               ))}
 
-              {product.mechanic.optionGroups.map((optionGroup) => (
+              {controlOptionGroups.map((optionGroup) => (
                 <OfferOptionControl
                   optionGroup={optionGroup}
                   key={optionGroup.id}
@@ -1102,7 +1161,16 @@ const ProductEditor = ({
             </div>
           ) : useQuantityControlsLayout && quantityFieldEntry ? (
             <div className="offer-quantity-controls">
-              <div className="offer-quantity-values">
+              <div
+                className={[
+                  "offer-quantity-values",
+                  placeInstallmentJumpWithQuantity
+                    ? "has-inline-installment-jump"
+                    : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+              >
                 {priceFields.map(({ field, fieldIndex }) => (
                   <OfferFieldControl
                     field={field}
@@ -1137,15 +1205,37 @@ const ProductEditor = ({
                     )
                   }
                 />
+
+                {placeInstallmentJumpWithQuantity ? (
+                  <OfferInstallmentJumpControl
+                    product={product}
+                    className="offer-extra-field offer-installment-jump-field offer-inline-installment-jump-field"
+                    onChange={(target) =>
+                      onInstallmentJumpChange(
+                        offerLayerIndex,
+                        product.index,
+                        target
+                      )
+                    }
+                  />
+                ) : null}
               </div>
 
               {hasQuantitySecondaryControls ? (
                 <div
-                  className={
+                  className={[
+                    "offer-quantity-options",
                     product.mechanic.installmentJump
-                      ? "offer-quantity-options has-installment-jump"
-                      : "offer-quantity-options"
-                  }
+                      ? "has-installment-jump"
+                      : "",
+                    product.mechanic.installmentJump &&
+                    extraFieldsWithoutQuantity.length === 0 &&
+                    controlOptionGroups.length === 0
+                      ? "has-only-installment-jump"
+                      : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
                 >
                   {extraFieldsWithoutQuantity.map(({ field, fieldIndex }) => (
                     <OfferFieldControl
@@ -1164,7 +1254,7 @@ const ProductEditor = ({
                     />
                   ))}
 
-                  {product.mechanic.optionGroups.map((optionGroup) => (
+                  {controlOptionGroups.map((optionGroup) => (
                     <OfferOptionControl
                       optionGroup={optionGroup}
                       key={optionGroup.id}
@@ -1180,7 +1270,8 @@ const ProductEditor = ({
                     />
                   ))}
 
-                  {product.mechanic.installmentJump ? (
+                  {product.mechanic.installmentJump &&
+                  !placeInstallmentJumpWithQuantity ? (
                     <OfferInstallmentJumpControl
                       product={product}
                       className="offer-extra-field offer-installment-jump-field"
@@ -1226,12 +1317,26 @@ const ProductEditor = ({
               ) : null}
 
               {hasExtraControls ? (
-                <div className="offer-extra-controls">
+                <div
+                  className={[
+                    "offer-extra-controls",
+                    useSharedMechanicControlsLayout
+                      ? "offer-shared-mechanic-controls"
+                      : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                >
                   {extraFields.map(({ field, fieldIndex }) => (
                     <OfferFieldControl
                       field={field}
                       key={field.id}
-                      className={getFieldClassName(field, "offer-extra-field")}
+                      className={getFieldClassName(
+                        field,
+                        isQuantityXField(field)
+                          ? "offer-extra-field offer-quantity-field"
+                          : "offer-extra-field"
+                      )}
                       onCommit={(value) =>
                         onFieldChange(
                           offerLayerIndex,
@@ -1244,7 +1349,7 @@ const ProductEditor = ({
                     />
                   ))}
 
-                  {product.mechanic.optionGroups.map((optionGroup) => (
+                  {controlOptionGroups.map((optionGroup) => (
                     <OfferOptionControl
                       optionGroup={optionGroup}
                       key={optionGroup.id}

@@ -521,6 +521,27 @@
   overflow-wrap: anywhere;
 }
 
+.offer-product-mechanic-selector {
+  width: 100%;
+  justify-self: stretch;
+  gap: 2px;
+}
+
+.offer-product-mechanic-selector span {
+  font-size: 0.54rem;
+  font-weight: 900;
+}
+
+.offer-editor-field.offer-product-mechanic-selector select {
+  height: 22px;
+  padding: 0 24px 0 6px;
+  border-left: 2px solid var(--offer-accent);
+  background: rgba(245, 247, 250, 0.86);
+  color: var(--text);
+  font-size: 0.66rem;
+  font-weight: 800;
+}
+
 .offer-product-summary {
   min-width: 0;
   min-height: 0;
@@ -714,6 +735,14 @@
   gap: 6px 12px;
 }
 
+.offer-quantity-values.has-inline-installment-jump {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.offer-inline-installment-jump-field {
+  grid-column: 2 / 4;
+}
+
 .offer-quantity-options {
   min-width: 0;
   display: grid;
@@ -725,6 +754,16 @@
 .offer-quantity-options.has-installment-jump {
   grid-template-columns: 152px 96px;
   justify-content: end;
+}
+
+.offer-quantity-options.has-only-installment-jump {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  justify-content: stretch;
+}
+
+.offer-quantity-options.has-only-installment-jump
+  .offer-installment-jump-field {
+  grid-column: 2;
 }
 
 .offer-card-kind-field select,
@@ -741,6 +780,15 @@
 .offer-extra-controls {
   align-content: start;
   overflow: visible;
+}
+
+.offer-extra-controls.offer-shared-mechanic-controls {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: end;
+}
+
+.offer-shared-mechanic-controls .offer-quantity-field {
+  grid-column: 1 / -1;
 }
 
 .offer-editor-field {

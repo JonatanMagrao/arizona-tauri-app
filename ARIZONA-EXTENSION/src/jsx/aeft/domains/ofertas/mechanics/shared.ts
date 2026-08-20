@@ -4,6 +4,7 @@ import type {
   LayerOption,
   OfferFieldFormat,
   OfferOption,
+  OfferOptionGroupPlacement,
   RawLayerOption,
 } from "../types";
 import {
@@ -87,7 +88,8 @@ export const makeControllerOptionGroup = (
   id: string,
   label: string,
   controllerProperty: Property | null,
-  options: OfferOption[]
+  options: OfferOption[],
+  placement: OfferOptionGroupPlacement = "controls"
 ): InternalOptionGroup => {
   let selectedIndex = 0;
 
@@ -102,6 +104,7 @@ export const makeControllerOptionGroup = (
   return {
     id,
     type: "controller",
+    placement,
     label,
     controllerProperty,
     options,

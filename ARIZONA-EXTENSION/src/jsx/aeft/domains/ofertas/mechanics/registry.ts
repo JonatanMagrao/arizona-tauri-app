@@ -10,11 +10,19 @@ import {
   readCrfCardDiscountMechanic,
   readCrfPercentDiscountMechanic,
   readCrfSecondUnitDiscountMechanic,
+  readAllPercentDiscountMechanic,
   readDiscountXPercentMechanic,
   readPercentDiscountMechanic,
 } from "./descontoPercentual";
+import { readCrfCardValueDiscountMechanic } from "./descontoValor";
+import { readDeXPorYInstallmentMechanic } from "./deXPorYParcelamento";
+import { readDeXPorYDiscountTakePayMechanic } from "./deXPorYDescontoLeveXPagueY";
 import { readCardInstallmentMechanic } from "./parcelamento";
-import { readLeveXPagueYMechanic, readSimpleMechanic } from "./simples";
+import {
+  readAllTakeXPayYMechanic,
+  readLeveXPagueYMechanic,
+  readSimpleMechanic,
+} from "./simples";
 
 const mechanicNamePattern = (namePattern: string): RegExp =>
   new RegExp("^" + namePattern + "(?:\\s+\\d+)?$", "i");
@@ -29,6 +37,14 @@ const MECHANICS: MechanicReaderMap[] = [
   {
     pattern: mechanicNamePattern("DESCONTO X% CARTAO CRF"),
     reader: readCrfCardDiscountMechanic,
+  },
+  {
+    pattern: mechanicNamePattern("TODOS A COM X% DESCONTO"),
+    reader: readAllPercentDiscountMechanic,
+  },
+  {
+    pattern: mechanicNamePattern("DESCONTO R\\$ CARTAO CRF"),
+    reader: readCrfCardValueDiscountMechanic,
   },
   {
     pattern: mechanicNamePattern("DESCONTO X%"),
@@ -51,6 +67,16 @@ const MECHANICS: MechanicReaderMap[] = [
     reader: readCardInstallmentMechanic,
   },
   {
+    pattern: mechanicNamePattern("DE X POR Y PARCELAMENTO"),
+    reader: readDeXPorYInstallmentMechanic,
+  },
+  {
+    pattern: mechanicNamePattern(
+      "DE X POR Y \\| X% DESCONTO \\| LEVE X PAGUE Y"
+    ),
+    reader: readDeXPorYDiscountTakePayMechanic,
+  },
+  {
     pattern: mechanicNamePattern("DESCONTO X% MEU CRF"),
     reader: readCrfPercentDiscountMechanic,
   },
@@ -61,6 +87,10 @@ const MECHANICS: MechanicReaderMap[] = [
   {
     pattern: mechanicNamePattern("LEVE X PAGUE Y"),
     reader: readLeveXPagueYMechanic,
+  },
+  {
+    pattern: mechanicNamePattern("TODOS A LEVE X PAGUE Y"),
+    reader: readAllTakeXPayYMechanic,
   },
 ];
 
