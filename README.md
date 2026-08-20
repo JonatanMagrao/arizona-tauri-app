@@ -77,6 +77,28 @@ precisa exportar e compartilhar o pacote conscientemente. O formato, a
 sanitização, a migração de pasta e os limites de privacidade estão em
 [DIAGNOSTICOS_LOCAIS.md](./docs/DIAGNOSTICOS_LOCAIS.md).
 
+## Fila distribuída de render
+
+O Arizona App possui um painel para enviar o projeto salvo de Jobão/Jobinho a
+uma máquina específica da mesma organização. A máquina escolhida precisa estar
+com o app aberto e ativar manualmente **Disponível para render**; o toggle sempre
+começa desligado. Ela processa um job por vez, em ordem de chegada, diretamente
+com `aerender.exe`, sem abrir o After Effects. Se o After interativo já estiver
+aberto, a máquina continua disponível e mostra apenas um aviso recomendando
+fechá-lo para liberar mais recursos.
+
+Cada envio usa um snapshot imutável validado por SHA-256. O solicitante escolhe
+MOV, MP4 ou ambos. A receita aceita é MOV pela comp `EXPORT` com o template
+`PROXY` e MP4 pela comp `EXPORT_MP4` com o template `MP4`. Publicação,
+substituição e recuperação dos arquivos escolhidos usam lease e temporários
+para evitar que uma execução antiga publique sobre uma nova.
+
+O CEP não participa da fila distribuída. Seu botão **Render** continua sendo uma
+ação local que adiciona MOV e MP4 à fila nativa do After. As migrations e a Edge
+Function da fila já estão implantadas; o teste real com duas máquinas e Google
+Drive continua sendo gate antes da liberação. Veja
+[arquitetura-fila-render-distribuida.md](./docs/arquitetura-fila-render-distribuida.md).
+
 ## Instalação da extensão CEP
 
 O instalador Full oficial é `perMachine` e instala a árvore assinada em:
@@ -176,3 +198,4 @@ Documentos em destaque:
 - [Privacidade, registros operacionais e feedback](./docs/roadmap-privacidade-telemetria.md)
 - [Atualizações independentes do Tauri e CEP](./docs/arquitetura-atualizacoes-independentes-tauri-cep.md)
 - [Cache compartilhado de previews dos produtos](./docs/CACHE_PREVIEWS_PRODUTOS.md)
+- [Fila distribuída de render](./docs/arquitetura-fila-render-distribuida.md)

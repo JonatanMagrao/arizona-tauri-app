@@ -8,6 +8,12 @@ import {
   nextAdminSessionExpiryAt,
   normalizeAdminSessionTiming,
 } from "./admin-session.js";
+import {
+  auditActionInfo,
+  auditIdentityName,
+  auditRoleLabel,
+  auditSourceLabel,
+} from "./auditCatalog.js";
 import arizonaIcon from "./assets/arizona-icon.png";
 
 const flashKey = `arizona-admin-flash:${adminConfig.projectRef}`;
@@ -1933,7 +1939,7 @@ function AuditLogPage({
       event.actor?.email,
       auditIdentityName(event.target),
       event.target?.email,
-      auditSourceLabel(event.context?.source),
+      auditSourceLabel(event.context?.source, event.action),
     ].some((value) => String(value || "").toLowerCase().includes(normalizedSearch));
   });
   const isInitialLoading = loadState === "loading" && events.length === 0;
@@ -2109,7 +2115,7 @@ function AuditLogPage({
                     <AuditIdentity identity={event.actor} fallback="Sistema" />
                     <AuditIdentity identity={event.target} fallback="—" target />
                     <span className="audit-source">
-                      {auditSourceLabel(event.context?.source)}
+                      {auditSourceLabel(event.context?.source, event.action)}
                     </span>
                   </article>
                 );
@@ -3182,175 +3188,6 @@ function formatAuditTime(value) {
     minute: "2-digit",
     second: "2-digit",
   }).format(date);
-}
-
-function auditIdentityName(identity) {
-  if (!identity) return "";
-  if (identity.kind === "organization") return identity.name || "Arizona";
-  if (identity.kind === "device") {
-    return identity.name || identity.memberName || identity.email || "Computador";
-  }
-  return identity.name || identity.email || (
-    identity.kind === "master" ? "Administrador principal" : "Usuário"
-  );
-}
-
-function auditRoleLabel(role, kind) {
-  if (kind === "device") return "Computador";
-  if (kind === "organization") return "Organização";
-  if (role === "master" || kind === "master") return "Administrador principal";
-  if (role === "admin") return "Gestor";
-  if (role === "user") return "Usuário";
-  return "";
-}
-
-function auditSourceLabel(source) {
-  return {
-    admin_web_panel: "Painel administrativo",
-    master_license_panel: "Painel administrativo",
-    tauri_admin_panel: "Gestão no Arizona App",
-    tauri_passwordless_login: "Arizona App",
-    tauri_passwordless_activation: "Arizona App",
-  }[source] || "Sistema";
-}
-
-function auditActionInfo(action) {
-  const definitions = {
-    "device.activated": {
-      category: "devices",
-      tone: "success",
-      icon: "device",
-      label: "Computador ativado",
-      description: (event) => `${auditIdentityName(event.target) || "Um computador"} foi vinculado à conta.`,
-    },
-    "device.released": {
-      category: "devices",
-      tone: "warning",
-      icon: "device",
-      label: "Computador liberado",
-      description: (event) => `${auditIdentityName(event.target) || "Um computador"} foi liberado por um responsável.`,
-    },
-    "device.self_released": {
-      category: "devices",
-      tone: "neutral",
-      icon: "device",
-      label: "Computador liberado pelo usuário",
-      description: () => "O próprio usuário liberou o computador associado à sua conta.",
-    },
-    "activation_code.generated": {
-      category: "access",
-      tone: "primary",
-      icon: "key",
-      label: "Código gerado",
-      description: (event) => (
-        event.context?.purpose === "recovery"
-          ? "Código de recuperação emitido para o usuário."
-          : "Código de ativação emitido para o usuário."
-      ),
-    },
-    "member.activation_code_consumed": {
-      category: "access",
-      tone: "success",
-      icon: "key",
-      label: "Ativação concluída",
-      description: () => "O usuário confirmou o código e concluiu a ativação.",
-    },
-    "member.recovery_code_consumed": {
-      category: "access",
-      tone: "success",
-      icon: "key",
-      label: "Recuperação concluída",
-      description: () => "O usuário confirmou o código e recuperou seu acesso.",
-    },
-    "member.added": {
-      category: "members",
-      tone: "success",
-      icon: "user",
-      label: "Usuário adicionado",
-      description: () => "Uma nova pessoa foi incluída na licença.",
-    },
-    "member.restored": {
-      category: "members",
-      tone: "success",
-      icon: "user",
-      label: "Usuário restaurado",
-      description: () => "Um cadastro anteriormente revogado foi restaurado.",
-    },
-    "member.updated": {
-      category: "members",
-      tone: "primary",
-      icon: "user",
-      label: "Usuário atualizado",
-      description: (event) => {
-        const previous = auditRoleLabel(event.context?.previousRole);
-        const current = auditRoleLabel(event.context?.currentRole);
-        return previous && current && previous !== current
-          ? `Perfil alterado de ${previous} para ${current}.`
-          : "Nome, perfil ou status do usuário foi atualizado.";
-      },
-    },
-    "member.revoked": {
-      category: "members",
-      tone: "danger",
-      icon: "user",
-      label: "Usuário removido",
-      description: () => "O acesso do usuário foi revogado.",
-    },
-    "member.totp_reset": {
-      category: "security",
-      tone: "warning",
-      icon: "shield",
-      label: "Autenticador redefinido",
-      description: () => "O aplicativo autenticador e as sessões vinculadas foram redefinidos pelo administrador principal.",
-    },
-    "member.rate_limits_reset": {
-      category: "security",
-      tone: "warning",
-      icon: "shield",
-      label: "Limites reiniciados",
-      description: (event) => {
-        const count = Number(event.context?.deletedEvents || 0);
-        return count > 0
-          ? `${count} ${count === 1 ? "evento foi removido" : "eventos foram removidos"} dos contadores.`
-          : "Os contadores individuais de acesso foram reiniciados.";
-      },
-    },
-    "license.created": {
-      category: "license",
-      tone: "success",
-      icon: "license",
-      label: "Licença criada",
-      description: () => "A licença da organização foi criada.",
-    },
-    "license.updated": {
-      category: "license",
-      tone: "primary",
-      icon: "license",
-      label: "Licença atualizada",
-      description: () => "Configurações, validade ou políticas da licença foram atualizadas.",
-    },
-    "license.seats_changed": {
-      category: "license",
-      tone: "primary",
-      icon: "license",
-      label: "Vagas alteradas",
-      description: (event) => {
-        const previous = event.context?.previousSeatsAllowed;
-        const current = event.context?.seatsAllowed;
-        return Number.isFinite(Number(previous)) && Number.isFinite(Number(current))
-          ? `Quantidade de vagas alterada de ${previous} para ${current}.`
-          : "A capacidade de usuários da licença foi alterada.";
-      },
-    },
-  };
-
-  return definitions[action] || {
-    category: "security",
-    tone: "neutral",
-    icon: "history",
-    label: "Atividade registrada",
-    description: () => "Uma atividade do sistema foi registrada.",
-  };
 }
 
 function auditActionIcon(icon) {

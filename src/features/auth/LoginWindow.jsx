@@ -6,7 +6,7 @@ import {
   normalizeEmail,
   resumeSecureSession,
 } from "../../services/auth";
-import { commandNames, invokeCommand } from "../../services/tauriCommands";
+import { commandNames, invokeAction, invokeCommand } from "../../services/tauriCommands";
 import { publicErrorCode } from "../../utils/publicErrors";
 import { startAuthBootstrap } from "./authBootstrap";
 import {
@@ -277,10 +277,13 @@ function LoginWindow() {
 
   const minimizeWindow = () => getCurrentWindow().minimize().catch(() => {});
   const closeWindow = async () => {
-    try {
-      await invokeCommand(commandNames.exitApp);
-    } catch {
-      getCurrentWindow().close().catch(() => {});
+    const result = await invokeAction(
+      commandNames.exitApp,
+      { force: false },
+      "Não foi possível fechar o Arizona agora. Verifique a fila de renderização e tente novamente."
+    );
+    if (!result.ok) {
+      setToast({ message: result.message, variant: "error" });
     }
   };
 

@@ -12,10 +12,7 @@ pub fn device_fingerprint_hash() -> String {
 
 fn fingerprint_hash_for_guid(machine_guid: &str) -> String {
     let digest = Sha256::digest(format!("{FINGERPRINT_PREFIX}:{machine_guid}"));
-    digest
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 #[cfg(windows)]
@@ -24,7 +21,10 @@ fn machine_guid() -> Option<String> {
     use winreg::RegKey;
 
     let guid: String = RegKey::predef(HKEY_LOCAL_MACHINE)
-        .open_subkey_with_flags("SOFTWARE\\Microsoft\\Cryptography", KEY_READ | KEY_WOW64_64KEY)
+        .open_subkey_with_flags(
+            "SOFTWARE\\Microsoft\\Cryptography",
+            KEY_READ | KEY_WOW64_64KEY,
+        )
         .ok()?
         .get_value("MachineGuid")
         .ok()?;

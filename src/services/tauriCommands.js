@@ -71,6 +71,15 @@ export const commandNames = Object.freeze({
   adminRemoveMember: "admin_remove_member",
   adminGenerateActivationCode: "admin_generate_activation_code",
   releaseCurrentDevice: "release_current_device",
+  renderQueueCancel: "render_queue_cancel",
+  renderQueueCloseWindow: "render_queue_close_window",
+  renderQueueHistory: "render_queue_history",
+  renderQueueOpen: "render_queue_open",
+  renderQueueProjectCandidates: "render_queue_project_candidates",
+  renderQueueReassign: "render_queue_reassign",
+  renderQueueSetAvailable: "render_queue_set_available",
+  renderQueueStatus: "render_queue_status",
+  renderQueueSubmit: "render_queue_submit",
   saveAppConfig: "save_app_config",
   setAfterShortcutRecording: "set_after_shortcut_recording",
   setCepDebugMode: "set_cep_debug_mode",
@@ -81,6 +90,12 @@ const DIAGNOSTIC_ACTIONS = Object.freeze({
   [commandNames.clearSecureAuth]: ["acesso", "sair", "Encerrando o acesso salvo neste computador."],
   [commandNames.releaseCurrentDevice]: ["acesso", "liberar_dispositivo", "Liberando este computador."],
   [commandNames.abrirAe]: ["after_effects", "abrir_projeto", "Abrindo o projeto no After Effects."],
+  [commandNames.renderQueueOpen]: ["renderizacao", "abrir_fila", "Abrindo a fila de renderização."],
+  [commandNames.renderQueueSetAvailable]: ["renderizacao", "alterar_disponibilidade", "Alterando a disponibilidade desta máquina."],
+  [commandNames.renderQueueProjectCandidates]: ["renderizacao", "localizar_projeto", "Localizando o projeto salvo."],
+  [commandNames.renderQueueSubmit]: ["renderizacao", "enviar_projeto", "Enviando um projeto para renderização."],
+  [commandNames.renderQueueCancel]: ["renderizacao", "cancelar_trabalho", "Cancelando uma renderização."],
+  [commandNames.renderQueueReassign]: ["renderizacao", "trocar_maquina", "Trocando a máquina responsável pela renderização."],
   [commandNames.openJobao]: ["projetos", "abrir_jobao", "Abrindo a pasta do Jobão."],
   [commandNames.openJobinho]: ["projetos", "abrir_jobinho", "Abrindo a pasta do Jobinho."],
   [commandNames.openOut]: ["projetos", "abrir_saida", "Abrindo a pasta de saída."],
@@ -110,6 +125,7 @@ const CORE_DIAGNOSTIC_COMMANDS = new Set([
   commandNames.authPoll,
   commandNames.authResume,
   commandNames.cepBridgeStatus,
+  commandNames.renderQueueStatus,
 ]);
 
 export async function invokeCommand(commandName, args = {}) {
@@ -286,7 +302,7 @@ function diagnosticResponseFailure(response) {
 function humanActionName(diagnosticAction) {
   if (diagnosticAction?.[2]) {
     return diagnosticAction[2]
-      .replace(/^(Abrindo|Ativando|Alterando|Atualizando|Duplicando|Encerrando|Enviando|Exportando|Gerando|Importando|Instalando|Liberando|Limpando|Preparando|Removendo|Salvando)\s+/i, "")
+      .replace(/^(Abrindo|Ativando|Alterando|Atualizando|Cancelando|Duplicando|Encerrando|Enviando|Exportando|Fechando|Gerando|Importando|Instalando|Liberando|Limpando|Localizando|Preparando|Removendo|Salvando|Trocando)\s+/i, "")
       .replace(/[.]$/, "")
       .toLocaleLowerCase("pt-BR");
   }

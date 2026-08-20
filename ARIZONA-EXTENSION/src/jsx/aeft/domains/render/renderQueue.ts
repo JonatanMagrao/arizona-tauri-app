@@ -1,5 +1,6 @@
 const MOV_EXT = ".mov";
 const MP4_EXT = ".mp4";
+const MOV_TEMPLATE_NAME = "PROXY";
 const MP4_TEMPLATE_NAME = "MP4";
 const MOV_COMP_NAME = "EXPORT";
 const MP4_COMP_NAME = "EXPORT_MP4";
@@ -14,27 +15,6 @@ export interface QueueActiveCompRenderOutputsResult {
   queuedItems: number;
 }
 
-export interface AerenderOutputPlan {
-  id: string;
-  label: string;
-  compName: string;
-  outputPath: string;
-  outputModuleTemplate: string;
-  frameRate: number;
-  durationSeconds: number;
-  startFrame: number;
-  totalFrames: number;
-}
-
-export interface PrepareAerenderRenderPlanResult {
-  ok: boolean;
-  message: string;
-  projectPath: string;
-  projectName: string;
-  aerenderPath: string;
-  outputs: AerenderOutputPlan[];
-}
-
 const createResult = (
   message: string
 ): QueueActiveCompRenderOutputsResult => ({
@@ -45,17 +25,6 @@ const createResult = (
   movPath: "",
   mp4Path: "",
   queuedItems: 0,
-});
-
-const createAerenderPlanResult = (
-  message: string
-): PrepareAerenderRenderPlanResult => ({
-  ok: false,
-  message,
-  projectPath: "",
-  projectName: "",
-  aerenderPath: "",
-  outputs: [],
 });
 
 interface RenderCompPair {
@@ -126,32 +95,47 @@ const resolveRenderComps = (): RenderCompResolution => {
 
   if (movComps.length > 1) {
     duplicateMessages.push(
-      'Encontrei ' + movComps.length + ' precomps "' + MOV_COMP_NAME + '".'
+      'Encontrei ' + movComps.length + ' composições "' + MOV_COMP_NAME + '".'
     );
   }
 
   if (mp4Comps.length > 1) {
     duplicateMessages.push(
-      'Encontrei ' + mp4Comps.length + ' precomps "' + MP4_COMP_NAME + '".'
+      'Encontrei ' + mp4Comps.length + ' composições "' + MP4_COMP_NAME + '".'
     );
   }
 
   if (duplicateMessages.length > 0) {
     return alertResolution(
-      "Render interrompido: existem precomps duplicadas no projeto.\n\n" +
+      "Não foi possível preparar o render porque existem composições duplicadas.\n\n" +
         duplicateMessages.join("\n") +
-        "\n\nDeixe apenas uma precomp de cada antes de renderizar."
+        "\n\nDeixe apenas uma composição de cada nome e tente novamente."
     );
   }
 
-  if (movComps.length === 0 || mp4Comps.length === 0) {
+  if (movComps.length === 0 && mp4Comps.length === 0) {
     return createResolution(
       false,
-      'Nao encontrei as precomps "' +
-        MOV_COMP_NAME +
-        '" e "' +
-        MP4_COMP_NAME +
-        '" para render.',
+      'Não encontrei as composições "' + MOV_COMP_NAME + '" e "' +
+        MP4_COMP_NAME + '" necessárias para gerar os arquivos.',
+      null
+    );
+  }
+
+  if (movComps.length === 0) {
+    return createResolution(
+      false,
+      'Não encontrei a composição "' + MOV_COMP_NAME +
+        '" necessária para gerar o MOV.',
+      null
+    );
+  }
+
+  if (mp4Comps.length === 0) {
+    return createResolution(
+      false,
+      'Não encontrei a composição "' + MP4_COMP_NAME +
+        '" necessária para gerar o MP4.',
       null
     );
   }
@@ -199,45 +183,20 @@ const getChildFolder = (folder: Folder, path: string): Folder =>
 const getChildFile = (folder: Folder, fileName: string): File =>
   new File(folder.fsName + "/" + fileName);
 
-const getOutputPlanTiming = (comp: CompItem): {
-  frameRate: number;
-  durationSeconds: number;
-  startFrame: number;
-  totalFrames: number;
-} => {
-  const frameRate = comp.frameRate > 0 ? comp.frameRate : 30;
-  const durationSeconds =
-    comp.workAreaDuration > 0 ? comp.workAreaDuration : comp.duration;
-  const startSeconds = comp.workAreaDuration > 0 ? comp.workAreaStart : 0;
+const findOutputModuleTemplateName = (
+  outputModule: OutputModule,
+  expectedName: string
+): string | null => {
+  const templates = outputModule.templates;
+  const normalizedExpectedName = String(expectedName).toLowerCase();
 
-  return {
-    frameRate,
-    durationSeconds,
-    startFrame: Math.max(0, Math.round(startSeconds * frameRate)),
-    totalFrames: Math.max(1, Math.ceil(durationSeconds * frameRate)),
-  };
-};
+  for (let index = 0; index < templates.length; index += 1) {
+    if (String(templates[index]).toLowerCase() === normalizedExpectedName) {
+      return templates[index];
+    }
+  }
 
-const createAerenderOutputPlan = (
-  id: string,
-  label: string,
-  comp: CompItem,
-  outputPath: string,
-  outputModuleTemplate: string
-): AerenderOutputPlan => {
-  const timing = getOutputPlanTiming(comp);
-
-  return {
-    id,
-    label,
-    compName: comp.name,
-    outputPath,
-    outputModuleTemplate,
-    frameRate: timing.frameRate,
-    durationSeconds: timing.durationSeconds,
-    startFrame: timing.startFrame,
-    totalFrames: timing.totalFrames,
-  };
+  return null;
 };
 
 interface RenderTargets {
@@ -308,93 +267,6 @@ const resolveRenderTargets = (
   };
 };
 
-const addAerenderCandidate = (candidates: File[], value: string): void => {
-  if (!value) return;
-
-  candidates.push(new File(value + "/aerender.exe"));
-
-  const valueAsFile = new File(value);
-  if (valueAsFile.parent !== null) {
-    candidates.push(new File(valueAsFile.parent.fsName + "/aerender.exe"));
-  }
-};
-
-const findAerenderPath = (): string => {
-  const candidates: File[] = [];
-
-  try {
-    addAerenderCandidate(candidates, String(app.path));
-  } catch (error) {}
-
-  try {
-    if (typeof Folder.appPackage !== "undefined") {
-      addAerenderCandidate(candidates, Folder.appPackage.fsName);
-    }
-  } catch (error) {}
-
-  for (let index = 0; index < candidates.length; index += 1) {
-    if (candidates[index].exists) {
-      return candidates[index].fsName;
-    }
-  }
-
-  return candidates.length > 0 ? candidates[0].fsName : "aerender";
-};
-
-export const prepareAerenderRenderPlan = (
-  saveProjectBeforeRender: boolean = true
-): PrepareAerenderRenderPlanResult => {
-    const resolution = resolveRenderTargets(
-      "Salve o projeto do After Effects antes de exportar."
-    );
-
-    if (!resolution.ok || resolution.targets === null) {
-      return createAerenderPlanResult(resolution.message);
-    }
-
-    const targets = resolution.targets;
-    const result = createAerenderPlanResult("");
-
-    result.projectPath = targets.projectFile.fsName;
-    result.projectName = targets.projectFile.name;
-    result.aerenderPath = findAerenderPath();
-
-    if (saveProjectBeforeRender) {
-      if (!ensureFolder(targets.movFolder) || !ensureFolder(targets.mp4Folder)) {
-        result.message = "Nao foi possivel criar a pasta de render.";
-        return result;
-      }
-
-      try {
-        targets.project.save(targets.projectFile);
-      } catch (error) {
-        result.message = "Nao foi possivel salvar o projeto antes do render.";
-        return result;
-      }
-    }
-
-    result.ok = true;
-    result.message = "Projeto pronto para exportar pelo aerender.";
-    result.outputs = [
-      createAerenderOutputPlan(
-        "mov",
-        "MOV",
-        targets.movComp,
-        targets.movFile.fsName,
-        ""
-      ),
-      createAerenderOutputPlan(
-        "mp4",
-        "MP4",
-        targets.mp4Comp,
-        targets.mp4File.fsName,
-        MP4_TEMPLATE_NAME
-      ),
-    ];
-
-    return result;
-  };
-
 export const queueActiveCompRenderOutputs =
   (): QueueActiveCompRenderOutputsResult => {
     const resolution = resolveRenderTargets(
@@ -421,7 +293,8 @@ export const queueActiveCompRenderOutputs =
     result.mp4Path = mp4File.fsName;
 
     if (!ensureFolder(movFolder) || !ensureFolder(mp4Folder)) {
-      result.message = "Nao foi possivel criar a pasta de render.";
+      result.message =
+        "Não foi possível preparar a pasta onde os arquivos serão salvos.";
       return result;
     }
 
@@ -432,25 +305,50 @@ export const queueActiveCompRenderOutputs =
 
     try {
       movQueueItem = project.renderQueue.items.add(movComp);
-      movQueueItem.outputModule(1).file = movFile;
+      const movOutputModule = movQueueItem.outputModule(1);
+      const movTemplateName = findOutputModuleTemplateName(
+        movOutputModule,
+        MOV_TEMPLATE_NAME
+      );
+
+      if (movTemplateName === null) {
+        result.message =
+          "O formato PROXY não está disponível neste After Effects. Adicione esse formato e tente novamente.";
+        throw new Error("MOV output template unavailable");
+      }
+
+      movOutputModule.applyTemplate(movTemplateName);
+      movOutputModule.file = movFile;
 
       mp4QueueItem = project.renderQueue.items.add(mp4Comp);
-      mp4QueueItem.outputModule(1).applyTemplate(MP4_TEMPLATE_NAME);
-      mp4QueueItem.outputModule(1).file = mp4File;
+      const mp4OutputModule = mp4QueueItem.outputModule(1);
+      const mp4TemplateName = findOutputModuleTemplateName(
+        mp4OutputModule,
+        MP4_TEMPLATE_NAME
+      );
+
+      if (mp4TemplateName === null) {
+        result.message =
+          "O formato MP4 não está disponível neste After Effects. Adicione esse formato e tente novamente.";
+        throw new Error("MP4 output template unavailable");
+      }
+
+      mp4OutputModule.applyTemplate(mp4TemplateName);
+      mp4OutputModule.file = mp4File;
 
       result.ok = true;
       result.queuedItems = 2;
-      result.message = "Render adicionado na fila: MOV e MP4.";
+      result.message = "MOV e MP4 foram adicionados à fila de render.";
     } catch (error) {
       try {
         if (mp4QueueItem !== null) mp4QueueItem.remove();
         if (movQueueItem !== null) movQueueItem.remove();
       } catch (removeError) {}
 
-      result.message =
-        error instanceof Error
-          ? error.message
-          : "Nao foi possivel adicionar o render na fila.";
+      if (!result.message) {
+        result.message =
+          "Não foi possível preparar o MOV e o MP4. Confira os formatos de saída e tente novamente.";
+      }
     } finally {
       app.endUndoGroup();
     }

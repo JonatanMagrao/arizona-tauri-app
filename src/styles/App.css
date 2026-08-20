@@ -493,6 +493,14 @@ body{
 /* garante que o span “vazio” vá para a última coluna (flex) */
 .form-row > span{ grid-column: 5; }
 
+.job-panel .form-row:not(.form-row--util){
+  grid-template-columns: 86px 108px repeat(3, 40px) minmax(0, 1fr);
+  gap: 5px;
+}
+
+.job-panel .form-row > span{ grid-column: -1; }
+.job-panel .input-code{ width: 108px; }
+
 .label{
   color: var(--muted);
   font-size: 13px;
@@ -563,6 +571,17 @@ html, body, #root, .content{ overflow-x: hidden; }
   .form-row{ grid-template-columns: 92px max-content max-content max-content 1fr; gap: 7px; }
   .input-code{ width: 116px; }
   .content{ padding: 10px 10px 12px; }
+}
+
+@media (max-height: 300px){
+  .iconbar{
+    gap: 5px;
+    padding-block: 6px;
+    overflow-y: auto;
+    scrollbar-width: none;
+  }
+  .iconbar::-webkit-scrollbar{ display: none; }
+  .content{ padding-block: 6px; }
 }
 
 /* ===== Botões (genéricos) ===== */
@@ -746,8 +765,11 @@ html, body, #root, .content{ overflow-x: hidden; }
 /* conteúdo à direita */
 .content{
   padding: 6px 10px;
+  min-width: 0;
+  min-height: 0;
   display: grid;
-  align-content: center;
+  align-content: start;
+  overflow-y: auto;
 }
 
 .content > .card{
@@ -1436,6 +1458,13 @@ select:focus,
 input:focus,
 textarea:focus{
   outline: none;
+}
+
+.iconbar-popover__item:focus-visible,
+.job-panel .btn-render-queue:focus-visible{
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 3px rgba(255, 100, 0, 0.28);
 }
 
 /* Overlay de carregamento */
@@ -3844,6 +3873,134 @@ textarea:focus{
   white-space: nowrap;
 }
 
+.history-table--renders .history-row{
+  grid-template-columns: 116px minmax(0, 1fr) minmax(190px, 230px);
+}
+
+.history-row--render{
+  min-height: 68px;
+}
+
+.history-render{
+  display: grid;
+  gap: 6px;
+}
+
+.history-render__topline{
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.history-render__topline > strong{
+  max-width: min(360px, 100%);
+}
+
+.history-render__direction,
+.history-render__status{
+  min-height: 20px;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border: 1px solid var(--outline);
+  border-radius: 6px;
+  background: #191c1f;
+  font-size: 9px;
+  font-weight: 850;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.history-render__direction--sent,
+.history-render__direction--account_sent{
+  border-color: #4d6273;
+  color: #c5deed;
+}
+
+.history-render__direction--received,
+.history-render__direction--both{
+  border-color: #815025;
+  color: #f2b77f;
+}
+
+.history-render__status--success{
+  border-color: #28683f;
+  color: #a7e9ba;
+}
+
+.history-render__status--active{
+  border-color: #92501f;
+  color: #f6b278;
+}
+
+.history-render__status--danger{
+  border-color: #6e2933;
+  color: #f5bdc3;
+}
+
+.history-render__status--waiting{
+  border-color: #3f5261;
+  color: #c1d9ea;
+}
+
+.history-render__status--muted{
+  color: #949ba4;
+}
+
+.history-render__metadata{
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.25;
+}
+
+.history-render__metadata span{
+  position: relative;
+}
+
+.history-render__metadata span + span::before{
+  position: absolute;
+  left: -8px;
+  color: #59616a;
+  content: "·";
+}
+
+.history-render__times{
+  min-width: 0;
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.25;
+  text-align: right;
+}
+
+.history-render__times strong{
+  color: var(--text);
+  font-size: 11px;
+}
+
+.history-render-pagination{
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 10px 0 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.history-render-pagination .btn{
+  min-width: 112px;
+}
+
 .history-row--product-import{
   align-items: start;
 }
@@ -4058,5 +4215,9 @@ textarea:focus{
 
   .history-content{
     padding: 12px;
+  }
+
+  .history-table--renders .history-row{
+    grid-template-columns: 92px minmax(0, 1fr) minmax(150px, 190px);
   }
 }

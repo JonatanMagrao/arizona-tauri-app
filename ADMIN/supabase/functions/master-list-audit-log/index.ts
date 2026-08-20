@@ -47,6 +47,8 @@ type DeviceRow = {
 
 const ARIZONA_ORGANIZATION_SLUG = "arizona";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SAFE_FINGERPRINT_OUTCOMES = new Set(["empty", "unbound", "missing", "mismatch"]);
+const SAFE_ORGANIZATION_STATUSES = new Set(["active", "paused", "blocked", "deleted"]);
 
 function cleanString(value: unknown, maxLength: number): string {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
@@ -72,6 +74,11 @@ function optionalString(value: unknown, maxLength = 254): string | null {
 function optionalNumber(value: unknown): number | null {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function optionalAllowedString(value: unknown, allowed: ReadonlySet<string>): string | null {
+  const cleaned = optionalString(value, 32);
+  return cleaned && allowed.has(cleaned) ? cleaned : null;
 }
 
 function memberIdentity(member: MemberRow | undefined): JsonRecord | null {
@@ -130,6 +137,9 @@ function auditContext(metadata: JsonRecord): JsonRecord {
     currentRole: optionalString(target.role, 32),
     previousName: optionalString(previous.name, 160),
     currentName: optionalString(target.name, 160),
+    outcome: optionalAllowedString(metadata.outcome, SAFE_FINGERPRINT_OUTCOMES),
+    previousStatus: optionalAllowedString(metadata.previousStatus, SAFE_ORGANIZATION_STATUSES),
+    status: optionalAllowedString(metadata.status, SAFE_ORGANIZATION_STATUSES),
   };
 }
 

@@ -9,7 +9,7 @@ outro.
 | Projeto | Pasta | O que é | Doc principal |
 |---|---|---|---|
 | **Tauri (Arizona App)** | raiz (`src/`, `src-tauri/`) | App desktop, autoridade local de sessão/licença e executor dos atalhos do After via ExtendScript embutido. | `README.md` |
-| **Extensão CEP** | `ARIZONA-EXTENSION/` | Painel React dentro do After Effects (ofertas, roteiro, render). | `ARIZONA-EXTENSION/README.md` |
+| **Extensão CEP** | `ARIZONA-EXTENSION/` | Painel React dentro do After Effects (ofertas, roteiro e botão local de render). | `ARIZONA-EXTENSION/README.md` |
 | **Admin** | `ADMIN/` | Gestão de licenças + Supabase (migrations, Edge Functions e chaves). | `ADMIN/README.md` |
 
 `AE-PLUGIN-ARIZONA/` preserva o código-fonte do antigo plugin AEX apenas como
@@ -34,6 +34,12 @@ Tauri (raiz) ── grava ──> cep-license-receipt.json ── lê ──> Ex
     |
     └── materializa JSX embutido em AppData
           └── AfterFX.exe -r <acao.jsx> ──> After Effects
+
+Tauri solicitante ── Edge Function render-queue ──> ADMIN/Supabase
+       ^                                                |
+       |                estado + lease                  v
+       └──────────────────────────────────── Tauri worker
+                                                    └── aerender.exe
 ```
 
 - **Tauri → Extensão CEP**: pelo recibo
@@ -49,6 +55,12 @@ Tauri (raiz) ── grava ──> cep-license-receipt.json ── lê ──> Ex
   chama `AfterFX.exe -r`. Não existe named pipe e nenhum AEX é instalado.
 - **Extensão CEP não recebe comandos do Tauri** e não executa `evalScript` a
   pedido dele.
+- **Fila distribuída**: pertence ao Tauri e ao contrato `render-queue` do
+  backend, documentado em `docs/arquitetura-fila-render-distribuida.md`. O Tauri
+  solicitante grava o snapshot no Drive compartilhado e envia ao backend apenas
+  o caminho relativo, hash e manifesto, além de escolher um device; outro Tauri
+  executa `aerender.exe`. O CEP não cria, recebe nem acompanha jobs
+  distribuídos.
 - A extensão continua validando a assinatura do recibo com chave pública
   embutida; nenhum segredo sai do backend.
 

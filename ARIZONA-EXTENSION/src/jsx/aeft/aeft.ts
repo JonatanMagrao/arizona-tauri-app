@@ -17,10 +17,7 @@ export {
   openAudioDialogAndReplace,
 } from "./domains/audio/audioFootage";
 export { queueActiveCompRenderOutputs } from "./domains/render/renderQueue";
-export { prepareAerenderRenderPlan } from "./domains/render/renderQueue";
 export type {
-  AerenderOutputPlan,
-  PrepareAerenderRenderPlanResult,
   QueueActiveCompRenderOutputsResult,
 } from "./domains/render/renderQueue";
 export {

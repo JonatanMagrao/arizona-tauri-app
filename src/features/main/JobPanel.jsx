@@ -1,5 +1,6 @@
 import searchIcon from "../../assets/icones/folder.svg";
 import aeIcon from "../../assets/icones/aeft_icon.svg";
+import renderQueueIcon from "../../assets/icones/render_queue.svg";
 import copyIcon from "../../assets/icones/file_copy.svg";
 import roteiroIcon from "../../assets/icones/roteiro.svg";
 import printIcon from "../../assets/icones/print.svg";
@@ -19,6 +20,7 @@ function JobPanel({
   openJobao,
   openJobinho,
   abrirAE,
+  openRenderQueue,
   isOpeningAE,
   openOut,
   outOption,
@@ -101,7 +103,7 @@ function JobPanel({
 
   return (
     // sobrescreve a CSS variable --icon-size só dentro deste card
-    <div className="card" style={{ '--icon-size': `${ICON_SIZE}px` }}>
+    <div className="card job-panel" style={{ '--icon-size': `${ICON_SIZE}px` }}>
       {/* Linha Jobão */}
       <div className="form-row">
         <label className="label" htmlFor="jobao">Cód Jobão</label>
@@ -168,6 +170,16 @@ function JobPanel({
           title={isOpeningAE ? "Abrindo AE..." : "Abrir AE (Shift + Enter)"}
         >
           <img src={aeIcon} alt="" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          className="btn btn-render-queue"
+          onClick={openRenderQueue}
+          disabled={!jobaoCod.trim() || !jobinhoCod.trim()}
+          aria-label="Enviar para renderização"
+          title="Enviar este projeto para outra máquina"
+        >
+          <img src={renderQueueIcon} alt="" aria-hidden="true" />
         </button>
       </div>
 

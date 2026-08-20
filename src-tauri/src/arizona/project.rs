@@ -115,6 +115,14 @@ impl Arizona {
         self.project_open_info_impl(jobao_cod, jobinho_cod, None)
     }
 
+    pub(crate) fn project_candidates(
+        &self,
+        jobao_cod: &str,
+        jobinho_cod: &str,
+    ) -> Result<Vec<OpenedProject>, String> {
+        self.project_candidates_impl(jobao_cod, jobinho_cod, None)
+    }
+
     pub(super) fn project_open_info_for_media(
         &self,
         jobao_cod: &str,
@@ -130,18 +138,36 @@ impl Arizona {
         jobinho_cod: &str,
         requested_media: Option<MediaType>,
     ) -> Result<OpenedProject, String> {
+        self.project_candidates_impl(jobao_cod, jobinho_cod, requested_media)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| format!(r#"Código Jobinho "{}" inválido!"#, jobinho_cod.trim()))
+    }
+
+    fn project_candidates_impl(
+        &self,
+        jobao_cod: &str,
+        jobinho_cod: &str,
+        requested_media: Option<MediaType>,
+    ) -> Result<Vec<OpenedProject>, String> {
         let jobinho_cod = jobinho_cod.trim();
         let jobao_path = self.get_jobao_path(jobao_cod)?;
         let ae_folder = jobao_path.join("PROJETOS").join("AE");
-        let reg_exp = Regex::new(&format!(r"{}_", regex::escape(jobinho_cod)))
+        let reg_exp = Regex::new(&format!(r"(?i)^{}[_-]", regex::escape(jobinho_cod)))
             .map_err(|err| err.to_string())?;
+
+        let mut candidates = Vec::new();
 
         for entry in fs::read_dir(&ae_folder)
             .map_err(|err| format!("Erro ao ler {}: {err}", ae_folder.display()))?
         {
             let entry = entry.map_err(|err| err.to_string())?;
             let ae_project_path = entry.path();
-            if ae_project_path.extension().and_then(|ext| ext.to_str()) != Some("aep") {
+            if !ae_project_path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("aep"))
+            {
                 continue;
             }
 
@@ -154,7 +180,7 @@ impl Arizona {
                     .to_string();
                 let project_title = project_title_from_aep_name(&name, jobao_cod, jobinho_cod);
 
-                return Ok(OpenedProject {
+                candidates.push(OpenedProject {
                     jobao_cod: jobao_cod.trim().to_string(),
                     jobinho_cod: jobinho_cod.trim().to_string(),
                     region: region_from_aep_name(&name),
@@ -168,14 +194,34 @@ impl Arizona {
                     } else {
                         None
                     },
-                    jobao_path,
+                    jobao_path: jobao_path.clone(),
                     ae_project_path,
                     project_title,
                 });
             }
         }
 
-        Err(format!(r#"CÃ³digo Jobinho "{}" invÃ¡lido!"#, jobinho_cod))
+        candidates.sort_by(|left, right| {
+            left.ae_project_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_lowercase()
+                .cmp(
+                    &right
+                        .ae_project_path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_lowercase(),
+                )
+        });
+
+        if candidates.is_empty() {
+            Err(format!(r#"Código Jobinho "{}" inválido!"#, jobinho_cod))
+        } else {
+            Ok(candidates)
+        }
     }
 
     pub fn open_out(&self, jobao_cod: &str, option: &str) -> Result<(), String> {
@@ -361,7 +407,13 @@ fn region_from_aep_name(file_name: &str) -> Option<String> {
         .and_then(|value| value.to_str())
         .and_then(|stem| stem.split('_').nth(1))
         .map(|value| value.trim().to_uppercase())
-        .filter(|value| !value.is_empty())
+        .filter(|value| {
+            !value.is_empty()
+                && value.chars().count() <= 32
+                && value
+                    .chars()
+                    .all(|character| character.is_alphanumeric() || character == '-')
+        })
 }
 
 fn project_title_from_aep_name(
@@ -388,5 +440,25 @@ fn project_title_from_aep_name(
         format!("{} - {}", jobao_cod.trim(), jobinho)
     } else {
         format!("{} - {} - {}", jobao_cod.trim(), jobinho, region)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::region_from_aep_name;
+
+    #[test]
+    fn derives_only_a_safe_region_for_the_queue_contract() {
+        assert_eq!(
+            region_from_aep_name("15181_rj_v3.aep").as_deref(),
+            Some("RJ")
+        );
+        assert_eq!(
+            region_from_aep_name("15181_CUR-1_v3.aep").as_deref(),
+            Some("CUR-1")
+        );
+        assert_eq!(region_from_aep_name("15181_RIO SP_v3.aep"), None);
+        assert_eq!(region_from_aep_name("15181_!_v3.aep"), None);
+        assert_eq!(region_from_aep_name("15181.aep"), None);
     }
 }

@@ -4,7 +4,6 @@ import { initBolt } from "../lib/utils/bolt";
 import { OffersPanel } from "./domains/ofertas/components/OffersPanel";
 import { useProductImageLibrary } from "./domains/ofertas/productImages/hooks/useProductImageLibrary";
 import { useProductImagePreviews } from "./domains/ofertas/productImages/hooks/useProductImagePreviews";
-import { RenderPanel } from "./domains/render/components/RenderPanel";
 import { RoteiroPanel } from "./domains/roteiro/components/RoteiroPanel";
 import { useArizonaBridgeLicense } from "./hooks/useArizonaBridgeLicense";
 import { useHostTheme } from "./hooks/useHostTheme";
@@ -17,7 +16,7 @@ import {
 } from "./services/localDiagnostics";
 import "./main.scss";
 
-type ActiveView = "offers" | "roteiro" | "render";
+type ActiveView = "offers" | "roteiro";
 
 export const App = () => {
   const bgColor = useHostTheme();
@@ -218,15 +217,6 @@ const LicensedApp = ({ bgColor }: LicensedAppProps) => {
           >
             Roteiro
           </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeView === "render"}
-            className={activeView === "render" ? "is-active" : ""}
-            onClick={() => void selectActiveView("render")}
-          >
-            Render
-          </button>
         </div>
 
         <button
@@ -251,10 +241,6 @@ const LicensedApp = ({ bgColor }: LicensedAppProps) => {
               key={`roteiro-${projectViewKey}`}
               onOpenOfferInOffers={openOfferFromRoteiro}
             />
-          </div>
-        ) : activeView === "render" ? (
-          <div className="arizona-carrefour-render">
-            <RenderPanel key={`render-${projectViewKey}`} />
           </div>
         ) : (
           <div className="arizona-carrefour-offers">

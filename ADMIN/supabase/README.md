@@ -163,6 +163,115 @@ npx supabase functions deploy app-release-device --project-ref <PROJECT_REF> --u
 
 As functions validam a publishable key e o JWT do usuario dentro do proprio codigo.
 
+### Fila distribuida de renderizacao
+
+A fila usa as migrations aditivas `20260811160000_render_queue.sql`,
+`20260811220000_render_output_selection.sql`,
+`20260811230000_render_create_requires_available_worker.sql` e
+`20260811240000_render_queue_worker_locking.sql`. A migration
+`20260818170000_render_queue_history_indexes.sql` adiciona os indices da
+paginacao do historico por device. A fila usa uma unica Edge
+Function, `render-queue`. As migrations `20260811230000` e `20260811240000`
+serializam atribuicoes com a mudanca de disponibilidade da maquina escolhida e
+validam o heartbeat com o relogio real sob o lock: depois que ela desliga o
+toggle, ou deixa de renovar o heartbeat, uma lista antiga nao consegue mais lhe
+atribuir outro trabalho.
+Criacao e reatribuicao usam a mesma ordem de locks do claim para evitar que uma
+mudanca concorrente de disponibilidade deixe um job sem responsavel.
+Nao ha upload de `.aep`, MOV, MP4, logs, `stdout` ou `stderr`: o backend guarda
+somente o manifesto com caminhos relativos, hashes, estados, codigos enumerados
+e timestamps.
+
+Todas as chamadas sao `POST`, em camelCase, com publishable key, JWT do usuario
+e estes campos comuns:
+
+```json
+{
+  "action": "status",
+  "installId": "id-da-instalacao",
+  "deviceFingerprintHash": "sha256-do-hardware",
+  "workerSessionId": "uuid-efemero-deste-processo"
+}
+```
+
+O `workerSessionId` muda a cada abertura do Arizona. Uma sessao nova sempre
+registra a maquina como indisponivel; somente `set_availability` com
+`enabled: true` a habilita. Fechar o processo deixa de renovar o heartbeat e a
+maquina para de aceitar trabalhos. `busy` continua aceitando novos trabalhos,
+mas executa somente um por vez e os demais permanecem em FIFO. Consultas de
+status e outras acoes de interface nao renovam o heartbeat operacional do
+worker.
+
+Acoes expostas:
+
+- `status`: devolve a maquina atual, maquinas da mesma organizacao e somente os
+  jobs em que o membro e solicitante ou o device atual e executor. O campo
+  `nextJob` vem de uma consulta FIFO dedicada ao device atual, com manifesto
+  completo, e nao depende do limite da lista historica `jobs`. O campo
+  `recoverableJob` traz, com o mesmo manifesto completo, somente um job ativo
+  do device atual que ainda possua lease vigente na mesma `workerSessionId`;
+  depois de uma resposta de claim perdida, o worker repete `claim` para esse
+  job e recupera a lease pelo caminho idempotente. Jobs ativos de sessoes
+  anteriores nunca aparecem nesse campo. Se a chamada incluir `jobId`, a
+  resposta tambem traz `job`, buscado diretamente e somente quando o membro
+  atual e o solicitante, ou o device atual e o executor atual ou anterior.
+  Targets anteriores recebem somente essa consulta exata para reconciliar uma
+  publicacao interrompida depois de uma reatribuicao;
+- `history`: devolve, em paginas de 1 a 100 itens, todos os jobs ainda retidos
+  que o membro solicitou ou que o device atual executou. A proxima pagina usa o
+  cursor composto `beforeCreatedAt` + `beforeId`; `localDeviceId` e
+  `localMemberId` permitem ao Tauri distinguir com precisao `sent`, `received`,
+  `both` e pedidos feitos pela mesma conta em um device anterior;
+- `set_availability`: liga/desliga o aceite e publica apenas aviso humano e
+  codigo de saude allowlisted;
+- `create_job`: exige device alvo explicito, idempotency key, snapshot relativo,
+  tamanho, SHA-256, receita `arizona-render-v1` e um ou dois formatos distintos:
+  `EXPORT/PROXY` (MOV), `EXPORT_MP4/MP4` (MP4), ou ambos. Repeticoes concorrentes
+  da mesma chave no mesmo device retornam o mesmo job e nunca criam dois
+  trabalhos; um retry tardio continua encontrando esse job mesmo depois de uma
+  reatribuicao, desde que use o alvo atual ou um alvo preservado no historico e
+  mantenha o mesmo manifesto. Enquanto um job nao terminou, seus destinos ficam
+  reservados dentro da organizacao;
+  outro envio que reutilize qualquer MOV ou MP4 recebe
+  `render_output_destination_in_use`;
+- `heartbeat`: antes do claim publica `waiting_for_sync`/`ready`; com lease
+  renova o fencing e atualiza progresso. `sync_timeout` ou
+  `project_hash_mismatch` podem encerrar somente o primeiro job FIFO ainda sem
+  lease;
+- `claim`: escolhe atomicamente o primeiro job pronto do device e compara o
+  SHA-256 observado antes de emitir `leaseId` + `leaseGeneration`;
+- `finish`: conclui somente com lease atual e, em sucesso, metadados allowlisted
+  que correspondem exatamente aos formatos e destinos solicitados. Se um
+  cancelamento ja tiver sido confirmado, uma conclusao
+  tardia recebe `render_cancel_requested` sem alterar o job, preservando o
+  journal local para reconciliacao segura;
+- `cancel`: permitido ao solicitante ou ao device executor;
+- `reassign`: permitido somente ao solicitante e nunca durante um lease valido.
+
+Claims, heartbeats e conclusoes usam RPCs SQL com lock, lease de 45 segundos e
+generation monotona. Uma maquina possui no maximo um job ativo, cada job tenta
+no maximo tres vezes, e uma queda nunca promove arquivos sem lease atual. Jobs
+nao sao redirecionados automaticamente: depois da expiracao permanecem no mesmo
+device ate ele voltar, o solicitante cancelar ou escolher outro.
+
+As tabelas `licensing.render_workers` e `licensing.render_jobs` usam RLS
+forcado, nao possuem policy de cliente e revogam `anon`/`authenticated`. So a
+Function com a chave secreta chama os RPCs, depois de revalidar usuario,
+organizacao, validade da licenca, device ativo, `installId` e fingerprint. A
+limpeza opcional de jobs terminais e `licensing.purge_render_queue(30)`; agendar
+essa rotina e uma decisao operacional separada.
+
+Publicacao isolada, somente depois de aplicar a migration:
+
+```powershell
+cd ADMIN
+npx supabase functions deploy render-queue --project-ref <PROJECT_REF> --use-api --no-verify-jwt
+```
+
+`--no-verify-jwt` desliga apenas a verificacao automatica do gateway. A Function
+continua exigindo e validando o JWT e a publishable key no proprio codigo, como
+as demais Functions do Tauri.
+
 ## 8. Criar o primeiro master
 
 Crie primeiro o usuÃ¡rio no Supabase Auth, confirme o e-mail e copie o UUID do

@@ -4,6 +4,7 @@ import CopyPanel from "../features/main/CopyPanel";
 import JobPanel from "../features/main/JobPanel";
 import LinksPanel from "../features/main/LinksPanel";
 import LoginWindow from "../features/auth/LoginWindow";
+import RenderQueueWindow, { queueStatusMessage } from "../features/renderQueue/RenderQueueWindow";
 import SecondaryWindow from "../features/secondary/SecondaryWindow";
 import { useAutoHideToast } from "../hooks/useAutoHideToast";
 import { authErrorMessage, pollSecureSession } from "../services/auth";
@@ -12,6 +13,7 @@ import { DEFAULT_SETTINGS, normalizeSettings } from "../utils/settings";
 import { publicErrorMessage } from "../utils/publicErrors";
 import { currentWindowLabel, isSecondaryWindowRoute } from "../utils/windowRouting";
 import "../styles/App.css";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import appLogo from "../../src-tauri/icons/arizona_icon.ico";
@@ -27,14 +29,15 @@ import minimizeIcon from "../assets/icones/minimize.svg";
 import adminPanelIcon from "../assets/icones/admin_panel.svg";
 import settingsIcon from "../assets/icones/settings.svg";
 import toolsIcon from "../assets/icones/tools.svg";
+import renderQueueIcon from "../assets/icones/render_queue.svg";
 
 const TABS = { JOBS: "jobs", LINKS: "links", COPY: "copy" };
 const AUTH_REFRESH_INTERVAL_MS = 30000;
 const TOOLS_POPOVER_GAP_PX = 10;
 const TOOLS_POPOVER_MARGIN_PX = 6;
 const AFTER_EFFECTS_SHORTCUT_NOTICE_THROTTLE_MS = 30000;
+const RENDER_QUEUE_NOTICE_THROTTLE_MS = 30000;
 const AE_OPEN_COOLDOWN_MS = 8000;
-
 const MAIN_CTA_PHRASES = Object.freeze([
   "Por que fazer isso na mão?",
   "Imagine o resto do fluxo automatizado.",
@@ -90,6 +93,15 @@ function App() {
     return (
       <>
         <AuthenticatedAppWindow />
+        <GlobalTooltip />
+      </>
+    );
+  }
+
+  if (windowLabel === "render_queue") {
+    return (
+      <>
+        <RenderQueueWindow />
         <GlobalTooltip />
       </>
     );
@@ -176,7 +188,9 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
   const toolsCloseTimerRef = useRef(null);
   const aeOpenCooldownTimerRef = useRef(null);
   const isOpeningAERef = useRef(false);
+  const isClosingMainWindowRef = useRef(false);
   const lastAfterEffectsShortcutNoticeRef = useRef({ key: "", shownAt: 0 });
+  const lastRenderQueueNoticeRef = useRef({ key: "", shownAt: 0 });
   const authSessionRef = useRef(authSession);
   const authRefreshInFlightRef = useRef(false);
   const authRefreshPromiseRef = useRef(null);
@@ -214,6 +228,53 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
   useEffect(() => {
     authSessionRef.current = authSession;
   }, [authSession]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlistenNotice = null;
+
+    listen("arizona-render-queue:notice", (event) => {
+      const payload = event?.payload;
+      const item = payload && typeof payload === "object" ? payload : {};
+      const candidate = typeof payload === "string"
+        ? payload
+        : String(item.publicMessage || item.displayMessage || item.statusMessage || item.message || "");
+      const code = String(item.code || item.statusCode || item.status_code || item.errorCode || item.error_code || "");
+      const message = queueStatusMessage(
+        code,
+        candidate,
+        "Há uma atualização importante sobre a fila de renderização."
+      );
+      const noticeKey = `${code}:${message}`;
+      const now = Date.now();
+      const lastNotice = lastRenderQueueNoticeRef.current;
+      if (
+        lastNotice.key === noticeKey
+        && now - lastNotice.shownAt < RENDER_QUEUE_NOTICE_THROTTLE_MS
+      ) {
+        return;
+      }
+
+      lastRenderQueueNoticeRef.current = { key: noticeKey, shownAt: now };
+      const tone = String(item.tone || item.level || item.severity || "").toLowerCase();
+      const variant = ["success", "completed", "ready"].includes(tone)
+        ? "success"
+        : ["error", "danger", "failed"].includes(tone)
+          ? "error"
+          : "info";
+      showToast(message, variant);
+    })
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else unlistenNotice = unlisten;
+      })
+      .catch(() => {});
+
+    return () => {
+      disposed = true;
+      if (unlistenNotice) unlistenNotice();
+    };
+  }, [showToast]);
 
   useEffect(() => {
     let mounted = true;
@@ -590,13 +651,49 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
     }
   };
 
-  const closeMainWindow = async () => {
-    try {
-      await invokeCommand(commandNames.exitApp);
-    } catch (error) {
-      await getCurrentWindow().close();
-    }
+  const openRenderQueue = async () => {
+    const args = {};
+    const selectedJobao = jobaoCod.trim();
+    const selectedJobinho = jobinhoCod.trim();
+    if (selectedJobao) args.jobaoCod = selectedJobao;
+    if (selectedJobinho) args.jobinhoCod = selectedJobinho;
+    await run(
+      commandNames.renderQueueOpen,
+      args,
+      "Não foi possível abrir a fila de renderização."
+    );
   };
+
+  const closeMainWindow = useCallback(async () => {
+    if (isClosingMainWindowRef.current) return;
+    isClosingMainWindowRef.current = true;
+    const result = await invokeAction(
+      commandNames.exitApp,
+      { force: false },
+      "Não foi possível fechar o Arizona agora. Verifique a fila de renderização e tente novamente."
+    );
+    if (!result.ok) {
+      isClosingMainWindowRef.current = false;
+      showToast(result.message, "error");
+    }
+  }, [showToast]);
+
+  useEffect(() => {
+    let unlistenClose = null;
+    getCurrentWindow()
+      .onCloseRequested((event) => {
+        event.preventDefault();
+        void closeMainWindow();
+      })
+      .then((unlisten) => {
+        unlistenClose = unlisten;
+      })
+      .catch(() => {});
+
+    return () => {
+      if (unlistenClose) unlistenClose();
+    };
+  }, [closeMainWindow]);
 
   const minimizeMainWindow = async () => {
     await getCurrentWindow().minimize();
@@ -707,7 +804,6 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
                 hideGlobalTooltip();
                 setIsToolsOpen((open) => !open);
               }}
-              tabIndex="-1"
               title="Utilitários"
               aria-label="Utilitários"
               aria-haspopup="menu"
@@ -733,10 +829,20 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
                   className="iconbar-popover__item"
                   onClick={() => {
                     closeToolsMenu();
+                    void openRenderQueue();
+                  }}
+                  role="menuitem"
+                >
+                  <img src={renderQueueIcon} alt="" aria-hidden="true" />
+                  <span>Fila de renderização</span>
+                </button>
+                <button
+                  className="iconbar-popover__item"
+                  onClick={() => {
+                    closeToolsMenu();
                     setActiveTab(TABS.COPY);
                   }}
                   role="menuitem"
-                  tabIndex="-1"
                 >
                   <img src={copyIcon} alt="" aria-hidden="true" />
                   <span>Copiar arquivos</span>
@@ -748,7 +854,6 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
                     openDuplicateIdentical();
                   }}
                   role="menuitem"
-                  tabIndex="-1"
                 >
                   <img src={equalIcon} alt="" aria-hidden="true" />
                   <span>Produtos idênticos</span>
@@ -760,7 +865,6 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
                     openPlaces();
                   }}
                   role="menuitem"
-                  tabIndex="-1"
                 >
                   <img src={imageIcon} alt="" aria-hidden="true" />
                   <span>Praças CRF</span>
@@ -772,7 +876,6 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
                     openHistory();
                   }}
                   role="menuitem"
-                  tabIndex="-1"
                 >
                   <img src={historyIcon} alt="" aria-hidden="true" />
                   <span>Histórico</span>
@@ -812,6 +915,7 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
               openJobao={openJobao}
               openJobinho={openJobinho}
               abrirAE={abrirAE}
+              openRenderQueue={openRenderQueue}
               isOpeningAE={isOpeningAE}
               openOut={openOut}
               outOption={outOption}

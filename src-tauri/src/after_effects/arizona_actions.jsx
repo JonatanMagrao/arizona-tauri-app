@@ -166,7 +166,7 @@
   function moveLayersToMarkers(direction) {
     var comp = getActiveComp();
     if (comp === null) {
-      return "Abra uma composicao antes de usar o atalho.";
+      return "Abra uma composição antes de usar o atalho.";
     }
 
     app.beginUndoGroup("Mover layers para markers");
@@ -217,13 +217,13 @@
   function moveSelectedJumpMarkers() {
     var comp = getActiveComp();
     if (comp === null) {
-      return "Abra uma composicao antes de usar o atalho.";
+      return "Abra uma composição antes de usar o atalho.";
     }
 
     var selectedLayers = copyLayers(comp.selectedLayers);
     if (selectedLayers.length === 0) return "";
     if (!selectedLayersShareColorGroup(selectedLayers)) {
-      return "Selecione apenas layers do mesmo grupo de cor.";
+      return "Selecione apenas camadas do mesmo grupo de cor.";
     }
 
     app.beginUndoGroup("Mover marker pulo");
@@ -272,7 +272,7 @@
   function selectLayerWithJumpMarker() {
     var comp = getActiveComp();
     if (comp === null) {
-      return "Abra uma composicao antes de usar o atalho.";
+      return "Abra uma composição antes de usar o atalho.";
     }
 
     app.beginUndoGroup("Selecionar marker pulo");
@@ -303,21 +303,21 @@
   function swapSelectedLayers() {
     var comp = getActiveComp();
     if (comp === null) {
-      return "Abra uma composicao antes de usar o atalho.";
+      return "Abra uma composição antes de usar o atalho.";
     }
 
     var layers = copyLayers(comp.selectedLayers);
     if (layers.length !== 2) {
-      return "Selecione exatamente duas layers para trocar.";
+      return "Selecione exatamente duas camadas para trocar.";
     }
     if (!(layers[0] instanceof AVLayer) || !(layers[1] instanceof AVLayer)) {
-      return "As duas layers selecionadas precisam possuir source.";
+      return "As duas camadas selecionadas precisam ter um conteúdo vinculado.";
     }
 
     var firstSource = layers[0].source;
     var secondSource = layers[1].source;
     if (firstSource === null || secondSource === null) {
-      return "As duas layers selecionadas precisam possuir source.";
+      return "As duas camadas selecionadas precisam ter um conteúdo vinculado.";
     }
 
     var firstScale = layers[0].scale.value;
@@ -447,10 +447,10 @@
   function adjustTimelineMarkersToTail() {
     var comp = findCompByName(TIMELINE_COMP_NAME);
     if (comp === null) {
-      return 'Precomp "Miolo" nao encontrada.';
+      return 'Não encontrei a composição "Miolo".';
     }
     if (comp.markerProperty.numKeys < TAIL_MARKER_END_INDEX) {
-      return 'A precomp "Miolo" precisa ter os markers 1 a 6.';
+      return 'A composição "Miolo" precisa ter as marcações de 1 a 6.';
     }
 
     try {
@@ -604,23 +604,23 @@
 
     if (movComps.length > 1) {
       duplicateMessages.push(
-        'Encontrei ' + movComps.length + ' precomps "EXPORT".'
+        'Encontrei ' + movComps.length + ' composições chamadas "EXPORT".'
       );
     }
     if (mp4Comps.length > 1) {
       duplicateMessages.push(
-        'Encontrei ' + mp4Comps.length + ' precomps "EXPORT_MP4".'
+        'Encontrei ' + mp4Comps.length + ' composições chamadas "EXPORT_MP4".'
       );
     }
     if (duplicateMessages.length > 0) {
       return (
-        "Render interrompido: existem precomps duplicadas no projeto.\n\n" +
+        "Render interrompido: há composições repetidas no projeto.\n\n" +
         duplicateMessages.join("\n") +
-        "\n\nDeixe apenas uma precomp de cada antes de renderizar."
+        "\n\nDeixe apenas uma composição de cada nome antes de renderizar."
       );
     }
     if (movComps.length === 0 || mp4Comps.length === 0) {
-      return 'Nao encontrei as precomps "EXPORT" e "EXPORT_MP4" para render.';
+      return 'Não encontrei as composições "EXPORT" e "EXPORT_MP4" necessárias para o render.';
     }
 
     var project = app.project;
@@ -638,7 +638,7 @@
     var mp4File = new File(mp4Folder.fsName + "/" + outputBaseName + ".mp4");
 
     if (!ensureFolder(movFolder) || !ensureFolder(mp4Folder)) {
-      return "Nao foi possivel criar a pasta de render.";
+      return "Não foi possível criar a pasta de render. Confira o acesso à pasta do projeto e tente novamente.";
     }
 
     app.beginUndoGroup("Enviar render MOV/MP4");
@@ -653,16 +653,22 @@
         "PROXY"
       );
       if (proxyTemplateName === null) {
-        throw new Error(
-          'Nao encontrei o template de modulo de saida "PROXY" no After Effects.'
-        );
+        throw new Error("arizona_proxy_format_missing");
       }
       movOutputModule.applyTemplate(proxyTemplateName);
       movOutputModule.file = movFile;
 
       mp4QueueItem = project.renderQueue.items.add(mp4Comps[0]);
-      mp4QueueItem.outputModule(1).applyTemplate("MP4");
-      mp4QueueItem.outputModule(1).file = mp4File;
+      var mp4OutputModule = mp4QueueItem.outputModule(1);
+      var mp4TemplateName = findOutputModuleTemplateName(
+        mp4OutputModule,
+        "MP4"
+      );
+      if (mp4TemplateName === null) {
+        throw new Error("arizona_mp4_format_missing");
+      }
+      mp4OutputModule.applyTemplate(mp4TemplateName);
+      mp4OutputModule.file = mp4File;
       return "";
     } catch (error) {
       try {
@@ -670,9 +676,13 @@
         if (movQueueItem !== null) movQueueItem.remove();
       } catch (removeError) {}
 
-      return error && error.message
-        ? error.message
-        : "Nao foi possivel adicionar o render na fila.";
+      if (error && error.message === "arizona_proxy_format_missing") {
+        return 'O formato de saída "PROXY" não está disponível neste After Effects. Adicione-o e tente novamente.';
+      }
+      if (error && error.message === "arizona_mp4_format_missing") {
+        return 'O formato de saída "MP4" não está disponível neste After Effects. Adicione-o e tente novamente.';
+      }
+      return "Não foi possível adicionar o MOV e o MP4 à fila. Confira os formatos de saída e tente novamente.";
     } finally {
       app.endUndoGroup();
     }
@@ -704,7 +714,7 @@
       return queueRenderOutputs();
     }
 
-    return "Acao Arizona desconhecida: " + action;
+    return "Esta ação não está disponível nesta versão do Arizona.";
   }
 
   try {
@@ -712,10 +722,7 @@
     if (errorMessage) alert("Arizona\n\n" + errorMessage);
     return errorMessage || "ok";
   } catch (error) {
-    var message =
-      error && error.message
-        ? error.message
-        : "Nao foi possivel executar a acao.";
+    var message = "Não foi possível concluir esta ação no After Effects. Tente novamente.";
     alert("Arizona\n\n" + message);
     return message;
   }

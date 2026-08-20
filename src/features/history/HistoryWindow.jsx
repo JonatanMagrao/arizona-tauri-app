@@ -3,6 +3,19 @@ import AppDropdown from "../../components/AppDropdown";
 import { commandNames, invokeAction, invokeCommand } from "../../services/tauriCommands";
 import { formatDuration } from "../../utils/formatters";
 import { numberOrZero, parseProductImportReport } from "../../utils/productReport";
+import {
+  formatRenderDuration,
+  renderQueueWaitMillis,
+  renderTimingLabel,
+  timestampMillis,
+} from "../renderQueue/renderTiming";
+import {
+  compareHistoryIds,
+  mergeRenderHistoryEntries,
+  readRenderHistoryPage,
+  reconcilePolledRenderHistory,
+  renderDirectionForDevice,
+} from "../renderQueue/renderHistoryData";
 import folderIcon from "../../assets/icones/folder.svg";
 import aeIcon from "../../assets/icones/aeft_icon.svg";
 import refreshIcon from "../../assets/icones/history.svg";
@@ -14,9 +27,12 @@ const HISTORY_TYPES = Object.freeze({
   PROJECTS: "projects",
   COPIES: "copies",
   PRODUCT_IMPORTS: "productImports",
+  RENDERS: "renders",
 });
 
 const AE_OPEN_COOLDOWN_MS = 8000;
+const RENDER_HISTORY_PAGE_SIZE = 50;
+const TERMINAL_RENDER_STATES = new Set(["completed", "failed", "cancelled"]);
 
 const HISTORY_META = Object.freeze({
   [HISTORY_TYPES.PROJECTS]: {
@@ -43,51 +59,110 @@ const HISTORY_META = Object.freeze({
     column: "Importação",
     epochKey: "importedAtEpoch",
   },
+  [HISTORY_TYPES.RENDERS]: {
+    label: "Renders",
+    empty: "Nenhum render distribuído registrado ainda.",
+    table: "Histórico de renders distribuídos",
+    search: "Pesquisar por projeto, jobão, jobinho, pessoa ou máquina",
+    column: "Render",
+    detailColumn: "Tempos",
+    epochKey: "createdAtEpoch",
+  },
 });
 
 function HistoryWindow({ onClose }) {
   const [projectEntries, setProjectEntries] = useState([]);
   const [copyEntries, setCopyEntries] = useState([]);
   const [productImportEntries, setProductImportEntries] = useState([]);
+  const [renderEntries, setRenderEntries] = useState([]);
+  const [renderHistoryTotal, setRenderHistoryTotal] = useState(0);
+  const [renderHistoryCursor, setRenderHistoryCursor] = useState(null);
+  const [renderHistoryHasMore, setRenderHistoryHasMore] = useState(false);
+  const [renderHistoryError, setRenderHistoryError] = useState("");
   const [activeType, setActiveType] = useState(HISTORY_TYPES.PROJECTS);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshingAll, setIsRefreshingAll] = useState(false);
+  const [isRefreshingRenders, setIsRefreshingRenders] = useState(false);
+  const [isLoadingMoreRenders, setIsLoadingMoreRenders] = useState(false);
   const [isConfirmingClear, setIsConfirmingClear] = useState(false);
   const [message, setMessage] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [dateSort, setDateSort] = useState("desc");
+  const [clockNow, setClockNow] = useState(() => Date.now());
   const aeOpenCooldownTimerRef = useRef(null);
   const isOpeningAERef = useRef(false);
+  const renderHistoryInFlightRef = useRef(false);
+  const renderEntriesRef = useRef([]);
+  const renderHistoryCursorRef = useRef(null);
 
   const isProjectsType = activeType === HISTORY_TYPES.PROJECTS;
   const isCopiesType = activeType === HISTORY_TYPES.COPIES;
+  const isRendersType = activeType === HISTORY_TYPES.RENDERS;
+  const hasActiveRenderEntries = renderEntries.some(
+    (entry) => !TERMINAL_RENDER_STATES.has(entry.status)
+  );
   const meta = HISTORY_META[activeType] || HISTORY_META[HISTORY_TYPES.PROJECTS];
   const activeEntries = activeEntriesForType(activeType, {
     projects: projectEntries,
     copies: copyEntries,
     productImports: productImportEntries,
+    renders: renderEntries,
   });
   const visibleEntries = useMemo(() => {
     const filtered = filterEntries(activeType, activeEntries, searchQuery);
     return sortEntries(filtered, dateSort, meta.epochKey);
   }, [activeEntries, activeType, searchQuery, dateSort, meta.epochKey]);
   const hasSearch = Boolean(searchQuery.trim());
-  const countLabel = hasSearch
-    ? `${visibleEntries.length} de ${activeEntries.length} registros`
-    : `${activeEntries.length} registros`;
+  const countLabel = isRendersType
+    ? hasSearch
+      ? `${visibleEntries.length} de ${renderEntries.length} carregados`
+      : renderEntries.length < renderHistoryTotal
+        ? `${renderEntries.length} de ${renderHistoryTotal} registros`
+        : `${renderHistoryTotal} registros`
+    : hasSearch
+      ? `${visibleEntries.length} de ${activeEntries.length} registros`
+      : `${activeEntries.length} registros`;
 
   const loadHistory = async () => {
     setIsLoading(true);
     setMessage("");
     try {
-      const [projects, copies, productImports] = await Promise.all([
+      const [projectsResult, copiesResult, productImportsResult, renderResult] = await Promise.allSettled([
         invokeCommand(commandNames.historyList),
         invokeCommand(commandNames.historyCopyList),
         invokeCommand(commandNames.historyProductImportList),
+        invokeCommand(commandNames.renderQueueHistory, { limit: RENDER_HISTORY_PAGE_SIZE }),
       ]);
-      setProjectEntries(Array.isArray(projects) ? projects : []);
-      setCopyEntries(Array.isArray(copies) ? copies : []);
-      setProductImportEntries(Array.isArray(productImports) ? productImports : []);
+
+      if (projectsResult.status === "fulfilled") {
+        setProjectEntries(Array.isArray(projectsResult.value) ? projectsResult.value : []);
+      }
+      if (copiesResult.status === "fulfilled") {
+        setCopyEntries(Array.isArray(copiesResult.value) ? copiesResult.value : []);
+      }
+      if (productImportsResult.status === "fulfilled") {
+        setProductImportEntries(
+          Array.isArray(productImportsResult.value) ? productImportsResult.value : []
+        );
+      }
+      const localHistoryFailed = [projectsResult, copiesResult, productImportsResult]
+        .some((result) => result.status === "rejected");
+      if (localHistoryFailed) {
+        setMessage("Não foi possível carregar parte do histórico local agora.");
+      }
+
+      if (renderResult.status === "fulfilled") {
+        const renderPage = normalizeRenderHistory(renderResult.value);
+        renderEntriesRef.current = renderPage.entries;
+        setRenderEntries(renderPage.entries);
+        setRenderHistoryTotal(renderPage.total);
+        renderHistoryCursorRef.current = renderPage.nextCursor;
+        setRenderHistoryCursor(renderPage.nextCursor);
+        setRenderHistoryHasMore(renderPage.hasMore);
+        setRenderHistoryError("");
+      } else {
+        setRenderHistoryError("Não foi possível carregar os renders agora.");
+      }
     } catch (err) {
       setMessage(String(err || "Não foi possível carregar o histórico."));
     } finally {
@@ -98,6 +173,110 @@ function HistoryWindow({ onClose }) {
   useEffect(() => {
     loadHistory();
   }, []);
+
+  useEffect(() => {
+    if (!isRendersType || !hasActiveRenderEntries) return undefined;
+    setClockNow(Date.now());
+    const clockTimer = window.setInterval(() => setClockNow(Date.now()), 1000);
+    return () => window.clearInterval(clockTimer);
+  }, [hasActiveRenderEntries, isRendersType]);
+
+  useEffect(() => {
+    renderEntriesRef.current = renderEntries;
+  }, [renderEntries]);
+
+  useEffect(() => {
+    renderHistoryCursorRef.current = renderHistoryCursor;
+  }, [renderHistoryCursor]);
+
+  useEffect(() => {
+    if (!isRendersType || !hasActiveRenderEntries) return undefined;
+    let disposed = false;
+    const refreshTimer = window.setInterval(async () => {
+      if (renderHistoryInFlightRef.current) return;
+      renderHistoryInFlightRef.current = true;
+      try {
+        const response = await invokeCommand(commandNames.renderQueueHistory, {
+          limit: RENDER_HISTORY_PAGE_SIZE,
+        });
+        const page = normalizeRenderHistory(response);
+        if (disposed) return;
+        const reconciled = reconcilePolledRenderHistory({
+          currentEntries: renderEntriesRef.current,
+          currentCursor: renderHistoryCursorRef.current,
+          incomingEntries: page.entries,
+          incomingCursor: page.nextCursor,
+          total: page.total,
+        });
+        renderEntriesRef.current = reconciled.entries;
+        renderHistoryCursorRef.current = reconciled.cursor;
+        setRenderEntries(reconciled.entries);
+        setRenderHistoryCursor(reconciled.cursor);
+        setRenderHistoryHasMore(reconciled.hasMore);
+        setRenderHistoryTotal(page.total);
+        setRenderHistoryError("");
+      } catch {
+        if (!disposed) setRenderHistoryError("Não foi possível atualizar os renders agora.");
+      } finally {
+        renderHistoryInFlightRef.current = false;
+      }
+    }, 30000);
+    return () => {
+      disposed = true;
+      window.clearInterval(refreshTimer);
+    };
+  }, [hasActiveRenderEntries, isRendersType]);
+
+  const loadMoreRenders = async () => {
+    if (!renderHistoryCursor || renderHistoryInFlightRef.current) return;
+    renderHistoryInFlightRef.current = true;
+    setIsLoadingMoreRenders(true);
+    setRenderHistoryError("");
+    try {
+      const response = await invokeCommand(commandNames.renderQueueHistory, {
+        limit: RENDER_HISTORY_PAGE_SIZE,
+        beforeCreatedAt: renderHistoryCursor.beforeCreatedAt,
+        beforeId: renderHistoryCursor.beforeId,
+      });
+      const page = normalizeRenderHistory(response);
+      const merged = mergeRenderHistoryEntries(renderEntriesRef.current, page.entries);
+      renderEntriesRef.current = merged;
+      setRenderEntries(merged);
+      setRenderHistoryTotal(page.total);
+      renderHistoryCursorRef.current = page.nextCursor;
+      setRenderHistoryCursor(page.nextCursor);
+      setRenderHistoryHasMore(page.hasMore && Boolean(page.nextCursor));
+    } catch {
+      setRenderHistoryError("Não foi possível carregar mais renders agora.");
+    } finally {
+      renderHistoryInFlightRef.current = false;
+      setIsLoadingMoreRenders(false);
+    }
+  };
+
+  const refreshRenderHistory = async () => {
+    if (renderHistoryInFlightRef.current) return;
+    renderHistoryInFlightRef.current = true;
+    setIsRefreshingRenders(true);
+    setRenderHistoryError("");
+    try {
+      const response = await invokeCommand(commandNames.renderQueueHistory, {
+        limit: RENDER_HISTORY_PAGE_SIZE,
+      });
+      const page = normalizeRenderHistory(response);
+      renderEntriesRef.current = page.entries;
+      setRenderEntries(page.entries);
+      setRenderHistoryTotal(page.total);
+      renderHistoryCursorRef.current = page.nextCursor;
+      setRenderHistoryCursor(page.nextCursor);
+      setRenderHistoryHasMore(page.hasMore);
+    } catch {
+      setRenderHistoryError("Não foi possível atualizar os renders agora.");
+    } finally {
+      renderHistoryInFlightRef.current = false;
+      setIsRefreshingRenders(false);
+    }
+  };
 
   useEffect(() => {
     return () => {
@@ -223,7 +402,11 @@ function HistoryWindow({ onClose }) {
       value: HISTORY_TYPES.PRODUCT_IMPORTS,
       label: `Produtos (${productImportEntries.length})`,
     },
-  ], [copyEntries.length, productImportEntries.length, projectEntries.length]);
+    {
+      value: HISTORY_TYPES.RENDERS,
+      label: `Renders (${renderHistoryTotal})`,
+    },
+  ], [copyEntries.length, productImportEntries.length, projectEntries.length, renderHistoryTotal]);
 
   const changeHistoryType = (nextType) => {
     setActiveType(nextType);
@@ -289,14 +472,26 @@ function HistoryWindow({ onClose }) {
               {isRefreshingAll ? "Atualizando..." : "Atualizar MP4/MOV"}
             </button>
           )}
-          <button
-            type="button"
-            className="btn btn-outline history-clear-btn"
-            onClick={requestClearHistory}
-            disabled={!activeEntries.length || isRefreshingAll}
-          >
-            Apagar histórico
-          </button>
+          {isRendersType && (
+            <button
+              type="button"
+              className="btn btn-outline history-refresh-all-btn"
+              onClick={refreshRenderHistory}
+              disabled={isLoading || isRefreshingRenders || isLoadingMoreRenders}
+            >
+              {isLoading || isRefreshingRenders ? "Atualizando..." : "Atualizar"}
+            </button>
+          )}
+          {!isRendersType && (
+            <button
+              type="button"
+              className="btn btn-outline history-clear-btn"
+              onClick={requestClearHistory}
+              disabled={!activeEntries.length || isRefreshingAll}
+            >
+              Apagar histórico
+            </button>
+          )}
           {onClose && (
             <button
               type="button"
@@ -312,9 +507,9 @@ function HistoryWindow({ onClose }) {
       </header>
 
       <main className="history-content">
-        {message && (
+        {(message || (isRendersType ? renderHistoryError : "")) && (
           <div className="history-message" role="alert">
-            {message}
+            {message || renderHistoryError}
           </div>
         )}
 
@@ -330,7 +525,7 @@ function HistoryWindow({ onClose }) {
 
         {!isLoading && visibleEntries.length > 0 && (
           <div
-            className={`history-table ${isCopiesType ? "history-table--copies" : ""} ${activeType === HISTORY_TYPES.PRODUCT_IMPORTS ? "history-table--products" : ""}`}
+            className={`history-table ${isCopiesType ? "history-table--copies" : ""} ${activeType === HISTORY_TYPES.PRODUCT_IMPORTS ? "history-table--products" : ""} ${isRendersType ? "history-table--renders" : ""}`}
             role="table"
             aria-label={meta.table}
           >
@@ -352,7 +547,7 @@ function HistoryWindow({ onClose }) {
                 </button>
               </div>
               <div role="columnheader">{meta.column}</div>
-              <div role="columnheader">Ações</div>
+              <div role="columnheader">{meta.detailColumn || "Ações"}</div>
             </div>
 
             {activeType === HISTORY_TYPES.PROJECTS &&
@@ -381,6 +576,25 @@ function HistoryWindow({ onClose }) {
               visibleEntries.map((entry) => (
                 <ProductImportHistoryRow entry={entry} key={entry.id} />
               ))}
+
+            {activeType === HISTORY_TYPES.RENDERS &&
+              visibleEntries.map((entry) => (
+                <RenderHistoryRow entry={entry} key={entry.id} nowMillis={clockNow} />
+              ))}
+          </div>
+        )}
+
+        {!isLoading && isRendersType && renderHistoryHasMore && (
+          <div className="history-render-pagination">
+            <span>{renderEntries.length} de {renderHistoryTotal} registros carregados</span>
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={loadMoreRenders}
+              disabled={isLoadingMoreRenders || !renderHistoryCursor}
+            >
+              {isLoadingMoreRenders ? "Carregando..." : "Carregar mais"}
+            </button>
           </div>
         )}
       </main>
@@ -633,6 +847,54 @@ function SnapshotList({ title, items, mark }) {
   );
 }
 
+function RenderHistoryRow({ entry, nowMillis }) {
+  const waitMillis = renderQueueWaitMillis(entry, nowMillis);
+  const timingLabel = renderTimingLabel(entry, nowMillis);
+  const relationship = renderRelationshipLabel(entry);
+
+  return (
+    <article className="history-row history-row--render" role="row">
+      <div className="history-date" role="cell">
+        {formatDate(entry.createdAt)}
+      </div>
+
+      <div className="history-project history-render" role="cell">
+        <div className="history-render__topline">
+          <strong title={entry.title}>{entry.title}</strong>
+          <span className={`history-render__direction history-render__direction--${entry.direction}`}>
+            {renderDirectionLabel(entry.direction)}
+          </span>
+          <span className={`history-render__status history-render__status--${renderStatusTone(entry.status)}`}>
+            {renderHistoryStatusLabel(entry.status)}
+          </span>
+        </div>
+        <div className="history-render__metadata">
+          <span>{relationship}</span>
+          {entry.jobaoCod && <span>Jobão {entry.jobaoCod}</span>}
+          {entry.jobinhoCod && <span>Jobinho {entry.jobinhoCod}</span>}
+          {entry.region && <span>Região {entry.region}</span>}
+          {entry.formats.length > 0 && <span>{entry.formats.join(" + ")}</span>}
+          {entry.attemptCount > 1 && <span>{entry.attemptCount} tentativas</span>}
+        </div>
+      </div>
+
+      <div className="history-render__times" role="cell">
+        <strong title={entry.startedAt
+          ? "Do início do primeiro aerender até a finalização dos arquivos"
+          : "Desde a entrada na fila até o estado atual"}
+        >
+          {timingLabel || "Tempo indisponível"}
+        </strong>
+        {entry.startedAt && waitMillis !== null && (
+          <span>Espera: {formatRenderDuration(waitMillis)}</span>
+        )}
+        {entry.startedAt && <span>Início: {formatDate(entry.startedAt)}</span>}
+        {entry.finishedAt && <span>Fim: {formatDate(entry.finishedAt)}</span>}
+      </div>
+    </article>
+  );
+}
+
 function IconButton({ icon, label, onClick, title, unavailable }) {
   const handleClick = (event) => {
     if (unavailable) return;
@@ -677,6 +939,7 @@ function projectLabel(entry) {
 function activeEntriesForType(type, entries) {
   if (type === HISTORY_TYPES.COPIES) return entries.copies;
   if (type === HISTORY_TYPES.PRODUCT_IMPORTS) return entries.productImports;
+  if (type === HISTORY_TYPES.RENDERS) return entries.renders;
   return entries.projects;
 }
 
@@ -690,7 +953,7 @@ function sortEntries(entries, direction, epochKey) {
   return [...entries].sort((a, b) => {
     const first = Number(a[epochKey] || 0);
     const second = Number(b[epochKey] || 0);
-    const diff = first - second || Number(a.id || 0) - Number(b.id || 0);
+    const diff = first - second || compareHistoryIds(a.id, b.id);
     return direction === "desc" ? -diff : diff;
   });
 }
@@ -698,6 +961,7 @@ function sortEntries(entries, direction, epochKey) {
 function filterEntries(type, entries, query) {
   if (type === HISTORY_TYPES.COPIES) return filterCopyEntries(entries, query);
   if (type === HISTORY_TYPES.PRODUCT_IMPORTS) return filterProductImportEntries(entries, query);
+  if (type === HISTORY_TYPES.RENDERS) return filterRenderEntries(entries, query);
   return filterProjectEntries(entries, query);
 }
 
@@ -756,6 +1020,172 @@ function filterProductImportEntries(entries, query) {
 
     return terms.every((term) => searchableText.includes(term));
   });
+}
+
+function filterRenderEntries(entries, query) {
+  const terms = parseSearchTerms(query);
+  if (!terms.length) return entries;
+
+  return entries.filter((entry) => {
+    const searchableText = normalizeSearchText([
+      entry.title,
+      entry.jobaoCod,
+      entry.jobinhoCod,
+      entry.region,
+      entry.requesterName,
+      entry.targetName,
+      entry.formats.join(" "),
+      renderDirectionLabel(entry.direction),
+      renderRelationshipLabel(entry),
+      renderHistoryStatusLabel(entry.status),
+      formatDate(entry.createdAt),
+    ].filter(Boolean).join(" "));
+
+    return terms.every((term) => searchableText.includes(term));
+  });
+}
+
+function normalizeRenderHistory(rawStatus) {
+  const page = readRenderHistoryPage(rawStatus);
+  return {
+    ...page,
+    entries: page.jobs
+      .map((job) => normalizeRenderHistoryEntry(
+        job,
+        renderDirectionForDevice(job, page.localDeviceId, page.localMemberId)
+      ))
+      .filter((entry) => entry.id),
+  };
+}
+
+function normalizeRenderHistoryEntry(rawJob, direction) {
+  const job = rawJob && typeof rawJob === "object" ? rawJob : {};
+  const manifest = firstHistoryObject(job.manifest, job.renderManifest, job.render_manifest);
+  const timestamps = firstHistoryObject(job.timestamps, job.times, job.timing);
+  const baseStatus = historyText(job.status, job.state, job.outcome, "queued").toLowerCase();
+  const stage = historyText(job.stage).toLowerCase();
+  const status = ["completed", "failed", "cancelled"].includes(baseStatus)
+    ? baseStatus
+    : stage && stage !== "ready" ? stage : baseStatus;
+  const outputs = firstHistoryArray(job.outputs, manifest.outputs, job.resultOutputs, job.result_outputs);
+  const createdAt = historyText(job.createdAt, job.created_at, timestamps.createdAt, timestamps.created_at);
+
+  return {
+    id: historyText(job.id, job.jobId, job.job_id),
+    title: historyText(job.projectName, job.project_name, job.title, "Projeto sem nome"),
+    direction,
+    status,
+    jobaoCod: historyText(job.jobaoCod, job.jobao_cod, manifest.jobaoCod, manifest.jobao_cod),
+    jobinhoCod: historyText(job.jobinhoCod, job.jobinho_cod, manifest.jobinhoCod, manifest.jobinho_cod),
+    region: historyText(job.projectRegion, job.project_region, manifest.projectRegion, manifest.project_region),
+    requesterName: historyText(
+      job.requesterLabel,
+      job.requester_label,
+      job.requesterMemberLabel,
+      job.requester_member_label
+    ),
+    targetName: historyText(
+      job.targetMemberLabel,
+      job.target_member_label,
+      job.targetLabel,
+      job.target_label,
+      job.targetDeviceLabel,
+      job.target_device_label
+    ),
+    requesterDeviceId: historyText(job.requesterDeviceId, job.requester_device_id),
+    targetDeviceId: historyText(
+      job.targetWorkerDeviceId,
+      job.target_worker_device_id,
+      job.targetDeviceId,
+      job.target_device_id
+    ),
+    formats: [...new Set(outputs.map(renderOutputLabel).filter(Boolean))],
+    attemptCount: Math.max(0, Number(job.attemptCount ?? job.attempt_count ?? 0) || 0),
+    createdAt,
+    createdAtEpoch: timestampMillis(createdAt) || 0,
+    startedAt: historyText(job.startedAt, job.started_at, timestamps.startedAt, timestamps.started_at),
+    finishedAt: historyText(job.finishedAt, job.finished_at, timestamps.finishedAt, timestamps.finished_at),
+    cancelledAt: historyText(job.cancelledAt, job.cancelled_at, timestamps.cancelledAt, timestamps.cancelled_at),
+  };
+}
+
+function firstHistoryArray(...values) {
+  return values.find((value) => Array.isArray(value) && value.length > 0)
+    || values.find((value) => Array.isArray(value))
+    || [];
+}
+
+function firstHistoryObject(...values) {
+  return values.find((value) => value && typeof value === "object" && !Array.isArray(value)) || {};
+}
+
+function historyText(...values) {
+  for (const value of values) {
+    if (value === null || value === undefined) continue;
+    const text = String(value).trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+function renderOutputLabel(output) {
+  const value = typeof output === "string"
+    ? output
+    : historyText(output?.kind, output?.type, output?.format, output?.label);
+  if (/mov/i.test(value)) return "MOV";
+  if (/mp4/i.test(value)) return "MP4";
+  return value ? value.toUpperCase() : "";
+}
+
+function renderDirectionLabel(direction) {
+  if (direction === "received") return "Executado aqui";
+  if (direction === "both") return "Enviado e executado aqui";
+  if (direction === "account_sent") return "Enviado em outro computador";
+  return "Enviado";
+}
+
+function renderRelationshipLabel(entry) {
+  if (entry.direction === "received") {
+    return entry.requesterName
+      ? `Esta máquina renderizou para ${entry.requesterName}`
+      : "Esta máquina foi usada para renderizar";
+  }
+  if (entry.direction === "both") return "Solicitado e renderizado nesta máquina";
+  const requesterContext = entry.direction === "account_sent"
+    ? "Solicitado pela sua conta"
+    : "Solicitado";
+  if (!entry.targetName) return `${requesterContext} para outra máquina`;
+  return /^máquina\s+(?:de|do|da)\s+/i.test(entry.targetName)
+    ? `${requesterContext} para ${entry.targetName}`
+    : `${requesterContext} para a máquina de ${entry.targetName}`;
+}
+
+function renderHistoryStatusLabel(status) {
+  return ({
+    waiting_for_worker: "Aguardando máquina",
+    waiting_for_sync: "Sincronizando projeto",
+    queued: "Na fila",
+    claimed: "Preparando",
+    preparing: "Preparando",
+    rendering: "Renderizando",
+    rendering_proxy: "Renderizando MOV",
+    rendering_mov: "Renderizando MOV",
+    rendering_mp4: "Renderizando MP4",
+    publishing: "Finalizando arquivos",
+    completed: "Concluído",
+    failed: "Falhou",
+    cancelled: "Cancelado",
+  })[status] || "Atualizando";
+}
+
+function renderStatusTone(status) {
+  if (status === "completed") return "success";
+  if (status === "failed") return "danger";
+  if (status === "cancelled") return "muted";
+  if (["rendering", "rendering_proxy", "rendering_mov", "rendering_mp4", "publishing"].includes(status)) {
+    return "active";
+  }
+  return "waiting";
 }
 
 function parseSearchTerms(value) {

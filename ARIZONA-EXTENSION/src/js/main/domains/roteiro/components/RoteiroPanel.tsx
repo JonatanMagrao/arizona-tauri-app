@@ -278,7 +278,7 @@ export const RoteiroPanel = ({ onOpenOfferInOffers }: RoteiroPanelProps) => {
         className="roteiro-render-button"
         onClick={() => void queueRender()}
         disabled={renderQueueLoading}
-        title="Adicionar MOV e MP4 na fila de render"
+        title="Adicionar MOV e MP4 à fila de render do After Effects"
       >
         {renderQueueLoading ? "..." : "Render"}
       </button>

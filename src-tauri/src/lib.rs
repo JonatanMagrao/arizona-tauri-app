@@ -9,6 +9,8 @@ mod history;
 mod license;
 mod media;
 mod product_preview_cache;
+mod render_process;
+mod render_queue;
 mod roteiro;
 mod settings;
 mod uninstall;
@@ -28,8 +30,8 @@ use std::sync::{
     Mutex,
 };
 use tauri::{
-    webview::PageLoadEvent, AppHandle, LogicalSize, Manager, PhysicalPosition, PhysicalSize, State,
-    WebviewWindow, Window, WindowEvent,
+    webview::PageLoadEvent, AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition,
+    PhysicalSize, State, WebviewWindow, Window, WindowEvent,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
@@ -217,6 +219,7 @@ pub fn run() {
         .manage(SecondaryWindowRuntimeState::default())
         .manage(MediaPathCache::default())
         .manage(MediaLoadRuntimeState::default())
+        .manage(render_queue::RenderQueueState::new())
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -243,9 +246,7 @@ pub fn run() {
         )
         .plugin(tauri_plugin_opener::init())
         .on_page_load(|webview, payload| {
-            if webview.label() != LOGIN_WINDOW_LABEL
-                || payload.event() != PageLoadEvent::Finished
-            {
+            if webview.label() != LOGIN_WINDOW_LABEL || payload.event() != PageLoadEvent::Finished {
                 return;
             }
 
@@ -254,6 +255,16 @@ pub fn run() {
             let _ = reveal_login_window_when_ready(app, &auth_state);
         })
         .on_window_event(|window, event| {
+            if window.label() == render_queue::WINDOW_LABEL {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    // The queue UI turns native close into hide. The worker is
+                    // owned by Rust and continues while the Arizona process is
+                    // open, even when this WebView is hidden.
+                    let _ = window.emit("arizona-render-queue:close-requested", ());
+                }
+                return;
+            }
             if window.label() != APP_WINDOW_LABEL {
                 return;
             }
@@ -279,6 +290,7 @@ pub fn run() {
             let bridge = app.state::<CepBridgeState>();
             let app_handle = app.handle().clone();
             diagnostics::initialize(&app_handle);
+            render_queue::start_worker(&app_handle);
             remove_legacy_cep_bridge_session(&app_handle);
             restore_app_window_position(&app_handle);
             let config = settings::load(&app_handle).unwrap_or_default();
@@ -370,7 +382,16 @@ pub fn run() {
             diagnostics::diagnostics_status,
             diagnostics::diagnostics_set_directory,
             diagnostics::diagnostics_open_directory,
-            diagnostics::diagnostics_export
+            diagnostics::diagnostics_export,
+            render_queue::render_queue_open,
+            render_queue::render_queue_close_window,
+            render_queue::render_queue_status,
+            render_queue::render_queue_history,
+            render_queue::render_queue_set_available,
+            render_queue::render_queue_project_candidates,
+            render_queue::render_queue_submit,
+            render_queue::render_queue_cancel,
+            render_queue::render_queue_reassign
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -803,42 +824,52 @@ fn after_effects_shortcut_notice(message: &str) -> (&'static str, &'static str) 
             AFTER_EFFECTS_LICENSE_NOTICE_MESSAGE,
         );
     }
+    if normalized.contains("nao esta aberto") {
+        return (
+            "after_effects_not_open",
+            "Abra o After Effects e tente o atalho novamente.",
+        );
+    }
     if normalized.contains("afterfx.exe") {
         return (
             "after_effects_not_found",
-            "Nao encontrei a versao configurada do After Effects.",
+            "Não encontrei a versão configurada do After Effects.",
         );
     }
 
     (
         "after_effects_command_failed",
-        "Nao foi possivel executar o atalho no After Effects.",
+        "Não foi possível executar o atalho no After Effects.",
     )
 }
 
 fn disable_browser_accelerator_keys(app: &tauri::App) {
+    for label in [LOGIN_WINDOW_LABEL, APP_WINDOW_LABEL, SECONDARY_WINDOW_LABEL] {
+        if let Some(window) = app.get_webview_window(label) {
+            disable_browser_accelerator_keys_for_window(&window);
+        }
+    }
+}
+
+pub(crate) fn disable_browser_accelerator_keys_for_window(window: &tauri::WebviewWindow) {
     #[cfg(windows)]
     {
-        for label in [LOGIN_WINDOW_LABEL, APP_WINDOW_LABEL, SECONDARY_WINDOW_LABEL] {
-            if let Some(window) = app.get_webview_window(label) {
-                let _ = window.with_webview(|webview| unsafe {
-                    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
-                    use windows_core::Interface;
+        let _ = window.with_webview(|webview| unsafe {
+            use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+            use windows_core::Interface;
 
-                    if let Ok(core_webview) = webview.controller().CoreWebView2() {
-                        if let Ok(settings) = core_webview.Settings() {
-                            if let Ok(settings3) = settings.cast::<ICoreWebView2Settings3>() {
-                                let _ = settings3.SetAreBrowserAcceleratorKeysEnabled(false);
-                            }
-                        }
+            if let Ok(core_webview) = webview.controller().CoreWebView2() {
+                if let Ok(settings) = core_webview.Settings() {
+                    if let Ok(settings3) = settings.cast::<ICoreWebView2Settings3>() {
+                        let _ = settings3.SetAreBrowserAcceleratorKeysEnabled(false);
                     }
-                });
+                }
             }
-        }
+        });
     }
 
     #[cfg(not(windows))]
-    let _ = app;
+    let _ = window;
 }
 
 #[tauri::command]
@@ -961,9 +992,7 @@ fn reveal_login_window_when_ready(
     app: &AppHandle,
     auth_state: &State<AuthState>,
 ) -> Result<(), String> {
-    auth_state
-        .login_window_ready
-        .store(true, Ordering::Release);
+    auth_state.login_window_ready.store(true, Ordering::Release);
 
     // Keep this guard until the show decision is complete. If authentication
     // finishes concurrently, it will store the session afterwards and then
@@ -981,7 +1010,9 @@ fn reveal_login_window_when_ready(
         .ok_or_else(|| "A janela inicial não foi encontrada.".to_string())?;
     if !login_window.is_visible().unwrap_or(false) {
         login_window.show().map_err(|error| error.to_string())?;
-        login_window.set_focus().map_err(|error| error.to_string())?;
+        login_window
+            .set_focus()
+            .map_err(|error| error.to_string())?;
     }
     Ok(())
 }
@@ -1636,6 +1667,12 @@ fn apply_auth_flow_ui(
         return Ok(());
     }
 
+    render_queue::disable_for_auth_loss(app);
+    if let Some(queue_window) = app.get_webview_window(render_queue::WINDOW_LABEL) {
+        let _ = queue_window.hide();
+        let _ = queue_window.eval("window.location.reload();");
+    }
+
     let denial_code = response.code.as_deref();
     if denial_code.is_some_and(auth::should_erase_credential) {
         forget_secure_auth(app, auth_state, bridge)?;
@@ -1981,38 +2018,40 @@ async fn admin_generate_activation_code(
 #[tauri::command]
 async fn release_current_device(app: AppHandle) -> Result<ActionResponse, String> {
     run_blocking_network_command(move || {
-        let auth_state = app.state::<AuthState>();
-        let bridge = app.state::<CepBridgeState>();
-        let _operation = auth_state.lock_operation()?;
-        let session = authenticated_session(&auth_state)?;
-        let access_token = session
-            .access_token
-            .clone()
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| "Sessão incompleta.".to_string())?;
-        // The install id proves the caller is the machine holding the seat, so a
-        // copied credential cannot release someone else's device.
-        auth::function_value(
-            "app-release-device",
-            &access_token,
-            serde_json::json!({
-                "source": "tauri_settings",
-                "installId": load_or_create_install_id(&app)?,
-            }),
-        )
-        .map_err(release_device_api_error)?;
-        forget_secure_auth(&app, &auth_state, &bridge)?;
-        apply_auth_flow_ui(
-            &app,
-            &auth_state,
-            &bridge,
-            &auth_flow(
-                "activation_required",
-                None,
-                Some("Acesso desta máquina liberado.".to_string()),
-            ),
-        )?;
-        Ok(ActionResponse::ok())
+        render_queue::with_session_end_guard(&app, || {
+            let auth_state = app.state::<AuthState>();
+            let bridge = app.state::<CepBridgeState>();
+            let _operation = auth_state.lock_operation()?;
+            let session = authenticated_session(&auth_state)?;
+            let access_token = session
+                .access_token
+                .clone()
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "Sessão incompleta.".to_string())?;
+            // The install id proves the caller is the machine holding the seat, so a
+            // copied credential cannot release someone else's device.
+            auth::function_value(
+                "app-release-device",
+                &access_token,
+                serde_json::json!({
+                    "source": "tauri_settings",
+                    "installId": load_or_create_install_id(&app)?,
+                }),
+            )
+            .map_err(release_device_api_error)?;
+            forget_secure_auth(&app, &auth_state, &bridge)?;
+            apply_auth_flow_ui(
+                &app,
+                &auth_state,
+                &bridge,
+                &auth_flow(
+                    "activation_required",
+                    None,
+                    Some("Acesso desta máquina liberado.".to_string()),
+                ),
+            )?;
+            Ok(ActionResponse::ok())
+        })
     })
     .await
 }
@@ -2257,14 +2296,22 @@ mod auth_flow_tests {
 #[tauri::command]
 async fn clear_secure_auth(app: AppHandle) -> Result<ActionResponse, String> {
     run_blocking_network_command(move || {
-        let auth = app.state::<AuthState>();
-        let bridge = app.state::<CepBridgeState>();
-        let _operation = auth.lock_operation()?;
-        let entry = secure_auth_entry()?;
-        let _ = entry.delete_credential();
-        clear_cep_license_receipt(&app)?;
-        clear_runtime_auth_session(&auth, &bridge)?;
-        Ok(ActionResponse::ok())
+        render_queue::with_session_end_guard(&app, || {
+            let auth = app.state::<AuthState>();
+            let bridge = app.state::<CepBridgeState>();
+            let _operation = auth.lock_operation()?;
+            render_queue::sign_off_before_auth_clear_while_guarded(&app);
+            let entry = secure_auth_entry()?;
+            let _ = entry.delete_credential();
+            clear_cep_license_receipt(&app)?;
+            clear_runtime_auth_session(&auth, &bridge)?;
+            render_queue::disable_for_auth_loss(&app);
+            if let Some(queue_window) = app.get_webview_window(render_queue::WINDOW_LABEL) {
+                let _ = queue_window.hide();
+                let _ = queue_window.eval("window.location.reload();");
+            }
+            Ok(ActionResponse::ok())
+        })
     })
     .await
 }
@@ -2687,19 +2734,25 @@ fn position_is_visible_for_window(
 // fosse fechado. A remocao explicita acontece apenas no logout
 // (clear_secure_auth).
 #[tauri::command]
-fn exit_app(app: AppHandle) -> Result<(), String> {
-    save_current_app_window_position(&app);
-    diagnostics::info(
-        &app,
-        "aplicativo",
-        "encerrar",
-        "requested",
-        "Encerramento do Arizona App solicitado.",
-        None,
-    );
-    let _ = diagnostics::flush(&app);
-    app.exit(0);
-    Ok(())
+fn exit_app(app: AppHandle, force: Option<bool>) -> Result<(), String> {
+    // Kept in the command contract for compatibility with an already-loaded
+    // WebView. Closing is no longer allowed to bypass received work.
+    let _ = force;
+    render_queue::with_session_end_guard(&app, || {
+        save_current_app_window_position(&app);
+        diagnostics::info(
+            &app,
+            "aplicativo",
+            "encerrar",
+            "requested",
+            "Encerramento do Arizona App solicitado.",
+            None,
+        );
+        render_queue::shutdown(&app);
+        let _ = diagnostics::flush(&app);
+        app.exit(0);
+        Ok(())
+    })
 }
 
 #[tauri::command]
