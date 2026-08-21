@@ -31,6 +31,9 @@ histórico continua disponível no Git.
   privacidade e feedback que ainda dependem de aprovação.
 - [Atualizações independentes do Tauri e CEP](./arquitetura-atualizacoes-independentes-tauri-cep.md):
   proposta de longo prazo para distribuição separada dos componentes.
+- [Revisão e plano de limpeza das mecânicas do CEP](./REVISAO_LIMPEZA_MECANICAS_CEP.md):
+  inventário das mecânicas atuais e legadas, resíduos seguros para limpeza e
+  critérios para uma futura remoção de compatibilidade.
 
 ## Fontes específicas de cada projeto
 

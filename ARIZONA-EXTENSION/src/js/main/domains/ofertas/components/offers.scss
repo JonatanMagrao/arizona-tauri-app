@@ -560,7 +560,7 @@
   grid-template-rows: auto;
   align-content: start;
   justify-items: start;
-  gap: 0;
+  gap: 4px;
   padding-right: 0;
   box-sizing: border-box;
   overflow: visible;
@@ -675,7 +675,8 @@
   font-size: 0.72rem;
   line-height: 1.32;
   outline: none;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   resize: none;
   text-transform: uppercase;
   -webkit-user-select: none;
@@ -700,6 +701,11 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(78px, 1fr));
   gap: 6px;
+}
+
+.offer-price-row.offer-shared-mechanic-price-row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(48px, 0.55fr);
+  gap: 6px 12px;
 }
 
 .offer-simple-controls {
@@ -736,11 +742,19 @@
 }
 
 .offer-quantity-values.has-inline-installment-jump {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.offer-quantity-values.has-inline-installment-jump > .offer-price-field {
+  grid-column: span 2;
+}
+
+.offer-quantity-values.has-inline-installment-jump > .offer-quantity-field {
+  grid-column: 1 / span 2;
 }
 
 .offer-inline-installment-jump-field {
-  grid-column: 2 / 4;
+  grid-column: 4 / 7;
 }
 
 .offer-quantity-options {
@@ -756,9 +770,15 @@
   justify-content: end;
 }
 
+.offer-quantity-options.has-installment-jump.is-shared-mechanic {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  justify-content: stretch;
+}
+
 .offer-quantity-options.has-only-installment-jump {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   justify-content: stretch;
+  column-gap: 12px;
 }
 
 .offer-quantity-options.has-only-installment-jump
@@ -784,6 +804,16 @@
 
 .offer-extra-controls.offer-shared-mechanic-controls {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: end;
+}
+
+.offer-extra-controls.offer-all-percent-discount-controls {
+  grid-template-columns: 72px repeat(2, minmax(0, 1fr));
+  align-items: end;
+}
+
+.offer-extra-controls.offer-all-take-pay-controls {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr);
   align-items: end;
 }
 
@@ -944,7 +974,7 @@
   flex-wrap: wrap;
   justify-content: start;
   align-items: flex-end;
-  gap: 3px 4px;
+  gap: 3px 2px;
 }
 
 .offer-percent-field span {
@@ -955,9 +985,14 @@
 .offer-percent-field input {
   order: 1;
   flex: 0 0 auto;
-  width: 5ch;
-  min-width: 5ch;
-  max-width: 5ch;
+  width: 4ch;
+  min-width: 4ch;
+  max-width: 4ch;
+}
+
+.offer-percent-field input:focus {
+  padding-right: 2px;
+  padding-left: 2px;
 }
 
 .offer-percent-field::after {
@@ -987,10 +1022,15 @@
 
 .offer-installments-field input {
   order: 1;
-  flex: 0 0 3.4ch;
-  width: 3.4ch;
-  min-width: 3.4ch;
-  max-width: 3.4ch;
+  flex: 0 0 4ch;
+  width: 4ch;
+  min-width: 4ch;
+  max-width: 4ch;
+}
+
+.offer-installments-field input:focus {
+  padding-right: 2px;
+  padding-left: 2px;
 }
 
 .offer-installments-field::after {

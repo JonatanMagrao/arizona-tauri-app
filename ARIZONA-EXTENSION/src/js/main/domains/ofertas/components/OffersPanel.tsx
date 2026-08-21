@@ -30,9 +30,11 @@ import type {
 } from "../types";
 import { normalizeOfferPrice } from "../utils/price";
 import { isEditableOfferTextControl } from "../utils/keyboard";
+import { isRnAfterProject } from "../utils/projectRegion";
 import "./offers.scss";
 
 interface OffersPanelProps {
+  projectName: string;
   productImages: LocalImage[];
   requestedOfferLayerIndex?: number;
   onLoadProductPreview: (image: LocalImage) => Promise<void>;
@@ -66,6 +68,7 @@ interface DoubleClickActivation<T extends HTMLElement> {
 }
 
 interface ProductEditorProps {
+  isRnProject: boolean;
   offerLayerIndex: number;
   product: OfferProduct;
   previewRevision: number;
@@ -752,6 +755,7 @@ const getOptionControlClassName = (optionGroup: OfferOptionGroup): string =>
     : "offer-extra-field";
 
 const ProductEditor = ({
+  isRnProject,
   offerLayerIndex,
   product,
   previewRevision,
@@ -773,18 +777,33 @@ const ProductEditor = ({
     headerOptionGroup?.id === "mechanicCondition" &&
     headerOptionGroup.selectedIndex >= 0 &&
     headerOptionGroup.selectedIndex <= 2;
-  const hideSharedMechanicQuantity =
+  const isSharedMechanic =
     product.mechanic.type.toLowerCase() ===
-      "de x por y | x% desconto | leve x pague y" &&
-    headerOptionGroup?.id === "mechanicType" &&
-    headerOptionGroup.selectedIndex !== 2 &&
-    headerOptionGroup.selectedIndex !== 4;
+    "de x por y | x% desconto | leve x pague y";
+  const sharedMechanicSubtype = controlOptionGroups.find(
+    (optionGroup) => optionGroup.id === "mechanicSubtype"
+  );
+  const usesRnCardPriceLayout =
+    isRnProject &&
+    isSharedMechanic &&
+    sharedMechanicSubtype?.selectedIndex === 2;
+  const hideSharedMechanicQuantity =
+    isSharedMechanic &&
+    (usesRnCardPriceLayout ||
+      (headerOptionGroup?.id === "mechanicType" &&
+        headerOptionGroup.selectedIndex !== 2 &&
+        headerOptionGroup.selectedIndex !== 4));
   const priceFields = getPriceFields(product).filter(
-    ({ field }) => !hideFullPriceFromField || field.id !== "preco-de"
+    ({ field }) =>
+      (!hideFullPriceFromField || field.id !== "preco-de") &&
+      (!usesRnCardPriceLayout || field.id === "preco-de")
   );
   const extraFields = getExtraFields(product).filter(
     ({ field }) =>
-      !hideSharedMechanicQuantity || field.id !== "quantidade-x"
+      (!isSharedMechanic ||
+        field.id !== "por-centagem-desconto" ||
+        usesRnCardPriceLayout) &&
+      (!hideSharedMechanicQuantity || field.id !== "quantidade-x")
   );
   const [isMechanicMenuOpen, setIsMechanicMenuOpen] = useState(false);
   const [pendingMechanic, setPendingMechanic] = useState("");
@@ -796,8 +815,14 @@ const ProductEditor = ({
   const quantityFieldEntry = extraFields.find(({ field }) =>
     isCurrentQuantityField(field)
   );
-  const extraFieldsWithoutQuantity = extraFields.filter(
-    ({ field }) => !isCurrentQuantityField(field)
+  const discountFieldEntry = extraFields.find(
+    ({ field }) => field.id === "por-centagem-desconto"
+  );
+  const inlineValueFieldEntry = usesRnCardPriceLayout
+    ? discountFieldEntry
+    : quantityFieldEntry;
+  const extraFieldsWithoutInlineValue = extraFields.filter(
+    ({ field }) => field.id !== inlineValueFieldEntry?.field.id
   );
   const skuName = getOfferSkuName(product);
   const descriptionRows = getOfferDescriptionRows(product.description.value);
@@ -818,9 +843,11 @@ const ProductEditor = ({
     hasInstallmentJump &&
     product.mechanic.type.toLowerCase() === "de x por y parcelamento" &&
     !hideFullPriceFromField;
-  const useSharedMechanicControlsLayout =
-    product.mechanic.type.toLowerCase() ===
-    "de x por y | x% desconto | leve x pague y";
+  const useSharedMechanicControlsLayout = isSharedMechanic;
+  const useAllPercentDiscountControlsLayout =
+    product.mechanic.type.toLowerCase() === "todos a com x% desconto";
+  const useAllTakePayControlsLayout =
+    product.mechanic.type.toLowerCase() === "todos a leve x pague y";
   const hasExtraControls =
     extraFields.length > 0 ||
     controlOptionGroups.length > 0 ||
@@ -832,10 +859,11 @@ const ProductEditor = ({
     priceFields.length === 1 &&
     extraFields.length === 0 &&
     controlOptionGroups.length === 1;
-  const useQuantityControlsLayout =
-    priceFields.length >= 2 && quantityFieldEntry !== undefined;
-  const hasQuantitySecondaryControls =
-    extraFieldsWithoutQuantity.length > 0 ||
+  const useInlineValueControlsLayout = usesRnCardPriceLayout
+    ? priceFields.length === 1 && discountFieldEntry !== undefined
+    : priceFields.length >= 2 && quantityFieldEntry !== undefined;
+  const hasInlineValueSecondaryControls =
+    extraFieldsWithoutInlineValue.length > 0 ||
     controlOptionGroups.length > 0 ||
     (hasInstallmentJump && !placeInstallmentJumpWithQuantity);
   const dialogTitleId =
@@ -1096,31 +1124,31 @@ const ProductEditor = ({
             }}
             onMouseDown={descriptionActivation.handleMouseDown}
           />
+
+          <label
+            className="offer-description-sync"
+            title={
+              descriptionHasExpression
+                ? "Habilitar ou desabilitar a expressão do descritivo"
+                : "O Source Text do descritivo não possui expressão"
+            }
+          >
+            <input
+              type="checkbox"
+              checked={descriptionExpressionEnabled}
+              disabled={!descriptionHasExpression}
+              onChange={(event) =>
+                onDescriptionExpressionChange(
+                  offerLayerIndex,
+                  product.index,
+                  event.currentTarget.checked
+                )
+              }
+            />
+            <span>Expressão Descritivo</span>
+          </label>
         </div>
       </div>
-
-      <label
-        className="offer-description-sync"
-        title={
-          descriptionHasExpression
-            ? "Habilitar ou desabilitar a expressao do descritivo"
-            : "O Source Text do descritivo nao possui expressao"
-        }
-      >
-        <input
-          type="checkbox"
-          checked={descriptionExpressionEnabled}
-          disabled={!descriptionHasExpression}
-          onChange={(event) =>
-            onDescriptionExpressionChange(
-              offerLayerIndex,
-              product.index,
-              event.currentTarget.checked
-            )
-          }
-        />
-        <span>Sincronizar descritivo</span>
-      </label>
 
       {hasControls ? (
         <div className="offer-product-controls">
@@ -1159,7 +1187,7 @@ const ProductEditor = ({
                 />
               ))}
             </div>
-          ) : useQuantityControlsLayout && quantityFieldEntry ? (
+          ) : useInlineValueControlsLayout && inlineValueFieldEntry ? (
             <div className="offer-quantity-controls">
               <div
                 className={[
@@ -1189,19 +1217,21 @@ const ProductEditor = ({
                 ))}
 
                 <OfferFieldControl
-                  field={quantityFieldEntry.field}
-                  key={quantityFieldEntry.field.id}
+                  field={inlineValueFieldEntry.field}
+                  key={inlineValueFieldEntry.field.id}
                   className={getFieldClassName(
-                    quantityFieldEntry.field,
-                    "offer-extra-field offer-quantity-field"
+                    inlineValueFieldEntry.field,
+                    usesRnCardPriceLayout
+                      ? "offer-extra-field"
+                      : "offer-extra-field offer-quantity-field"
                   )}
                   onCommit={(value) =>
                     onFieldChange(
                       offerLayerIndex,
                       product.index,
-                      quantityFieldEntry.field.id,
+                      inlineValueFieldEntry.field.id,
                       value,
-                      quantityFieldEntry.fieldIndex
+                      inlineValueFieldEntry.fieldIndex
                     )
                   }
                 />
@@ -1221,15 +1251,18 @@ const ProductEditor = ({
                 ) : null}
               </div>
 
-              {hasQuantitySecondaryControls ? (
+              {hasInlineValueSecondaryControls ? (
                 <div
                   className={[
                     "offer-quantity-options",
                     product.mechanic.installmentJump
                       ? "has-installment-jump"
                       : "",
+                    useSharedMechanicControlsLayout
+                      ? "is-shared-mechanic"
+                      : "",
                     product.mechanic.installmentJump &&
-                    extraFieldsWithoutQuantity.length === 0 &&
+                    extraFieldsWithoutInlineValue.length === 0 &&
                     controlOptionGroups.length === 0
                       ? "has-only-installment-jump"
                       : "",
@@ -1237,7 +1270,7 @@ const ProductEditor = ({
                     .filter(Boolean)
                     .join(" ")}
                 >
-                  {extraFieldsWithoutQuantity.map(({ field, fieldIndex }) => (
+                  {extraFieldsWithoutInlineValue.map(({ field, fieldIndex }) => (
                     <OfferFieldControl
                       field={field}
                       key={field.id}
@@ -1291,11 +1324,15 @@ const ProductEditor = ({
             <>
               {priceFields.length > 0 ? (
                 <div
-                  className={
-                    priceFields.length === 1
-                      ? "offer-price-row has-single-price"
-                      : "offer-price-row"
-                  }
+                  className={[
+                    "offer-price-row",
+                    priceFields.length === 1 ? "has-single-price" : "",
+                    isSharedMechanic
+                      ? "offer-shared-mechanic-price-row"
+                      : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
                 >
                   {priceFields.map(({ field, fieldIndex }) => (
                     <OfferFieldControl
@@ -1322,6 +1359,12 @@ const ProductEditor = ({
                     "offer-extra-controls",
                     useSharedMechanicControlsLayout
                       ? "offer-shared-mechanic-controls"
+                      : "",
+                    useAllPercentDiscountControlsLayout
+                      ? "offer-all-percent-discount-controls"
+                      : "",
+                    useAllTakePayControlsLayout
+                      ? "offer-all-take-pay-controls"
                       : "",
                   ]
                     .filter(Boolean)
@@ -1814,6 +1857,7 @@ const OfferProductImagePicker = ({
 };
 
 export const OffersPanel = ({
+  projectName,
   productImages,
   requestedOfferLayerIndex,
   onLoadProductPreview,
@@ -1822,6 +1866,7 @@ export const OffersPanel = ({
   onRequestedOfferLayerIndexHandled,
   onStatus,
 }: OffersPanelProps) => {
+  const isRnProject = isRnAfterProject(projectName);
   const [draggedProduct, setDraggedProduct] =
     useState<DraggedOfferProduct | null>(null);
   const [draggedOfferTab, setDraggedOfferTab] =
@@ -2141,6 +2186,7 @@ export const OffersPanel = ({
             <div className="offer-products">
               {selectedOffer.products.map((product) => (
                 <ProductEditor
+                  isRnProject={isRnProject}
                   offerLayerIndex={selectedOffer.layerIndex}
                   product={product}
                   previewRevision={previewRevision}

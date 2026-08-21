@@ -7,6 +7,7 @@ import { addError, getLayerByIndex, getLayerSource } from "../layers/findLayers"
 import {
   getEffectControlValueProperty,
   makeControllerOptionGroup,
+  makeIndexedTextField,
   makeValueField,
 } from "./shared";
 import {
@@ -93,11 +94,35 @@ export const readDeXPorYDiscountTakePayMechanic = (
   return {
     type: DE_X_POR_Y_DISCOUNT_TAKE_PAY_MECHANIC_TYPE,
     fields: [
+      makeIndexedTextField(
+        source,
+        6,
+        "Preco De",
+        "price",
+        "mecanica compartilhada",
+        errors
+      ),
+      makeIndexedTextField(
+        source,
+        12,
+        "Preco Por",
+        "price",
+        "mecanica compartilhada",
+        errors
+      ),
       makeValueField(
         "quantidade-x",
         "Quantidade X",
         "integer",
         quantityProperty
+      ),
+      makeIndexedTextField(
+        source,
+        16,
+        "Desconto",
+        "percent",
+        "mecanica compartilhada",
+        errors
       ),
     ],
     optionGroups: [

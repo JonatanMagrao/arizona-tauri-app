@@ -66,7 +66,8 @@ interface LicensedAppProps {
 }
 
 const LicensedApp = ({ bgColor }: LicensedAppProps) => {
-  const { projectKey, refreshProjectIdentity } = useProjectIdentity();
+  const { projectKey, projectName, refreshProjectIdentity } =
+    useProjectIdentity();
   const projectViewKey = projectKey || "no-project";
   const projectKeyRef = useRef(projectKey);
   const [activeView, setActiveView] = useState<ActiveView>("offers");
@@ -246,6 +247,7 @@ const LicensedApp = ({ bgColor }: LicensedAppProps) => {
           <div className="arizona-carrefour-offers">
             <OffersPanel
               key={`offers-${projectViewKey}`}
+              projectName={projectName}
               productImages={images}
               requestedOfferLayerIndex={requestedOfferLayerIndex}
               onLoadProductPreview={loadImagePreview}
