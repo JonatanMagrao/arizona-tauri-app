@@ -294,10 +294,6 @@
   border-color: var(--danger);
 }
 
-.offer-product-editor.has-open-menu {
-  z-index: 40;
-}
-
 .offer-product-editor:focus-within {
   border-color: var(--offer-accent);
   background: #fffefe;
@@ -350,112 +346,6 @@
   opacity: 1;
 }
 
-.offer-card-actions {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 20;
-}
-
-.offer-card-menu-button {
-  width: 24px;
-  height: 24px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: 5px;
-  background: rgba(255, 255, 255, 0.84);
-  color: var(--text-muted);
-  cursor: pointer;
-  opacity: 0.72;
-}
-
-.offer-card-menu-button:hover,
-.offer-card-menu-button:focus-visible,
-.offer-card-menu-button[aria-expanded="true"] {
-  border-color: rgba(16, 24, 40, 0.12);
-  background: #ffffff;
-  color: var(--text);
-  opacity: 1;
-  outline: none;
-  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.12);
-}
-
-.offer-card-menu-button svg {
-  width: 18px;
-  height: 18px;
-  fill: currentColor;
-}
-
-.offer-card-menu {
-  position: absolute;
-  z-index: 30;
-  top: 29px;
-  right: 0;
-  width: 248px;
-  max-height: 250px;
-  display: grid;
-  gap: 2px;
-  padding: 5px;
-  border: 1px solid rgba(16, 24, 40, 0.13);
-  border-radius: 7px;
-  background: #ffffff;
-  box-shadow: 0 8px 22px rgba(16, 24, 40, 0.18);
-  overflow: auto;
-}
-
-.offer-card-menu button {
-  min-width: 0;
-  min-height: 28px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text);
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-}
-
-.offer-card-menu button:hover,
-.offer-card-menu button:focus-visible {
-  background: var(--accent-soft);
-  outline: none;
-}
-
-.offer-card-menu button:disabled {
-  cursor: default;
-  opacity: 0.72;
-}
-
-.offer-card-menu button:disabled:hover,
-.offer-card-menu button:disabled:focus-visible,
-.offer-card-menu button.is-current {
-  background: rgba(16, 24, 40, 0.05);
-}
-
-.offer-card-menu button span {
-  min-width: 0;
-  overflow: hidden;
-  font-size: 0.7rem;
-  font-weight: 750;
-  line-height: 1.2;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.offer-card-menu button small {
-  color: var(--text-muted);
-  font-size: 0.58rem;
-  font-weight: 900;
-  text-transform: uppercase;
-}
-
 .offer-product-header {
   width: 100%;
   min-width: 0;
@@ -463,7 +353,6 @@
   align-items: start;
   justify-items: start;
   gap: 5px;
-  padding-right: 28px;
   box-sizing: border-box;
 }
 
@@ -524,12 +413,6 @@
 .offer-product-mechanic-selector {
   width: 100%;
   justify-self: stretch;
-  gap: 2px;
-}
-
-.offer-product-mechanic-selector span {
-  font-size: 0.54rem;
-  font-weight: 900;
 }
 
 .offer-editor-field.offer-product-mechanic-selector select {
@@ -713,10 +596,6 @@
   grid-template-columns: minmax(0, 1fr) 170px;
   align-items: end;
   gap: 12px;
-}
-
-.offer-simple-controls .offer-price-field {
-  grid-template-areas: "currency input";
 }
 
 .offer-simple-controls .offer-price-field span {
@@ -1518,76 +1397,6 @@
   place-items: center;
   padding: 18px;
   background: rgba(16, 24, 40, 0.28);
-}
-
-.offer-confirm-dialog {
-  width: min(330px, 100%);
-  display: grid;
-  gap: 12px;
-  padding: 14px;
-  border: 1px solid rgba(16, 24, 40, 0.12);
-  border-radius: 8px;
-  background: #ffffff;
-  box-shadow: 0 18px 40px rgba(16, 24, 40, 0.24);
-}
-
-.offer-confirm-dialog header,
-.offer-confirm-dialog footer {
-  min-width: 0;
-}
-
-.offer-confirm-dialog h3,
-.offer-confirm-dialog p {
-  margin: 0;
-}
-
-.offer-confirm-dialog h3 {
-  color: var(--text);
-  font-size: 0.86rem;
-  font-weight: 900;
-}
-
-.offer-confirm-dialog p {
-  color: var(--text-muted);
-  font-size: 0.76rem;
-  line-height: 1.4;
-}
-
-.offer-confirm-dialog strong {
-  color: var(--text);
-  font-weight: 900;
-}
-
-.offer-confirm-dialog footer {
-  display: flex;
-  justify-content: end;
-  gap: 8px;
-}
-
-.offer-confirm-dialog button {
-  min-width: 76px;
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: #ffffff;
-  color: var(--text);
-  cursor: pointer;
-  font: inherit;
-  font-size: 0.72rem;
-  font-weight: 800;
-}
-
-.offer-confirm-dialog button:hover,
-.offer-confirm-dialog button:focus-visible {
-  border-color: var(--accent);
-  outline: none;
-}
-
-.offer-confirm-dialog button.is-primary {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: #ffffff;
 }
 
 .offers-empty {

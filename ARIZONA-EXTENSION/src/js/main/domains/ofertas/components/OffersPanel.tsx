@@ -155,20 +155,6 @@ interface IndexedOfferField {
   fieldIndex: number;
 }
 
-const OFFER_MECHANIC_OPTIONS = [
-  "Simples",
-  "De Por",
-  "Desconto X%",
-  "Desconto X% Cartao CRF",
-  "Desconto X% Cartao CRF Segunda Unidade",
-  "Porcentagem Desconto",
-  "De A Unidade Sai Por",
-  "De Por Cartao CRF",
-  "De Por Parcelamento Cartao Carrefour",
-  "Desconto X% Meu CRF",
-  "De Por Meu CRF (Dual)",
-];
-
 const OFFER_TAB_COLORS: { [offerIndex: number]: string } = {
   1: "#B53838",
   2: "#E4D84C",
@@ -421,15 +407,10 @@ const getOfferCardSize = (product: OfferProduct): OfferCardSize => {
 };
 
 const getOfferProductClassName = (product: OfferProduct) => {
-  const type = product.mechanic.type.toLowerCase();
   const classNames = [
     "offer-product-editor",
     "is-" + getOfferCardSize(product),
   ];
-
-  if (type.indexOf("parcelamento") >= 0) {
-    classNames.push("is-installment");
-  }
 
   if (product.unsupported) {
     classNames.push("is-unsupported");
@@ -805,8 +786,6 @@ const ProductEditor = ({
         usesRnCardPriceLayout) &&
       (!hideSharedMechanicQuantity || field.id !== "quantidade-x")
   );
-  const [isMechanicMenuOpen, setIsMechanicMenuOpen] = useState(false);
-  const [pendingMechanic, setPendingMechanic] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
   const isCurrentQuantityField = (field: OfferTextField) =>
     isQuantityXField(field) ||
@@ -866,32 +845,15 @@ const ProductEditor = ({
     extraFieldsWithoutInlineValue.length > 0 ||
     controlOptionGroups.length > 0 ||
     (hasInstallmentJump && !placeInstallmentJumpWithQuantity);
-  const dialogTitleId =
-    "offer-mechanic-change-title-" + offerLayerIndex + "-" + product.index;
   const canDropDraggedProduct =
     draggedProduct !== null &&
     draggedProduct.offerLayerIndex === offerLayerIndex &&
     draggedProduct.productIndex !== product.index;
 
-  useEffect(() => {
-    if (pendingMechanic === "") return;
-
-    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setPendingMechanic("");
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [pendingMechanic]);
-
   return (
     <article
       className={[
         getOfferProductClassName(product),
-        isMechanicMenuOpen ? "has-open-menu" : "",
         isDragOver ? "is-drop-target" : "",
       ]
         .filter(Boolean)
@@ -963,7 +925,6 @@ const ProductEditor = ({
           };
 
           clearDocumentSelection();
-          setIsMechanicMenuOpen(false);
           onProductDragStart(payload);
           event.dataTransfer.effectAllowed = "move";
           event.dataTransfer.setData(
@@ -973,63 +934,6 @@ const ProductEditor = ({
         }}
         onMouseDown={clearDocumentSelection}
       />
-
-      <div
-        className="offer-card-actions"
-        onBlur={(event) => {
-          const nextFocusedElement = event.relatedTarget;
-
-          if (
-            nextFocusedElement instanceof Node &&
-            event.currentTarget.contains(nextFocusedElement)
-          ) {
-            return;
-          }
-
-          setIsMechanicMenuOpen(false);
-        }}
-      >
-        <button
-          type="button"
-          className="offer-card-menu-button"
-          aria-haspopup="menu"
-          aria-expanded={isMechanicMenuOpen}
-          aria-label="Opcoes da mecanica"
-          title="Opcoes da mecanica"
-          onClick={() => setIsMechanicMenuOpen((isOpen) => !isOpen)}
-          onMouseDown={clearDocumentSelection}
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2Zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2Zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2Z" />
-          </svg>
-        </button>
-
-        {isMechanicMenuOpen ? (
-          <div className="offer-card-menu" role="menu">
-            {OFFER_MECHANIC_OPTIONS.map((mechanicName) => {
-              const isCurrentMechanic = mechanicName === product.mechanic.type;
-
-              return (
-                <button
-                  type="button"
-                  role="menuitem"
-                  className={isCurrentMechanic ? "is-current" : ""}
-                  disabled={isCurrentMechanic}
-                  key={mechanicName}
-                  onClick={() => {
-                    setPendingMechanic(mechanicName);
-                    setIsMechanicMenuOpen(false);
-                  }}
-                  onMouseDown={clearDocumentSelection}
-                >
-                  <span>{mechanicName}</span>
-                  {isCurrentMechanic ? <small>Atual</small> : null}
-                </button>
-              );
-            })}
-          </div>
-        ) : null}
-      </div>
 
       <header className="offer-product-header">
         {headerOptionGroup ? (
@@ -1432,45 +1336,6 @@ const ProductEditor = ({
         </div>
       ) : null}
 
-      {pendingMechanic !== "" ? (
-        <div
-          className="offer-modal-backdrop"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              setPendingMechanic("");
-            }
-          }}
-        >
-          <section
-            className="offer-confirm-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby={dialogTitleId}
-          >
-            <header>
-              <h3 id={dialogTitleId}>Alterar mecanica</h3>
-            </header>
-
-            <p>
-              De <strong>{product.mechanic.type}</strong> para{" "}
-              <strong>{pendingMechanic}</strong>?
-            </p>
-
-            <footer>
-              <button type="button" onClick={() => setPendingMechanic("")}>
-                Cancelar
-              </button>
-              <button
-                type="button"
-                className="is-primary"
-                onClick={() => setPendingMechanic("")}
-              >
-                Confirmar
-              </button>
-            </footer>
-          </section>
-        </div>
-      ) : null}
     </article>
   );
 };

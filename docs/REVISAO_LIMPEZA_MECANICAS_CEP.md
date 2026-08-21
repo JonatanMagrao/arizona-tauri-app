@@ -1,7 +1,9 @@
 # Revisão e plano de limpeza das mecânicas do CEP
 
-**Status:** revisão concluída; plano futuro, ainda não aplicado  
-**Última revisão:** 20 de agosto de 2026  
+**Status:** primeira limpeza segura aplicada; compatibilidade legada preservada
+
+**Última revisão:** 20 de agosto de 2026
+
 **Escopo:** extensão CEP (`ARIZONA-EXTENSION`), incluindo host JSX, painel React
 e integrações da área de roteiro.
 
@@ -14,7 +16,9 @@ A limpeza deve ser dividida em duas frentes:
 2. readers de mecânicas antigas devem permanecer enquanto projetos anteriores
    continuarem suportados.
 
-Nenhuma limpeza foi aplicada durante esta revisão.
+Em 20 de agosto de 2026 foi aplicada somente a primeira limpeza de risco mínimo
+descrita neste documento. Nenhum reader, mapping do registry, DTO, helper de
+jump ou regra do roteiro foi removido.
 
 O registry possui 17 mappings alcançáveis. Portanto, os readers antigos não são
 `dead code` técnico: basta uma precomp possuir o nome correspondente para que o
@@ -63,9 +67,9 @@ inspecionadas. É o melhor candidato entre os readers antigos, mas a amostra nã
 prova que ele esteja ausente de todo o acervo. Sua remoção depende de uma
 varredura maior ou de uma decisão explícita de encerrar essa compatibilidade.
 
-## Limpezas de risco mínimo
+## Limpezas de risco mínimo aplicadas
 
-Os seguintes itens foram confirmados como inertes ou redundantes:
+Os seguintes itens foram confirmados como inertes ou redundantes e removidos:
 
 1. `keepDigitsAndOneComma`, em
    [`layers/textFields.ts`](../ARIZONA-EXTENSION/src/jsx/aeft/domains/ofertas/layers/textFields.ts),
@@ -82,10 +86,9 @@ Os seguintes itens foram confirmados como inertes ou redundantes:
 5. O `grid-template-areas` de `.offer-price-field` não produz efeito porque o
    elemento utiliza `display: flex` e nenhum filho declara `grid-area`.
 
-Esses itens podem compor uma primeira limpeza sem alterar o contrato das
-mecânicas.
+Essa limpeza não alterou o contrato das mecânicas.
 
-## Interface inerte de troca de mecânica
+## Interface inerte de troca de mecânica removida
 
 O menu de três pontos chamado “Alterar mecânica” não troca a precomp:
 
@@ -93,7 +96,7 @@ O menu de três pontos chamado “Alterar mecânica” não troca a precomp:
 - não existe callback, serviço ou função host que efetue a troca;
 - o botão “Confirmar” apenas fecha o diálogo.
 
-Se esse recurso não fizer parte do produto, podem ser removidos em conjunto:
+Como esse recurso não efetuava nenhuma troca, foram removidos em conjunto:
 
 - `OFFER_MECHANIC_OPTIONS`;
 - `isMechanicMenuOpen`, `pendingMechanic` e o tratamento de `Escape` exclusivo;
@@ -105,8 +108,8 @@ Se esse recurso não fizer parte do produto, podem ser removidos em conjunto:
 `.offer-modal-backdrop` deve permanecer, pois também atende os diálogos de texto
 legal e imagens.
 
-Se o recurso for mantido, ele precisa ser implementado de verdade e a lista não
-deve continuar fixa no front.
+Se o recurso voltar no futuro, ele precisa ser implementado de verdade e a lista
+não deve ficar fixa no front.
 
 ## Dependência do roteiro
 

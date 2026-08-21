@@ -1,6 +1,5 @@
 import type { OfferEditorActionResult } from "../types";
 import {
-  getWritableFieldValue,
   normalizeValue,
   readFieldValue,
   setFieldValue,
@@ -32,7 +31,7 @@ export const updateOfferField = (
       }
 
       const normalized = normalizeValue(value, field.format);
-      setFieldValue(field, getWritableFieldValue(field, normalized));
+      setFieldValue(field, normalized);
       const currentValue = normalizeValue(readFieldValue(field), field.format);
 
       if (currentValue !== normalized) {

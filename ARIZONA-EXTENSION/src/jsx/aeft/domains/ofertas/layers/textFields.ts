@@ -148,13 +148,6 @@ export const setFieldValue = (
   setText(field.property, value);
 };
 
-export const getWritableFieldValue = (
-  field: InternalTextField,
-  value: string
-): string => {
-  return value;
-};
-
 export const readValueProperty = (property: Property | null): string => {
   if (property === null) return "";
 
@@ -339,26 +332,6 @@ export const normalizeInteger = (value: string): string => {
       output += character;
     }
   }
-
-  return output;
-};
-
-export const keepDigitsAndOneComma = (value: string): string => {
-  const text = String(value || "").replace(/\./g, ",");
-  let output = "";
-  let hasComma = false;
-
-  for (let index = 0; index < text.length; index += 1) {
-    const character = text.charAt(index);
-    if (character >= "0" && character <= "9") {
-      output += character;
-    } else if (character === "," && !hasComma) {
-      output += character;
-      hasComma = true;
-    }
-  }
-
-  if (output === ",") return "";
 
   return output;
 };
