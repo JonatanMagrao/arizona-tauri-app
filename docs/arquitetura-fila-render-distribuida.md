@@ -545,8 +545,10 @@ mp4OutputModuleTemplate = MP4
 - MP4: comp `EXPORT_MP4`, template de módulo de saída `MP4`, extensão `.mp4`.
 
 O manifesto transporta o identificador da receita, não nomes livres de template
-ou argumentos de linha de comando. O atalho de render do Tauri e o botão local
-do CEP aplicam essa combinação.
+ou argumentos de linha de comando. A fila distribuída e o botão local do CEP
+aplicam essa combinação fixa. O atalho local de render do Tauri usa esses mesmos
+defaults, mas permite configurar os nomes dos templates na tela **Atalhos
+After** sem alterar o contrato distribuído.
 
 Não é necessário bloquear toda versão que não seja a mais nova. O backend deve
 aceitar versões comprovadamente compatíveis e bloquear somente uma combinação

@@ -204,7 +204,9 @@ function JobPanel({
               onClick={(e) => handleUtilClick(e, id)}              // Shift+clique (whitelist)
               onDoubleClick={(e) => handleUtilDoubleClick(e, id)}  // duplo clique = padrão
               disabled={!jobaoCod.trim()}
-              title={`Abrir ${label} (Duplo clique) — Shift+Clique: ação rápida${SHIFT_SINGLE_ALLOWED.has(id) ? "" : " (não disponível)"}`}
+              title={SHIFT_SINGLE_ALLOWED.has(id)
+                ? `Abrir ${label} (Duplo clique) — Shift+Clique: ação rápida`
+                : `Abrir ${label} (Duplo clique)`}
               aria-label={`Abrir ${label}`}
               tabIndex="-1"
             >

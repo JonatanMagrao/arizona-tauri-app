@@ -7,7 +7,10 @@ export const DEFAULT_SETTINGS = Object.freeze({
   adjustMarkersShortcut: "Ctrl+NumpadDecimal",
   swapLayersShortcut: "Ctrl+Numpad5",
   exportPrintFramesShortcut: "Ctrl+Numpad6",
+  exportPrintCompName: "EXPORT",
   renderShortcut: "Ctrl+NumpadEnter",
+  renderMovTemplateName: "PROXY",
+  renderMp4TemplateName: "MP4",
   drive: "I:\\Drives compartilhados\\Phx CRF Copa",
   produtos: "PRODUTOS",
   produtosYear: "",
@@ -26,7 +29,10 @@ export function normalizeSettings(config) {
     adjustMarkersShortcut: String(next.adjustMarkersShortcut ?? "").trim(),
     swapLayersShortcut: String(next.swapLayersShortcut ?? "").trim(),
     exportPrintFramesShortcut: String(next.exportPrintFramesShortcut ?? "").trim(),
+    exportPrintCompName: String(next.exportPrintCompName ?? "").trim(),
     renderShortcut: String(next.renderShortcut ?? "").trim(),
+    renderMovTemplateName: String(next.renderMovTemplateName ?? "").trim(),
+    renderMp4TemplateName: String(next.renderMp4TemplateName ?? "").trim(),
     produtosYear: normalizeProductsYear(next.produtosYear),
     produtosPath: String(next.produtosPath ?? "").trim(),
   };
@@ -51,6 +57,9 @@ export function isSettingsReady(config) {
       && String(config?.produtosPath ?? "").trim()
       && /^\d{4}$/.test(aeVersion)
       && String(config?.produtos ?? "").trim()
+      && String(config?.exportPrintCompName ?? "").trim()
+      && String(config?.renderMovTemplateName ?? "").trim()
+      && String(config?.renderMp4TemplateName ?? "").trim()
       && !isIncompleteDriveEntrypoint(config?.drive)
       && (year === "" || /^\d{4}$/.test(year))
   );

@@ -1997,6 +1997,45 @@ textarea:focus{
   width: 100%;
 }
 
+.settings-after-action-controls{
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 16px;
+}
+
+.settings-after-action-options{
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.settings-after-action-option{
+  min-width: 0;
+  display: grid;
+  flex: 0 1 118px;
+  gap: 4px;
+}
+
+.settings-after-action-option > span{
+  font-size: 11px;
+  line-height: 1.1;
+}
+
+.settings-after-action-option .input{
+  width: 118px;
+  height: 34px;
+}
+
+.settings-after-action-save{
+  min-height: 34px;
+  padding: 8px 12px;
+  border-radius: 9px;
+}
+
 .settings-path-row{
   grid-template-columns: minmax(0, 1fr) max-content;
 }
@@ -2456,6 +2495,20 @@ textarea:focus{
 }
 
 @media (max-width: 680px){
+  .settings-after-shortcuts__header{
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .settings-after-shortcuts__actions{
+    width: 100%;
+  }
+
+  .settings-after-shortcuts__actions .btn{
+    flex: 1 1 0;
+  }
+
   .settings-panel__tabs-row{
     flex-wrap: wrap;
     gap: 8px;
@@ -2494,6 +2547,19 @@ textarea:focus{
   .settings-shortcut-row{
     width: 100%;
     grid-template-columns: minmax(0, 1fr) repeat(3, max-content);
+  }
+
+  .settings-after-action-controls,
+  .settings-after-action-options{
+    width: 100%;
+  }
+
+  .settings-after-action-option{
+    flex: 1 1 120px;
+  }
+
+  .settings-after-action-option .input{
+    width: 100%;
   }
 
   .settings-form--window .settings-short-input{

@@ -172,11 +172,13 @@ materializados ficam nos dados locais do Arizona App, nunca nas pastas
 `Plug-ins` ou `Scripts` do Adobe.
 
 Na tela **Configurações > Atalhos After**, **Padrão** e **Limpar** restauram ou
-desativam uma ação individual. **Restaurar padrões** repõe as seis combinações
-originais e **Limpar todos** deixa todos os campos vazios. Um campo vazio
-significa atalho desativado: a combinação não é registrada globalmente. O botão
-**Gravar** continua permitindo escolher uma combinação personalizada para cada
-ação.
+desativam uma ação individual. **Restaurar atalhos** repõe as oito combinações
+originais e **Limpar todos** deixa todos os campos de atalho vazios. Um campo
+vazio significa atalho desativado: a combinação não é registrada globalmente.
+O botão **Gravar** continua permitindo escolher uma combinação personalizada
+para cada ação. Na mesma tela também é possível configurar a composição usada
+por **Exportar Prints** (padrão `EXPORT`) e os templates locais de MOV e MP4
+usados por **Render** (padrões `PROXY` e `MP4`).
 
 O fonte mantido pelo projeto fica em
 `src-tauri/src/after_effects/arizona_actions.jsx`. Em `npm run tauri:dev`, ele

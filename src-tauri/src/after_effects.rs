@@ -4,6 +4,7 @@ use std::{
     process::Command,
 };
 
+use sha2::{Digest, Sha256};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use tauri::{AppHandle, Manager};
@@ -55,6 +56,9 @@ const RENDER_SCRIPT: &str = include_str!(concat!(
     "/after-effects-jsxbin/render.jsxbin"
 ));
 const SCRIPT_DIRECTORY_NAME: &str = "after-effects-scripts";
+const EXPORT_PRINT_COMP_NAME_FILE: &str = "export-print-comp-name.txt";
+const RENDER_MOV_TEMPLATE_NAME_FILE: &str = "render-mov-template-name.txt";
+const RENDER_MP4_TEMPLATE_NAME_FILE: &str = "render-mp4-template-name.txt";
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -140,7 +144,7 @@ pub fn execute(
         );
     }
 
-    let script_path = materialize_action_script(app, action)?;
+    let script_path = materialize_action_script(app, config, action)?;
     let process = Command::new(&after_fx)
         .arg("-r")
         .arg(&script_path)
@@ -304,15 +308,19 @@ fn tasklist_contains_after_effects(output: &str) -> bool {
 
 fn materialize_action_script(
     app: &AppHandle,
+    config: &AppConfig,
     action: AfterEffectsAction,
 ) -> Result<PathBuf, String> {
-    let directory = app
+    let root_directory = app
         .path()
         .app_local_data_dir()
         .map_err(|err| err.to_string())?
         .join(SCRIPT_DIRECTORY_NAME);
+    let directory = action_script_directory(&root_directory, config, action);
     fs::create_dir_all(&directory)
         .map_err(|err| format!("Nao foi possivel criar {}: {err}", directory.display()))?;
+
+    materialize_action_settings(&directory, config, action)?;
 
     let script_path = directory.join(format!(
         "arizona-{}.{}",
@@ -330,6 +338,64 @@ fn materialize_action_script(
     }
 
     Ok(script_path)
+}
+
+fn action_script_directory(
+    root_directory: &Path,
+    config: &AppConfig,
+    action: AfterEffectsAction,
+) -> PathBuf {
+    let identity = match action {
+        AfterEffectsAction::ExportPrintFrames => config.export_print_comp_name.clone(),
+        AfterEffectsAction::Render => format!(
+            "{}:{}|{}:{}",
+            config.render_mov_template_name.len(),
+            config.render_mov_template_name,
+            config.render_mp4_template_name.len(),
+            config.render_mp4_template_name
+        ),
+        _ => return root_directory.to_path_buf(),
+    };
+    let digest = format!("{:x}", Sha256::digest(identity.as_bytes()));
+
+    root_directory.join(format!("{}-{}", action.script_key(), &digest[..16]))
+}
+
+fn materialize_action_settings(
+    directory: &Path,
+    config: &AppConfig,
+    action: AfterEffectsAction,
+) -> Result<(), String> {
+    let settings = match action {
+        AfterEffectsAction::ExportPrintFrames => vec![(
+            EXPORT_PRINT_COMP_NAME_FILE,
+            config.export_print_comp_name.as_str(),
+        )],
+        AfterEffectsAction::Render => vec![
+            (
+                RENDER_MOV_TEMPLATE_NAME_FILE,
+                config.render_mov_template_name.as_str(),
+            ),
+            (
+                RENDER_MP4_TEMPLATE_NAME_FILE,
+                config.render_mp4_template_name.as_str(),
+            ),
+        ],
+        _ => Vec::new(),
+    };
+
+    for (file_name, value) in settings {
+        let path = directory.join(file_name);
+        let should_write = fs::read_to_string(&path)
+            .map(|current| current != value)
+            .unwrap_or(true);
+        if should_write {
+            fs::write(&path, value.as_bytes())
+                .map_err(|err| format!("Nao foi possivel gravar {}: {err}", path.display()))?;
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(debug_assertions)]
@@ -399,7 +465,85 @@ mod tests {
         assert!(script.contains("function adjustTimelineMarkersToTail()"));
         assert!(script.contains("function swapSelectedLayers()"));
         assert!(script.contains("function exportPrintFrames()"));
+        assert!(script.contains("export-print-comp-name.txt"));
+        assert!(script.contains("render-mov-template-name.txt"));
+        assert!(script.contains("render-mp4-template-name.txt"));
+        assert!(script.contains("getCompByName(exportCompName)"));
+        assert!(script.contains("exportComp.saveFrameToPng"));
+        assert!(!script.contains("projeto.activeItem.saveFrameToPng"));
         assert!(script.contains("function queueRenderOutputs()"));
+    }
+
+    #[test]
+    fn configurable_actions_use_directories_isolated_by_their_settings() {
+        let root = PathBuf::from("after-effects-scripts");
+        let default_config = AppConfig::default();
+        let mut custom_config = default_config.clone();
+        custom_config.export_print_comp_name = "PRINT_CUSTOM".to_string();
+        custom_config.render_mov_template_name = "MOV CUSTOM".to_string();
+
+        assert_eq!(
+            action_script_directory(
+                &root,
+                &default_config,
+                AfterEffectsAction::MoveLayersBackward
+            ),
+            root
+        );
+        assert_ne!(
+            action_script_directory(
+                &root,
+                &default_config,
+                AfterEffectsAction::ExportPrintFrames
+            ),
+            action_script_directory(&root, &custom_config, AfterEffectsAction::ExportPrintFrames)
+        );
+        assert_ne!(
+            action_script_directory(&root, &default_config, AfterEffectsAction::Render),
+            action_script_directory(&root, &custom_config, AfterEffectsAction::Render)
+        );
+    }
+
+    #[test]
+    fn materializes_only_the_settings_needed_by_each_action() {
+        let directory = unique_test_directory("action-settings");
+        fs::create_dir_all(&directory).unwrap();
+        let mut config = AppConfig::default();
+        config.export_print_comp_name = "IMPRESSÃO_Ç".to_string();
+        config.render_mov_template_name = "MOV ÁGIL".to_string();
+        config.render_mp4_template_name = "MP4 MÍDIA".to_string();
+
+        materialize_action_settings(&directory, &config, AfterEffectsAction::ExportPrintFrames)
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(directory.join(EXPORT_PRINT_COMP_NAME_FILE)).unwrap(),
+            "IMPRESSÃO_Ç"
+        );
+        assert!(!directory.join(RENDER_MOV_TEMPLATE_NAME_FILE).exists());
+        assert!(!directory.join(RENDER_MP4_TEMPLATE_NAME_FILE).exists());
+
+        materialize_action_settings(&directory, &config, AfterEffectsAction::Render).unwrap();
+        assert_eq!(
+            fs::read_to_string(directory.join(RENDER_MOV_TEMPLATE_NAME_FILE)).unwrap(),
+            "MOV ÁGIL"
+        );
+        assert_eq!(
+            fs::read_to_string(directory.join(RENDER_MP4_TEMPLATE_NAME_FILE)).unwrap(),
+            "MP4 MÍDIA"
+        );
+
+        fs::remove_dir_all(directory).unwrap();
+
+        let unrelated_directory = unique_test_directory("action-settings-unrelated");
+        fs::create_dir_all(&unrelated_directory).unwrap();
+        materialize_action_settings(
+            &unrelated_directory,
+            &config,
+            AfterEffectsAction::MoveLayersBackward,
+        )
+        .unwrap();
+        assert_eq!(fs::read_dir(&unrelated_directory).unwrap().count(), 0);
+        fs::remove_dir_all(unrelated_directory).unwrap();
     }
 
     #[test]

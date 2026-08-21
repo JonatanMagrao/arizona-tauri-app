@@ -21,8 +21,14 @@ pub struct AppConfig {
     pub swap_layers_shortcut: String,
     #[serde(default = "default_export_print_frames_shortcut")]
     pub export_print_frames_shortcut: String,
+    #[serde(default = "default_export_print_comp_name")]
+    pub export_print_comp_name: String,
     #[serde(default = "default_render_shortcut")]
     pub render_shortcut: String,
+    #[serde(default = "default_render_mov_template_name")]
+    pub render_mov_template_name: String,
+    #[serde(default = "default_render_mp4_template_name")]
+    pub render_mp4_template_name: String,
     #[serde(default = "default_drive")]
     pub drive: String,
     #[serde(default = "default_produtos")]
@@ -44,7 +50,10 @@ impl Default for AppConfig {
             adjust_markers_shortcut: default_adjust_markers_shortcut(),
             swap_layers_shortcut: default_swap_layers_shortcut(),
             export_print_frames_shortcut: default_export_print_frames_shortcut(),
+            export_print_comp_name: default_export_print_comp_name(),
             render_shortcut: default_render_shortcut(),
+            render_mov_template_name: default_render_mov_template_name(),
+            render_mp4_template_name: default_render_mp4_template_name(),
             drive: default_drive(),
             produtos: default_produtos(),
             produtos_year: default_produtos_year(),
@@ -106,7 +115,10 @@ fn sanitize_config(config: AppConfig) -> AppConfig {
         adjust_markers_shortcut: config.adjust_markers_shortcut.trim().to_string(),
         swap_layers_shortcut: config.swap_layers_shortcut.trim().to_string(),
         export_print_frames_shortcut: config.export_print_frames_shortcut.trim().to_string(),
+        export_print_comp_name: config.export_print_comp_name.trim().to_string(),
         render_shortcut: config.render_shortcut.trim().to_string(),
+        render_mov_template_name: config.render_mov_template_name.trim().to_string(),
+        render_mp4_template_name: config.render_mp4_template_name.trim().to_string(),
         drive: config.drive.trim().to_string(),
         produtos: config.produtos.trim().to_string(),
         produtos_year: sanitize_produtos_year(&config.produtos_year),
@@ -134,6 +146,18 @@ pub fn validate_config(config: AppConfig) -> Result<AppConfig, String> {
     if !config.produtos_year.is_empty() && !is_valid_year(&config.produtos_year) {
         return Err("Informe um ano de produtos com 4 dígitos ou deixe em branco.".to_string());
     }
+    validate_after_effects_name(
+        &config.export_print_comp_name,
+        "o nome da composição usada para exportar os prints",
+    )?;
+    validate_after_effects_name(
+        &config.render_mov_template_name,
+        "o nome do template de saída MOV",
+    )?;
+    validate_after_effects_name(
+        &config.render_mp4_template_name,
+        "o nome do template de saída MP4",
+    )?;
 
     Ok(config)
 }
@@ -170,8 +194,20 @@ fn default_export_print_frames_shortcut() -> String {
     "Ctrl+Numpad6".to_string()
 }
 
+fn default_export_print_comp_name() -> String {
+    "EXPORT".to_string()
+}
+
 fn default_render_shortcut() -> String {
     "Ctrl+NumpadEnter".to_string()
+}
+
+fn default_render_mov_template_name() -> String {
+    "PROXY".to_string()
+}
+
+fn default_render_mp4_template_name() -> String {
+    "MP4".to_string()
 }
 
 fn default_drive() -> String {
@@ -203,6 +239,19 @@ fn is_valid_year(value: &str) -> bool {
     value.len() == 4 && value.chars().all(|ch| ch.is_ascii_digit())
 }
 
+fn validate_after_effects_name(value: &str, label: &str) -> Result<(), String> {
+    if value.is_empty() {
+        return Err(format!("Informe {label}."));
+    }
+    if value.chars().count() > 100 || value.chars().any(char::is_control) {
+        return Err(format!(
+            "Informe {label} com até 100 caracteres e sem quebras de linha."
+        ));
+    }
+
+    Ok(())
+}
+
 fn is_incomplete_drive_entrypoint(value: &str) -> bool {
     let path = PathBuf::from(value.trim());
     path.file_name()
@@ -214,6 +263,40 @@ fn is_incomplete_drive_entrypoint(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{validate_config, AppConfig};
+
+    #[test]
+    fn uses_compatible_defaults_for_after_effects_action_names() {
+        let config: AppConfig = serde_json::from_str("{}").unwrap();
+
+        assert_eq!(config.export_print_comp_name, "EXPORT");
+        assert_eq!(config.render_mov_template_name, "PROXY");
+        assert_eq!(config.render_mp4_template_name, "MP4");
+    }
+
+    #[test]
+    fn trims_after_effects_action_names() {
+        let mut config = AppConfig::default();
+        config.export_print_comp_name = "  PRINT_EXPORT  ".to_string();
+        config.render_mov_template_name = "  MOV CUSTOM  ".to_string();
+        config.render_mp4_template_name = "  H264 CUSTOM  ".to_string();
+
+        let validated = validate_config(config).unwrap();
+
+        assert_eq!(validated.export_print_comp_name, "PRINT_EXPORT");
+        assert_eq!(validated.render_mov_template_name, "MOV CUSTOM");
+        assert_eq!(validated.render_mp4_template_name, "H264 CUSTOM");
+    }
+
+    #[test]
+    fn rejects_empty_or_multiline_after_effects_action_names() {
+        let mut empty = AppConfig::default();
+        empty.export_print_comp_name.clear();
+        assert!(validate_config(empty).is_err());
+
+        let mut multiline = AppConfig::default();
+        multiline.render_mov_template_name = "PROXY\nCUSTOM".to_string();
+        assert!(validate_config(multiline).is_err());
+    }
 
     #[test]
     fn allows_every_after_shortcut_to_be_disabled() {

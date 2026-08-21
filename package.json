@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node --test --test-isolation=none src/features/auth/loginFlow.test.mjs src/features/renderQueue/renderHistoryData.test.mjs src/features/renderQueue/renderTiming.test.mjs src/features/renderQueue/renderWindowContract.test.mjs src/features/secondary/roteiroHighlights.test.mjs src/utils/publicErrors.test.mjs",
+    "test": "node --test --test-isolation=none src/features/auth/loginFlow.test.mjs src/features/renderQueue/renderHistoryData.test.mjs src/features/renderQueue/renderTiming.test.mjs src/features/renderQueue/renderWindowContract.test.mjs src/features/secondary/roteiroHighlights.test.mjs src/utils/publicErrors.test.mjs src/utils/settings.test.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:clean": "cd src-tauri && cargo clean",

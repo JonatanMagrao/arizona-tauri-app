@@ -1,36 +1,38 @@
 # Revisão do visualizador de mídia — MP4 e MOV
 
-**Status:** implementação parcial — escopo dinâmico concluído
-**Última revisão:** 05/08/2026
+**Status:** implementação ativa — MP4 interno e MOV nativo
+**Última revisão:** 21/08/2026
 **Escopo:** Arizona App (Tauri)
 
 Esta revisão não altera o render do After Effects, não instala codecs e não
 adiciona FFmpeg. Seu objetivo é tornar a prévia de MP4 confiável em qualquer
-pasta configurada, documentar a limitação de MOV e melhorar as mensagens
-apresentadas ao usuário.
+pasta configurada, abrir MOV diretamente no aplicativo padrão do sistema e
+melhorar as mensagens apresentadas ao usuário.
 
 ## Decisões
 
 - MP4 compatível continuará usando o player do WebView2, sem FFmpeg externo.
 - O caminho configurado em **Carrefour Drive** será a autoridade; o visualizador
   não dependerá da letra `I:`.
-- O backend validará o caminho e adicionará cada mídia individualmente ao
-  Asset Protocol; nenhuma pasta inteira do Drive será liberada.
-- MOV continuará sem garantia de reprodução direta.
-- Quando existir um MP4 correspondente ao MOV, ele será usado como prévia.
-- Sem prévia compatível, o arquivo será aberto no aplicativo padrão do Windows.
+- O backend validará todos os caminhos; somente mídias destinadas ao player
+  interno serão adicionadas individualmente ao Asset Protocol. Nenhuma pasta
+  inteira do Drive será liberada.
+- MOV será aberto diretamente no aplicativo padrão do sistema, sem criar a
+  janela interna e sem procurar uma prévia MP4.
+- Se o player interno rejeitar um MP4, o fallback nativo continuará disponível.
 - Um erro produzirá somente uma mensagem visível, escrita em linguagem humana.
 
 ## Estado da implementação
 
-Concluído em 05/08/2026:
+Concluído em 05/08/2026, com o fluxo MOV atualizado em 21/08/2026:
 
 - o caminho fixo `I:\...` foi removido do `assetProtocol.scope`;
 - cada mídia é canonicalizada e validada contra o Carrefour Drive ou Fotos Flow
   configurado;
-- somente o caminho existente, canonicalizado e com extensão permitida é
-  adicionado em runtime ao Asset Protocol com `allow_file`;
-- o mesmo caminho canonicalizado é enviado ao player;
+- somente o caminho existente, canonicalizado e com extensão permitida de uma
+  mídia interna é adicionado em runtime ao Asset Protocol com `allow_file`;
+- o mesmo caminho canonicalizado é enviado ao player quando o formato usa a
+  janela interna;
 - a janela de mídia aparece imediatamente em estado de carregamento; busca,
   validação e leitura do Drive são executadas em uma tarefa bloqueante separada,
   sem ocupar a thread da interface;
@@ -41,8 +43,10 @@ Concluído em 05/08/2026:
   janela;
 - o player mantém um indicador visível enquanto aguarda dados, inclusive em
   buffering e seek;
-- tela principal, histórico e histórico de cópias passam pela mesma preparação
-  antes de abrir a janela de mídia;
+- MP4, áudio e histórico de cópias passam pela mesma preparação antes de abrir
+  a janela de mídia;
+- MOV da tela principal e do histórico é localizado e validado em segundo plano
+  e aberto diretamente no aplicativo padrão, sem exibir a janela de mídia;
 - os caminhos MP4/MOV encontrados ao abrir um projeto ficam em cache durante a
   sessão e são reutilizados no clique seguinte; cache obsoleto é descartado;
 - uma abertura solicitada procura somente o formato clicado, sem varrer também
@@ -51,31 +55,33 @@ Concluído em 05/08/2026:
   inválida, pasta irmã com prefixo semelhante, pré-aquecimento e arquivo vazio.
 
 Continuam pendentes nesta proposta: seleção determinística em todos os fallbacks,
-prévia MP4 para MOV, classificação completa dos erros, mensagens sem duplicação
-e a matriz manual de reprodução em instalações reais do Windows/After Effects.
+classificação completa dos erros do player MP4, mensagens sem duplicação e a
+matriz manual de reprodução em instalações reais do Windows/After Effects.
 
 ## Fluxo atual
 
-1. O Rust abre imediatamente a janela secundária no estado **Preparando**.
-2. Em uma thread de trabalho, o backend procura o vídeo em `OUT/RENDER/MP4` ou
-   `OUT/RENDER/MOV`.
-3. Ainda fora da thread da interface, o Rust canonicaliza o arquivo, confirma
-   que ele está dentro das raízes configuradas, aquece seus trechos inicial e
-   final e adiciona somente esse arquivo ao Asset Protocol.
-4. Na janela interna, o frontend transforma o mesmo caminho canonicalizado com
-   `convertFileSrc()`.
-5. Um elemento `<video>` do WebView2 tenta reproduzir o arquivo.
-6. A tela continua indicando carregamento até o player sinalizar que possui
-   dados suficientes; durante buffering ou seek, o indicador reaparece.
-7. O evento de erro do player mostra uma mensagem genérica e tenta abrir o
-   visualizador do Windows. Uma falha após o usuário acionar **Reproduzir**
-   também usa esse fallback.
+Para MP4 e áudio:
 
-Todos os pontos de entrada usam a mesma preparação. Se a janela interna nem
-chegar a abrir, o Rust tenta abrir a mídia já validada no aplicativo padrão do
-Windows. Se a janela abrir, mas o player rejeitar o conteúdo, o frontend executa
-o fallback nativo. A revisão futura deve terminar de uniformizar as mensagens
-apresentadas nesses resultados.
+1. O Rust abre imediatamente a janela secundária no estado **Preparando**.
+2. Em uma thread de trabalho, o backend procura e canonicaliza a mídia.
+3. O backend confirma que o arquivo está dentro das raízes configuradas, aquece
+   seus trechos inicial e final e adiciona somente esse arquivo ao Asset
+   Protocol.
+4. A janela interna tenta reproduzir a mídia; se o player rejeitar um MP4, o
+   fallback nativo continua abrindo o aplicativo padrão do sistema.
+
+Para MOV:
+
+1. O backend reconhece o formato antes de abrir qualquer janela secundária.
+2. Em uma thread de trabalho, reutiliza o caminho em cache quando ele ainda é
+   válido ou localiza novamente o arquivo `MOV` solicitado.
+3. O caminho é canonicalizado e validado contra as raízes configuradas.
+4. O arquivo é aberto diretamente com o aplicativo padrão do sistema.
+
+O fluxo MOV não usa o player interno, o Asset Protocol nem o pré-aquecimento do
+WebView. Na tela principal ele não abre uma janela de mídia; no histórico ele
+preserva a própria janela do histórico. MP4, áudio e cópias MP4 mantêm o fluxo
+anterior.
 
 O aplicativo não distribui `ffmpeg.exe`, mpv, VLC ou outro motor próprio de
 decodificação. Um MP4 em H.264/AVC com áudio AAC deve funcionar usando os
@@ -91,9 +97,11 @@ não muda a decisão de não exigir FFmpeg externo para o MP4 padrão.
 
 O Carrefour Drive continua configurável, mas não é mais copiado para um glob
 estático. O escopo inicial conserva somente `$APPLOCALDATA/**`; antes de abrir a
-janela, o Rust canonicaliza a mídia, confirma que ela pertence ao Drive ou ao
-Fotos Flow configurado e chama `asset_protocol_scope().allow_file()` para aquele
-arquivo. O caminho canonicalizado liberado é o mesmo entregue ao frontend.
+janela interna, o Rust canonicaliza a mídia, confirma que ela pertence ao Drive
+ou ao Fotos Flow configurado e chama `asset_protocol_scope().allow_file()` para
+aquele arquivo. O caminho canonicalizado liberado é o mesmo entregue ao
+frontend. MOV passa pela mesma validação de raiz, mas não é liberado no Asset
+Protocol porque segue diretamente ao aplicativo padrão do sistema.
 
 Assim, trocar a letra ou a pasta do Drive não exige reiniciar o aplicativo e não
 libera a pasta inteira ao WebView. Ainda é necessário validar manualmente letras
@@ -187,9 +195,9 @@ com o WebView2, pois esses programas podem usar decodificadores próprios.
 9. Oferecer ou executar o fallback apropriado.
 10. Mostrar apenas o resultado real da ação.
 
-Todos os pontos de entrada — tela principal, histórico e histórico de cópias —
-devem usar a mesma preparação. Não se deve liberar o disco inteiro, uma unidade
-inteira ou `scope: ["**"]`.
+Todos os pontos de entrada de MP4 — tela principal, histórico e histórico de
+cópias — devem usar a mesma preparação. Não se deve liberar o disco inteiro,
+uma unidade inteira ou `scope: ["**"]`.
 
 As liberações individuais são cumulativas até o encerramento do processo. O
 escopo estático de `$APPLOCALDATA/**` pode permanecer se ainda for necessário
@@ -207,25 +215,19 @@ MOV é um contêiner e pode carregar formatos diferentes. Alguns arquivos com
 H.264 podem funcionar, mas ProRes, Animation e outros formatos comuns de
 produção não têm reprodução garantida no WebView2.
 
-### Estratégia recomendada
+### Estratégia canônica
 
-Esta proposta prefere imediatamente o MP4 como prévia; não tenta primeiro
-decodificar o MOV original.
+O Arizona não tenta decodificar MOV nem procurar um MP4 correspondente. Ao
+solicitar esse formato, o backend:
 
-1. Ao solicitar um MOV, procurar o MP4 correspondente.
-2. Se existir, reproduzir esse MP4 como prévia no Arizona.
-3. Manter o MOV original como arquivo de entrega.
-4. Se não houver MP4, abrir o MOV no aplicativo padrão do Windows.
-5. Se a prévia MP4 também falhar, abrir o MOV original no Windows.
+1. localiza somente o arquivo MOV solicitado;
+2. reutiliza o cache apenas se o caminho continuar válido;
+3. canonicaliza o caminho e confirma que ele pertence às raízes configuradas;
+4. abre diretamente o MOV no aplicativo padrão do sistema.
 
-A correspondência precisa ser determinística para não exibir outro render por
-engano:
-
-1. preferir um MP4 com o mesmo nome-base do MOV;
-2. usar projeto ou código de jobinho apenas como fallback;
-3. aceitar somente arquivos reais com extensão `.mp4`;
-4. se mais de um candidato continuar igualmente válido, não escolher um ao
-   acaso: considerar que não há prévia inequívoca e abrir o MOV no Windows.
+Essa política vale para a tela principal e para o histórico. Nenhuma janela de
+mídia é criada e o histórico permanece aberto. O clique que apenas revela o
+arquivo no Explorer não muda.
 
 Incorporar FFmpeg, mpv ou VLC aumentaria o tamanho do instalador, a manutenção,
 a superfície de segurança e a complexidade de distribuição e licenças. Caso a
@@ -242,15 +244,14 @@ corrigir o fluxo normal de MP4.
 | Fora da configuração | Este vídeo não está na pasta configurada. Confira o Carrefour Drive nas Configurações. |
 | Acesso recusado | Não conseguimos acessar este vídeo. Verifique se a pasta está disponível e tente novamente. |
 | MP4 não reproduzido, fallback concluído | Este vídeo não pôde ser reproduzido no Arizona e foi aberto no aplicativo padrão do Windows. |
-| MOV com prévia | Usando a versão MP4 como prévia deste MOV. |
-| MOV sem prévia, fallback concluído | A prévia deste MOV não está disponível. O arquivo foi aberto no aplicativo padrão do Windows. |
+| MOV aberto | O arquivo foi enviado ao aplicativo padrão do sistema. |
+| Abertura nativa do MOV falhou | Não foi possível abrir o MOV no aplicativo padrão do sistema. |
 | Fallback falhou | Não conseguimos reproduzir o vídeo no Arizona nem abri-lo no Windows. Abra a pasta e escolha outro aplicativo de vídeo. |
 | Falha desconhecida | Não conseguimos reproduzir este vídeo agora. Tente novamente. |
 
-A informação sobre a prévia MP4 é contexto, não erro, e deve aparecer de forma
-discreta no player, sem toast. Antes de tentar o fallback, a interface pode
-oferecer o botão **Abrir no Windows**. Depois da tentativa automática, deve
-informar somente o resultado real.
+Para MP4, antes de tentar o fallback, a interface pode oferecer o botão **Abrir
+no Windows**. Depois da tentativa automática, deve informar somente o resultado
+real. MOV não passa por essa interface.
 
 ## Padrão geral para mensagens de erro
 
@@ -312,12 +313,12 @@ privacidade.
 - arquivo MP4 incompleto;
 - arquivo auxiliar ou pasta com o mesmo prefixo do projeto;
 - mais de um MP4 válido com o mesmo prefixo;
-- MOV H.264;
-- MOV ProRes e Animation, com e sem MP4 correspondente;
-- mais de um MP4 candidato para o mesmo código, sem escolha aleatória;
+- MOV H.264, ProRes e Animation abrindo diretamente no aplicativo padrão;
+- abertura de MOV pela tela principal sem exibir a janela de mídia;
+- abertura de MOV pelo histórico sem substituir a janela do histórico;
 - nomes contendo `#`, `%`, `?` e caracteres Unicode;
 - computador sem aplicativo padrão de vídeo;
-- abertura pela tela principal, histórico e histórico de cópias;
+- abertura de MP4 pela tela principal, histórico e histórico de cópias;
 - histórico apontando para um Drive antigo;
 - seek em MP4 grande ou localizado em unidade compartilhada;
 - reprodução de áudio depois da mudança de escopo;
@@ -336,7 +337,8 @@ privacidade.
 - uma falha gera somente uma mensagem visível;
 - nenhuma mensagem voltada ao usuário apresenta termos técnicos;
 - o fallback informa corretamente se abriu ou se também falhou;
-- MOV incompatível usa a prévia MP4 ou o aplicativo padrão do Windows;
+- todo MOV válido usa diretamente o aplicativo padrão do sistema, sem abrir o
+  player interno;
 - o fluxo básico de MP4 não exige FFmpeg; edições Windows N podem precisar do
   recurso de mídia do próprio sistema.
 

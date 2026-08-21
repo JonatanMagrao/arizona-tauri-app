@@ -628,7 +628,7 @@ fn configured_after_shortcuts(config: &AppConfig) -> Result<Vec<RegisteredAfterS
             config.move_layers_forward_shortcut.as_str(),
         ),
         (
-            "Aplicar Jump",
+            "Mover Jump",
             AfterEffectsAction::MoveJumpMarker,
             config.move_jump_marker_shortcut.as_str(),
         ),
@@ -3393,6 +3393,14 @@ async fn open_video(
     media_type: String,
 ) -> Result<ActionResponse, String> {
     require_authenticated(&auth)?;
+    if should_open_video_natively(&media_type) {
+        let task_app = app.clone();
+        return open_mov_natively_in_background(move || {
+            resolve_video_for_native(&task_app, &jobao_cod, &jobinho_cod, &media_type)
+        })
+        .await;
+    }
+
     let loading_title = format!("Preparando {}...", media_type.trim().to_ascii_uppercase());
     let task_app = app.clone();
 
@@ -3664,6 +3672,15 @@ async fn history_open_media(
     media_type: String,
 ) -> Result<ActionResponse, String> {
     require_authenticated(&auth)?;
+    if should_open_video_natively(&media_type) {
+        let task_app = app.clone();
+        return open_mov_natively_in_background(move || {
+            let path = history::media_file(&task_app, id, &media_type)?;
+            validate_configured_media_path(&task_app, &path)
+        })
+        .await;
+    }
+
     let loading_title = format!("Preparando {}...", media_type.trim().to_ascii_uppercase());
     let task_app = app.clone();
 
@@ -3778,6 +3795,29 @@ fn remove_cached_video_path(app: &AppHandle, jobao_cod: &str, jobinho_cod: &str,
     }
 }
 
+fn should_open_video_natively(media_type: &str) -> bool {
+    media::MediaType::parse(media_type) == Some(media::MediaType::Mov)
+}
+
+async fn open_mov_natively_in_background<F>(operation: F) -> Result<ActionResponse, String>
+where
+    F: FnOnce() -> Result<PathBuf, String> + Send + 'static,
+{
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let path = operation()?;
+        arizona::open_start_file(&path)
+    })
+    .await
+    .unwrap_or_else(|_| {
+        Err("Não foi possível abrir o MOV no aplicativo padrão do sistema.".to_string())
+    });
+
+    Ok(match result {
+        Ok(()) => ActionResponse::ok(),
+        Err(message) => ActionResponse::err(message),
+    })
+}
+
 fn cached_video_file(
     app: &AppHandle,
     jobao_cod: &str,
@@ -3796,6 +3836,25 @@ fn cached_video_file(
         path,
         kind: "video".to_string(),
     })
+}
+
+fn resolve_video_for_native(
+    app: &AppHandle,
+    jobao_cod: &str,
+    jobinho_cod: &str,
+    media_type: &str,
+) -> Result<PathBuf, String> {
+    if let Some(media) = cached_video_file(app, jobao_cod, jobinho_cod, media_type) {
+        match validate_configured_media_path(app, &media.path) {
+            Ok(path) => return Ok(path),
+            Err(_) => remove_cached_video_path(app, jobao_cod, jobinho_cod, media_type),
+        }
+    }
+
+    let media = arizona_from_app(app)?.video_file(jobao_cod, jobinho_cod, media_type)?;
+    let path = validate_configured_media_path(app, &media.path)?;
+    cache_video_path(app, jobao_cod, jobinho_cod, media_type, &path);
+    Ok(path)
 }
 
 async fn load_media_window_in_background<F>(
@@ -4046,7 +4105,7 @@ fn path_starts_with_windows_case_insensitive(path: &Path, root: &Path) -> bool {
 mod media_scope_tests {
     use super::{
         media_cache_key, path_starts_with_windows_case_insensitive, prewarm_media_for_webview,
-        validate_media_path_against_roots,
+        should_open_video_natively, validate_media_path_against_roots,
     };
     use std::{
         fs,
@@ -4170,6 +4229,15 @@ mod media_scope_tests {
             media_cache_key("123", "abc", "mp4"),
             media_cache_key("123", "abc", "mov")
         );
+    }
+
+    #[test]
+    fn only_mov_bypasses_the_internal_media_window() {
+        assert!(should_open_video_natively("mov"));
+        assert!(should_open_video_natively(" MOV "));
+        assert!(!should_open_video_natively("mp4"));
+        assert!(!should_open_video_natively(" MP4 "));
+        assert!(!should_open_video_natively("wav"));
     }
 }
 

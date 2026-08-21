@@ -13,6 +13,32 @@
   var TAIL_MARKER_START_INDEX = 2;
   var TAIL_MARKER_END_INDEX = 6;
 
+  function readActionSetting(fileName) {
+    var settingFile = null;
+    var isOpen = false;
+
+    try {
+      var scriptFile = new File($.fileName);
+      settingFile = new File(scriptFile.parent.fsName + "/" + fileName);
+      if (!settingFile.exists) return null;
+
+      settingFile.encoding = "UTF-8";
+      isOpen = settingFile.open("r");
+      if (!isOpen) return null;
+
+      var value = String(settingFile.read()).replace(/^\s+|\s+$/g, "");
+      return value.length > 0 ? value : null;
+    } catch (error) {
+      return null;
+    } finally {
+      if (isOpen) {
+        try {
+          settingFile.close();
+        } catch (closeError) {}
+      }
+    }
+  }
+
   function isComp(item) {
     return item !== null && item instanceof CompItem;
   }
@@ -339,14 +365,16 @@
     // Gera frames .png a partir da claquete e de cada oferta, cria a respectiva pasta da praça e salva os arquivos dentro
     // por Wiliam Takashi Yamashita com contribuição do Jonatan Magrão na função getCompByName
 
-    var projeto = app.project;
-    var renderizar = projeto.renderQueue;
+    if (app.project === null || app.project.file === null) {
+      return "Salve o projeto do After Effects antes de exportar os prints.";
+    }
 
+    var projeto = app.project;
 
     function getCompByName(compName){
+        var compFound = null
         for(var i=1;i<=projeto.numItems;i++){
             var item = projeto.item(i);
-            var compFound = null
             if(item instanceof CompItem && item.name == compName){
                 compFound = item
                 break
@@ -356,19 +384,27 @@
         return compFound
     }
 
+    var exportCompName = readActionSetting("export-print-comp-name.txt");
+    if (exportCompName === null) {
+      return "Não foi possível carregar o nome da composição configurada para os prints. Salve a configuração no Arizona App e tente novamente.";
+    }
+    var exportComp = getCompByName(exportCompName);
+    if (exportComp === null) {
+      return 'Não encontrei a composição "' + exportCompName + '" neste projeto.';
+    }
+
     var filtroInicial = app.project.file.name.split("_")[1];
-    var index = renderizar.numItems;
     var novaPasta = new Folder(projeto.file.parent.parent.parent.toString()+"/OUT/PRINT/"+filtroInicial.toString());
     novaPasta.create();
 
-    projeto.activeItem.saveFrameToPng(0,File(novaPasta.toString()+"/"+projeto.file.name+"_00.png"));
-    projeto.activeItem.saveFrameToPng(15.75,File(novaPasta.toString()+"/"+projeto.file.name+"_01.png"));
-    projeto.activeItem.saveFrameToPng(17,File(novaPasta.toString()+"/"+projeto.file.name+"_02.png"));
-    projeto.activeItem.saveFrameToPng(20,File(novaPasta.toString()+"/"+projeto.file.name+"_03.png"));
-    projeto.activeItem.saveFrameToPng(23,File(novaPasta.toString()+"/"+projeto.file.name+"_04.png"));
-    projeto.activeItem.saveFrameToPng(26,File(novaPasta.toString()+"/"+projeto.file.name+"_05.png"));
-    projeto.activeItem.saveFrameToPng(29,File(novaPasta.toString()+"/"+projeto.file.name+"_06.png"));
-    alert("Prints exportados! Verifique se está tudo certo.");
+    exportComp.saveFrameToPng(0,File(novaPasta.toString()+"/"+projeto.file.name+"_00.png"));
+    exportComp.saveFrameToPng(15.75,File(novaPasta.toString()+"/"+projeto.file.name+"_01.png"));
+    exportComp.saveFrameToPng(17,File(novaPasta.toString()+"/"+projeto.file.name+"_02.png"));
+    exportComp.saveFrameToPng(20,File(novaPasta.toString()+"/"+projeto.file.name+"_03.png"));
+    exportComp.saveFrameToPng(23,File(novaPasta.toString()+"/"+projeto.file.name+"_04.png"));
+    exportComp.saveFrameToPng(26,File(novaPasta.toString()+"/"+projeto.file.name+"_05.png"));
+    exportComp.saveFrameToPng(29,File(novaPasta.toString()+"/"+projeto.file.name+"_06.png"));
+    alert("Prints exportados!");
   }
 
   function hasIndexedJumpMarker(layer) {
@@ -597,6 +633,11 @@
       return "Salve o projeto do After Effects antes de enviar para render.";
     }
 
+    var movTemplateSetting = readActionSetting("render-mov-template-name.txt");
+    var mp4TemplateSetting = readActionSetting("render-mp4-template-name.txt");
+    if (movTemplateSetting === null || mp4TemplateSetting === null) {
+      return "Não foi possível carregar os templates de render configurados. Salve a configuração no Arizona App e tente novamente.";
+    }
     var comps = getAllComps();
     var movComps = findCompsByName(comps, "EXPORT");
     var mp4Comps = findCompsByName(comps, "EXPORT_MP4");
@@ -648,21 +689,21 @@
     try {
       movQueueItem = project.renderQueue.items.add(movComps[0]);
       var movOutputModule = movQueueItem.outputModule(1);
-      var proxyTemplateName = findOutputModuleTemplateName(
+      var movTemplateName = findOutputModuleTemplateName(
         movOutputModule,
-        "PROXY"
+        movTemplateSetting
       );
-      if (proxyTemplateName === null) {
-        throw new Error("arizona_proxy_format_missing");
+      if (movTemplateName === null) {
+        throw new Error("arizona_mov_template_missing");
       }
-      movOutputModule.applyTemplate(proxyTemplateName);
+      movOutputModule.applyTemplate(movTemplateName);
       movOutputModule.file = movFile;
 
       mp4QueueItem = project.renderQueue.items.add(mp4Comps[0]);
       var mp4OutputModule = mp4QueueItem.outputModule(1);
       var mp4TemplateName = findOutputModuleTemplateName(
         mp4OutputModule,
-        "MP4"
+        mp4TemplateSetting
       );
       if (mp4TemplateName === null) {
         throw new Error("arizona_mp4_format_missing");
@@ -676,13 +717,13 @@
         if (movQueueItem !== null) movQueueItem.remove();
       } catch (removeError) {}
 
-      if (error && error.message === "arizona_proxy_format_missing") {
-        return 'O formato de saída "PROXY" não está disponível neste After Effects. Adicione-o e tente novamente.';
+      if (error && error.message === "arizona_mov_template_missing") {
+        return 'O template de saída "' + movTemplateSetting + '" não está disponível neste After Effects. Adicione-o e tente novamente.';
       }
       if (error && error.message === "arizona_mp4_format_missing") {
-        return 'O formato de saída "MP4" não está disponível neste After Effects. Adicione-o e tente novamente.';
+        return 'O template de saída "' + mp4TemplateSetting + '" não está disponível neste After Effects. Adicione-o e tente novamente.';
       }
-      return "Não foi possível adicionar o MOV e o MP4 à fila. Confira os formatos de saída e tente novamente.";
+      return "Não foi possível adicionar o MOV e o MP4 à fila. Confira os templates de saída e tente novamente.";
     } finally {
       app.endUndoGroup();
     }
