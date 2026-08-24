@@ -1,12 +1,12 @@
 {
   "name": "arizona-app",
   "private": true,
-  "version": "2.2.0",
+  "version": "2.3.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node --test --test-isolation=none src/features/auth/loginFlow.test.mjs src/features/renderQueue/renderHistoryData.test.mjs src/features/renderQueue/renderTiming.test.mjs src/features/renderQueue/renderWindowContract.test.mjs src/features/secondary/roteiroHighlights.test.mjs src/utils/publicErrors.test.mjs src/utils/settings.test.mjs",
+    "test": "node --test --test-isolation=none src/features/auth/loginFlow.test.mjs src/features/renderQueue/renderHistoryData.test.mjs src/features/renderQueue/renderTiming.test.mjs src/features/renderQueue/renderWindowContract.test.mjs src/features/secondary/cepExtensionStatus.test.mjs src/features/secondary/roteiroHighlights.test.mjs src/utils/publicErrors.test.mjs src/utils/settings.test.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:clean": "cd src-tauri && cargo clean",
@@ -37,7 +37,7 @@
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2",
+    "@tauri-apps/cli": "2.8.3",
     "@vitejs/plugin-react": "^4.6.0",
     "asn1js": "^3.0.10",
     "concurrently": "^10.0.3",

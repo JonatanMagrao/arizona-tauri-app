@@ -7,6 +7,9 @@ histórico continua disponível no Git.
 
 ## Operação e segurança
 
+- [Política comercial da licença temporária](./POLITICA_COMERCIAL_LICENCA_TEMPORARIA.md):
+  referência de períodos e preços, itens não incluídos, limites das correções
+  sem custo e modalidades de suporte cobrado separadamente.
 - [Licenciamento e chaves — não apagar](./LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md):
   contrato de licença, recibo CEP, assinatura do `.zxp`, segredos e rotações.
 - [Ações manuais de segurança e release](./ACOES_MANUAIS_SEGURANCA.md): itens que

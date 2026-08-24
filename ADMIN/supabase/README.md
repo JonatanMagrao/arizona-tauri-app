@@ -331,15 +331,19 @@ gestores e usuÃ¡rios finais.
 
 ## Logs de atividade no Admin
 
-A aba **Logs de atividade** consulta os registros jÃ¡ existentes em
-`licensing.audit_log` por meio da Edge Function `master-list-audit-log`. A
-consulta Ã© paginada, somente leitura e exige a mesma sessÃ£o master recente via
+A aba **Logs de atividade** consulta a view somente leitura
+`licensing.activity_log` por meio da Edge Function `master-list-audit-log`. A
+view reÃºne os registros administrativos de `licensing.audit_log` e as recusas
+de acesso `suspicious` jÃ¡ armazenadas separadamente em
+`licensing.clock_audits`; as tabelas de origem e suas retenÃ§Ãµes continuam
+independentes. A consulta Ã© paginada e exige a mesma sessÃ£o master recente via
 Google OAuth usada pelo restante do Admin.
 
 A resposta apresenta apenas identidades e contexto necessÃ¡rios para a
 interface. Metadados brutos, cÃ³digos de ativaÃ§Ã£o e identificadores de instalaÃ§Ã£o
-nÃ£o sÃ£o enviados ao navegador. A funÃ§Ã£o nÃ£o cria logs, nÃ£o altera tabelas e nÃ£o
-precisa de migration.
+nÃ£o sÃ£o enviados ao navegador. Para a recusa por relÃ³gio, somente o cÃ³digo
+catalogado e a diferenÃ§a aproximada em segundos sÃ£o expostos; os horÃ¡rios crus
+permanecem fora da resposta. A funÃ§Ã£o nÃ£o cria logs nem altera tabelas.
 
 ## Primeiro acesso no Tauri
 

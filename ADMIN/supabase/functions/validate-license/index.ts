@@ -18,6 +18,10 @@ import {
   serverAuthDay,
 } from "../_shared/auth-cycle.ts";
 import {
+  boundedClockSkewSeconds,
+  shouldRecordClockAudit,
+} from "../_shared/clock-audit.ts";
+import {
   fingerprintDecision,
   fingerprintPrefix,
   normalizeFingerprint,
@@ -37,7 +41,6 @@ type ValidateLicenseBody = {
 
 const MAX_CLOCK_BACKWARDS_SECONDS = 300;
 const MAX_CLOCK_SKEW_SECONDS = 300;
-const CLOCK_AUDIT_INTERVAL_MS = 60 * 60 * 1000;
 const ARIZONA_ORGANIZATION_SLUG = "arizona";
 
 function cleanString(value: unknown, maxLength: number): string {
@@ -269,17 +272,31 @@ Deno.serve(async (req) => {
       .eq("id", device.id)
       .eq("status", "active");
 
-    const { data: latestClockAudit } = await admin
+    const { data: latestClockAudit, error: latestClockAuditError } = await admin
       .schema("licensing")
       .from("clock_audits")
-      .select("created_at")
+      .select("created_at,status")
       .eq("device_id", device.id)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
-    const latestAuditAt = parseDate(latestClockAudit?.created_at)?.getTime() || 0;
-    if (clockStatus === "suspicious" || now.getTime() - latestAuditAt >= CLOCK_AUDIT_INTERVAL_MS) {
-      await admin
+    if (latestClockAuditError) {
+      console.error("validate-license clock audit lookup failed", {
+        code: latestClockAuditError.code,
+      });
+    }
+    const latestAuditAt = parseDate(latestClockAudit?.created_at)?.getTime() ?? null;
+    const latestAuditStatus = latestClockAudit?.status === "ok"
+      || latestClockAudit?.status === "suspicious"
+      ? latestClockAudit.status
+      : null;
+    if (shouldRecordClockAudit({
+      currentStatus: clockStatus,
+      latestStatus: latestAuditStatus,
+      latestCreatedAtMillis: latestAuditAt,
+      nowMillis: now.getTime(),
+    })) {
+      const { error: clockAuditError } = await admin
         .schema("licensing")
         .from("clock_audits")
         .insert({
@@ -290,9 +307,19 @@ Deno.serve(async (req) => {
           last_server_time_seen: lastServerTimeSeen?.toISOString() || null,
           last_local_time_seen: lastLocalTimeSeen?.toISOString() || null,
           server_time: now.toISOString(),
-          clock_skew_seconds: clockSkewSeconds,
+          // PostgreSQL integer is intentionally bounded so even a machine
+          // reset to an extreme year still produces a useful audit row.
+          clock_skew_seconds: boundedClockSkewSeconds(clockSkewSeconds),
           status: clockStatus,
         });
+      // Observability must never become an availability dependency for login.
+      // A failed write is visible in Function logs while the existing access
+      // decision and response remain unchanged.
+      if (clockAuditError) {
+        console.error("validate-license clock audit insert failed", {
+          code: clockAuditError.code,
+        });
+      }
     }
     if (clockStatus === "suspicious") {
       return errorResponse("clock_suspicious", "Device clock needs online verification.", 403);

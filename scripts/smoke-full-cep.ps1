@@ -54,7 +54,12 @@ function Invoke-SmokeUninstall {
   }
 }
 
-$setupPath = Join-Path $RepoRoot "src-tauri\target\release\bundle\nsis\arizona-app_2.2.0_x64-setup.exe"
+$tauriConfig = Get-Content -LiteralPath (Join-Path $RepoRoot "src-tauri\tauri.conf.json") -Raw |
+  ConvertFrom-Json
+$appVersion = [string]$tauriConfig.version
+$productName = [string]$tauriConfig.productName
+$setupName = "{0}_{1}_x64-setup.exe" -f $productName, $appVersion
+$setupPath = Join-Path $RepoRoot "src-tauri\target\release\bundle\nsis\$setupName"
 $afterEffectsPath = "C:\Program Files\Adobe\Adobe After Effects 2026\Support Files\AfterFX.exe"
 $jsxPath = Join-Path $RepoRoot "scripts\cep-smoke-after-effects.jsx"
 $installDir = Join-Path $env:ProgramFiles "arizona-app"
@@ -94,7 +99,7 @@ New-Item -ItemType Directory -Path $smokeRoot | Out-Null
 
 try {
   Assert-Smoke (Test-Path -LiteralPath $setupPath -PathType Leaf) `
-    "Full setup 2.2.0 not found: $setupPath"
+    "Full setup $appVersion not found: $setupPath"
   Assert-Smoke (Test-Path -LiteralPath $afterEffectsPath -PathType Leaf) `
     "After Effects 2026 not found: $afterEffectsPath"
   Assert-Smoke (Test-Path -LiteralPath $jsxPath -PathType Leaf) `

@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::env;
 use std::ffi::OsString;
@@ -7,10 +8,12 @@ use std::path::{Path, PathBuf};
 #[cfg(windows)]
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
+use std::time::SystemTime;
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use roxmltree::Document;
+use semver::Version;
 use sha2::{Digest, Sha256};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -33,6 +36,8 @@ const MAX_ZXP_TOTAL_UNCOMPRESSED_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_ZXP_ENTRIES: usize = 4096;
 const MAX_ZXP_METADATA_BYTES: u64 = 2 * 1024 * 1024;
 const CONTENT_SIGNATURE_SUCCESS_MARKER: &str = "CEP content signature verified:";
+const CEP_SCOPE_PER_USER: &str = "perUser";
+const CEP_SCOPE_PER_MACHINE: &str = "perMachine";
 #[cfg(windows)]
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
 #[cfg(windows)]
@@ -81,6 +86,27 @@ pub struct CepExtensionStatus {
     version: Option<String>,
     path: String,
     is_dev_link: bool,
+    scope: Option<String>,
+    installations: Vec<CepInstallationStatus>,
+    has_multiple_installations: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CepInstallationStatus {
+    scope: String,
+    installed: bool,
+    version: Option<String>,
+    path: String,
+    is_dev_link: bool,
+    manifest_valid: bool,
+}
+
+#[derive(Debug, Clone)]
+struct CepInstallationCandidate {
+    status: CepInstallationStatus,
+    semantic_version: Option<Version>,
+    manifest_modified: Option<SystemTime>,
 }
 
 #[derive(serde::Serialize)]
@@ -122,28 +148,30 @@ pub fn set_cep_debug_mode(
 #[tauri::command]
 pub fn cep_extension_status() -> Result<CepExtensionStatus, String> {
     let _operation = lock_cep_operation()?;
-    let per_user_target = extension_target_dir()?;
-    let per_user_installed = extension_manifest_path(&per_user_target).is_file();
-    let system_targets: Vec<_> = system_extension_target_dirs()
-        .into_iter()
-        .map(|target| {
-            let installed = extension_manifest_path(&target).is_file();
-            (target, installed)
-        })
+    let candidates = cep_installation_inventory()?;
+    let effective = select_effective_installation(&candidates);
+    let fallback = candidates
+        .first()
+        .expect("CEP inventory always contains the per-user target");
+    let selected = effective.unwrap_or(fallback);
+    let installations: Vec<_> = candidates
+        .iter()
+        .map(|candidate| candidate.status.clone())
         .collect();
-    let target =
-        select_extension_status_target(&per_user_target, per_user_installed, &system_targets);
-    let manifest_path = extension_manifest_path(&target);
-    let version = read_file_text_limited(&manifest_path, MAX_ZXP_METADATA_BYTES)
-        .ok()
-        .and_then(|xml| manifest_bundle_info(&xml).ok())
-        .and_then(|info| info.version);
+    let has_multiple_installations = installations
+        .iter()
+        .filter(|installation| installation.installed)
+        .count()
+        > 1;
 
     Ok(CepExtensionStatus {
-        installed: manifest_path.is_file(),
-        version,
-        path: target.to_string_lossy().into_owned(),
-        is_dev_link: folder_is_junction(&target),
+        installed: effective.is_some(),
+        version: effective.and_then(|candidate| candidate.status.version.clone()),
+        path: selected.status.path.clone(),
+        is_dev_link: selected.status.is_dev_link,
+        scope: effective.map(|candidate| candidate.status.scope.clone()),
+        installations,
+        has_multiple_installations,
     })
 }
 
@@ -164,14 +192,23 @@ pub async fn install_cep_zxp(
     app: tauri::AppHandle,
     path: String,
     replace_dev_link: Option<bool>,
+    allow_downgrade: Option<bool>,
+    expected_version: Option<String>,
 ) -> Result<CepInstallResult, String> {
     let replace_dev_link = replace_dev_link.unwrap_or(false);
+    let allow_downgrade = allow_downgrade.unwrap_or(false);
     run_blocking_cep_operation(move || {
         let auth = app.state::<AuthState>();
         crate::require_authenticated(&auth)?;
         let _operation = lock_cep_operation()?;
         let verifier = resolve_cep_content_verifier(&app)?;
-        install_zxp_file(Path::new(path.trim()), replace_dev_link, &verifier)
+        install_zxp_file(
+            Path::new(path.trim()),
+            replace_dev_link,
+            allow_downgrade,
+            expected_version.as_deref(),
+            &verifier,
+        )
     })
     .await
 }
@@ -400,6 +437,7 @@ fn inspect_zxp_file(path: &Path) -> Result<CepZxpInfo, String> {
     let version = info.version.ok_or_else(|| {
         "cep_zxp_invalid: ExtensionBundleVersion ausente no manifesto.".to_string()
     })?;
+    parse_cep_semver(&version).map_err(|err| format!("cep_zxp_invalid: {err}"))?;
     let signed = archive_entry_index(&mut archive, SIGNATURES_ENTRY).is_some();
     // An unsigned ZXP has no certificate to pin, so it fails the same way as a
     // ZXP signed by somebody else.
@@ -637,11 +675,24 @@ fn assert_extracted_tree_is_trusted(extracted: &Path) -> Result<(), String> {
 fn install_zxp_file(
     zxp_path: &Path,
     replace_dev_link: bool,
+    allow_downgrade: bool,
+    expected_version: Option<&str>,
     verifier: &CepContentVerifier,
 ) -> Result<CepInstallResult, String> {
     // Rejects a foreign bundle before anything is touched on disk; the version
     // that is reported back comes from the extracted manifest further down.
-    inspect_zxp_file_with_verifier(zxp_path, verifier)?;
+    let package = inspect_zxp_file_with_verifier(zxp_path, verifier)?;
+    if let Some(expected_version) = expected_version {
+        assert_zxp_version_unchanged(expected_version.trim(), &package.version)?;
+    }
+    let package_version =
+        parse_cep_semver(&package.version).map_err(|err| format!("cep_zxp_invalid: {err}"))?;
+    assert_downgrade_allowed(
+        &package_version,
+        &package.version,
+        allow_downgrade,
+        &cep_installation_inventory()?,
+    )?;
 
     assert_after_effects_is_closed()?;
 
@@ -692,6 +743,9 @@ fn install_zxp_file(
         // claimed when it was inspected.
         .and_then(|()| installed_bundle_version(&temp))
         .map_err(|err| format!("cep_install_failed: {err}"))
+        .and_then(|version| {
+            assert_zxp_version_unchanged(&package.version, &version).map(|()| version)
+        })
         // Same reasoning for the certificate pin; this error already carries
         // its own code, so it is not wrapped.
         .and_then(|version| assert_extracted_tree_is_trusted(&temp).map(|()| version))
@@ -706,6 +760,18 @@ fn install_zxp_file(
             // The first check only protects the start of a potentially long
             // extraction. Refuse the commit if After Effects opened meanwhile.
             assert_after_effects_is_closed()?;
+            // A Full installer or another process may have replaced the
+            // per-machine extension while this package was being extracted.
+            // Re-evaluate the effective Adobe candidate immediately before the
+            // commit so an older per-user package cannot win accidentally.
+            let extracted_version = parse_cep_semver(&version)
+                .map_err(|err| format!("cep_install_failed: {err}"))?;
+            assert_downgrade_allowed(
+                &extracted_version,
+                &version,
+                allow_downgrade,
+                &cep_installation_inventory()?,
+            )?;
             // A signed production tree must not inherit the debug bypass from
             // an older/dev installation. Clear every supported CSXS key before
             // touching the current target, and abort safely if that fails.
@@ -1252,26 +1318,219 @@ fn extension_manifest_path(target: &Path) -> PathBuf {
     target.join("CSXS").join("manifest.xml")
 }
 
+fn cep_installation_inventory() -> Result<Vec<CepInstallationCandidate>, String> {
+    let per_user_target = extension_target_dir()?;
+    let mut targets = Vec::with_capacity(1 + system_extension_target_dirs().len());
+    targets.push((CEP_SCOPE_PER_USER, per_user_target));
+    targets.extend(
+        system_extension_target_dirs()
+            .into_iter()
+            .map(|target| (CEP_SCOPE_PER_MACHINE, target)),
+    );
+
+    Ok(targets
+        .into_iter()
+        .map(|(scope, target)| inspect_cep_installation(scope, &target))
+        .collect())
+}
+
+fn inspect_cep_installation(scope: &str, target: &Path) -> CepInstallationCandidate {
+    let manifest_path = extension_manifest_path(target);
+    let is_dev_link = folder_is_junction(target);
+    // Inventory means "something occupies the managed target", even when a
+    // broken install left a regular file instead of a directory. Only a valid
+    // Arizona manifest can become the effective installation below.
+    let installed = fs::symlink_metadata(target).is_ok();
+    let mut status = CepInstallationStatus {
+        scope: scope.to_string(),
+        installed,
+        version: None,
+        path: target.to_string_lossy().into_owned(),
+        is_dev_link,
+        manifest_valid: false,
+    };
+
+    if !installed {
+        return CepInstallationCandidate {
+            status,
+            semantic_version: None,
+            manifest_modified: None,
+        };
+    }
+
+    let manifest_metadata = fs::symlink_metadata(&manifest_path).ok();
+    let manifest_modified = manifest_metadata
+        .as_ref()
+        .filter(|metadata| metadata.file_type().is_file())
+        .and_then(|metadata| metadata.modified().ok());
+    if manifest_modified.is_none()
+        && !manifest_metadata
+            .as_ref()
+            .is_some_and(|metadata| metadata.file_type().is_file())
+    {
+        return CepInstallationCandidate {
+            status,
+            semantic_version: None,
+            manifest_modified: None,
+        };
+    }
+
+    let info = read_file_text_limited(&manifest_path, MAX_ZXP_METADATA_BYTES)
+        .ok()
+        .and_then(|xml| manifest_bundle_info(&xml).ok());
+    if let Some(info) = info {
+        status.version = info.version;
+        if info.bundle_id.as_deref() == Some(CEP_BUNDLE_ID) {
+            let semantic_version = status
+                .version
+                .as_deref()
+                .and_then(|version| Version::parse(version).ok());
+            status.manifest_valid = semantic_version.is_some();
+            return CepInstallationCandidate {
+                status,
+                semantic_version,
+                manifest_modified,
+            };
+        }
+    }
+
+    CepInstallationCandidate {
+        status,
+        semantic_version: None,
+        manifest_modified,
+    }
+}
+
+fn select_effective_installation(
+    candidates: &[CepInstallationCandidate],
+) -> Option<&CepInstallationCandidate> {
+    let mut effective: Option<&CepInstallationCandidate> = None;
+    for candidate in candidates {
+        if candidate.semantic_version.is_none() {
+            continue;
+        }
+        let should_replace = effective
+            .map(|current| candidate_precedes_current(candidate, current))
+            .unwrap_or(true);
+        if should_replace {
+            effective = Some(candidate);
+        }
+    }
+    effective
+}
+
+fn candidate_precedes_current(
+    candidate: &CepInstallationCandidate,
+    current: &CepInstallationCandidate,
+) -> bool {
+    let (Some(candidate_version), Some(current_version)) = (
+        candidate.semantic_version.as_ref(),
+        current.semantic_version.as_ref(),
+    ) else {
+        return candidate.semantic_version.is_some();
+    };
+    match candidate_version.cmp_precedence(current_version) {
+        Ordering::Greater => return true,
+        Ordering::Less => return false,
+        Ordering::Equal => {}
+    }
+
+    if let (Some(candidate_modified), Some(current_modified)) =
+        (candidate.manifest_modified, current.manifest_modified)
+    {
+        match candidate_modified.cmp(&current_modified) {
+            Ordering::Greater => return true,
+            Ordering::Less => return false,
+            Ordering::Equal => {}
+        }
+    }
+
+    // Adobe searches system extension folders before the per-user folder when
+    // both version precedence and manifest modification time are identical.
+    // Within one scope the existing inventory order remains the stable tie-break.
+    candidate.status.scope == CEP_SCOPE_PER_MACHINE && current.status.scope == CEP_SCOPE_PER_USER
+}
+
+fn parse_cep_semver(version: &str) -> Result<Version, String> {
+    Version::parse(version).map_err(|_| {
+        format!("ExtensionBundleVersion \"{version}\" não é uma versão SemVer válida.")
+    })
+}
+
+fn assert_zxp_version_unchanged(expected: &str, actual: &str) -> Result<(), String> {
+    if expected == actual {
+        return Ok(());
+    }
+    Err(format!(
+        "cep_zxp_changed: A versão do arquivo ZXP mudou durante a instalação (esperada v{expected}, encontrada v{actual}). Selecione e confirme o arquivo novamente."
+    ))
+}
+
+fn assert_downgrade_allowed(
+    selected_version: &Version,
+    selected_version_text: &str,
+    allow_downgrade: bool,
+    candidates: &[CepInstallationCandidate],
+) -> Result<(), String> {
+    let blocking_system = candidates
+        .iter()
+        .filter(|candidate| candidate.status.scope == CEP_SCOPE_PER_MACHINE)
+        .filter(|candidate| {
+            candidate
+                .semantic_version
+                .as_ref()
+                .is_some_and(|version| version.cmp_precedence(selected_version).is_gt())
+        })
+        .max_by(|left, right| {
+            let left_version = left
+                .semantic_version
+                .as_ref()
+                .expect("filtered system candidate has a version");
+            let right_version = right
+                .semantic_version
+                .as_ref()
+                .expect("filtered system candidate has a version");
+            left_version.cmp_precedence(right_version)
+        });
+    if let Some(blocking_system) = blocking_system {
+        let installed_version_text = blocking_system
+            .status
+            .version
+            .as_deref()
+            .unwrap_or("desconhecida");
+        return Err(format!(
+            "cep_downgrade_requires_full_installer: A versão CEP v{installed_version_text} está instalada para todos os usuários. Instalar a versão anterior v{selected_version_text} apenas no perfil atual não a substituiria; use o instalador Full para fazer um downgrade coordenado."
+        ));
+    }
+
+    let Some(effective) = select_effective_installation(candidates) else {
+        return Ok(());
+    };
+    let Some(installed_version) = effective.semantic_version.as_ref() else {
+        return Ok(());
+    };
+    if !installed_version.cmp_precedence(selected_version).is_gt() {
+        return Ok(());
+    }
+
+    let installed_version_text = effective
+        .status
+        .version
+        .as_deref()
+        .unwrap_or("desconhecida");
+    if !allow_downgrade {
+        return Err(format!(
+            "cep_downgrade_confirmation_required: A versão selecionada v{selected_version_text} é anterior à versão CEP efetiva v{installed_version_text}. Confirme explicitamente o downgrade para continuar."
+        ));
+    }
+    Ok(())
+}
+
 fn windows_path_dedup_key(path: &Path) -> String {
     path.to_string_lossy()
         .replace('/', "\\")
         .trim_end_matches('\\')
         .to_ascii_lowercase()
-}
-
-fn select_extension_status_target(
-    per_user_target: &Path,
-    per_user_installed: bool,
-    system_targets: &[(PathBuf, bool)],
-) -> PathBuf {
-    if per_user_installed {
-        return per_user_target.to_path_buf();
-    }
-    system_targets
-        .iter()
-        .find(|(_, installed)| *installed)
-        .map(|(target, _)| target.clone())
-        .unwrap_or_else(|| per_user_target.to_path_buf())
 }
 
 fn extensions_dir() -> Result<PathBuf, String> {
@@ -1523,23 +1782,26 @@ fn windows_zip_component_is_safe(component: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        any_player_debug_mode_is_enabled, content_verifier_arguments, create_install_staging_dir,
-        extract_zxp_to, fingerprint_is_trusted, install_work_root, is_sha256_hex,
-        is_stale_install_leftover, list_install_backups, manifest_bundle_info,
+        any_player_debug_mode_is_enabled, assert_downgrade_allowed, assert_zxp_version_unchanged,
+        content_verifier_arguments, create_install_staging_dir, extract_zxp_to,
+        fingerprint_is_trusted, inspect_cep_installation, install_work_root, is_sha256_hex,
+        is_stale_install_leftover, list_install_backups, manifest_bundle_info, parse_cep_semver,
         parse_trusted_certificates, player_debug_mode_is_enabled, random_suffix, read_archive_text,
         recover_interrupted_install, remove_install_work_path, require_regular_archive_entry,
-        resolve_cep_content_verifier_in, sanitized_zip_entry_path, select_extension_status_target,
+        resolve_cep_content_verifier_in, sanitized_zip_entry_path, select_effective_installation,
         signing_certificate_fingerprint, swap_into_place, system_extension_target_dirs_from,
         system_extensions_dir_from, validate_archive_limits_and_paths,
         verifier_output_has_success_marker, zip_names_match, CepContentTarget, CepContentVerifier,
-        CEP_BUNDLE_ID, CONTENT_SIGNATURE_SUCCESS_MARKER, MAX_ZXP_ENTRIES,
-        TRUSTED_CERTIFICATES_MANIFEST,
+        CepExtensionStatus, CEP_BUNDLE_ID, CEP_SCOPE_PER_MACHINE, CEP_SCOPE_PER_USER,
+        CONTENT_SIGNATURE_SUCCESS_MARKER, MAX_ZXP_ENTRIES, TRUSTED_CERTIFICATES_MANIFEST,
     };
+    use semver::Version;
     use serde::Deserialize;
     use std::ffi::OsString;
     use std::fs;
     use std::io::{Cursor, Write};
     use std::path::{Path, PathBuf};
+    use std::time::{Duration, SystemTime};
     use zip::write::SimpleFileOptions;
     use zip::{ZipArchive, ZipWriter};
 
@@ -1639,6 +1901,23 @@ mod tests {
         fs::create_dir_all(&work_root).expect("work root should be created");
         let target = extensions.join(CEP_BUNDLE_ID);
         (root, extensions, work_root, target)
+    }
+
+    fn write_cep_manifest(target: &Path, bundle_id: &str, version: &str) {
+        let manifest_path = target.join("CSXS").join("manifest.xml");
+        fs::create_dir_all(
+            manifest_path
+                .parent()
+                .expect("manifest should have a parent"),
+        )
+        .expect("manifest directory should be created");
+        fs::write(
+            manifest_path,
+            format!(
+                r#"<ExtensionManifest ExtensionBundleId="{bundle_id}" ExtensionBundleVersion="{version}"/>"#
+            ),
+        )
+        .expect("manifest should be written");
     }
 
     fn create_fake_verifier(root: &Path) -> CepContentVerifier {
@@ -2127,41 +2406,228 @@ mod tests {
     }
 
     #[test]
-    fn status_prefers_user_then_system_x64_then_legacy_x86() {
-        let user = PathBuf::from(r"C:\Users\Arizona\AppData\Roaming\Adobe\CEP\extensions")
-            .join(CEP_BUNDLE_ID);
-        let full = system_extensions_dir_from(Path::new(r"C:\Program Files\Common Files"))
-            .join(CEP_BUNDLE_ID);
-        let x86 = system_extensions_dir_from(Path::new(r"C:\Program Files (x86)\Common Files"))
-            .join(CEP_BUNDLE_ID);
+    fn installed_manifest_must_have_the_arizona_bundle_and_a_semver_version() {
+        let root = TestDirectory::new("installed-manifest-validation");
+        let valid_target = root.path().join("valid");
+        let foreign_target = root.path().join("foreign");
+        let malformed_target = root.path().join("malformed");
+        let invalid_version_target = root.path().join("invalid-version");
+        let empty_target = root.path().join("empty-target");
+        let file_target = root.path().join("file-target");
+        let missing_target = root.path().join("missing");
 
+        write_cep_manifest(&valid_target, CEP_BUNDLE_ID, "2.2.0");
+        write_cep_manifest(&foreign_target, "com.example.other", "9.9.9");
+        write_cep_manifest(&invalid_version_target, CEP_BUNDLE_ID, "2.2");
+        let malformed_manifest = malformed_target.join("CSXS").join("manifest.xml");
+        fs::create_dir_all(
+            malformed_manifest
+                .parent()
+                .expect("manifest should have a parent"),
+        )
+        .expect("manifest directory should be created");
+        fs::write(&malformed_manifest, b"not xml").expect("malformed manifest should be written");
+        fs::create_dir_all(&empty_target).expect("empty target should be created");
+        fs::write(&file_target, b"not a CEP directory").expect("file target should be created");
+
+        let valid = inspect_cep_installation(CEP_SCOPE_PER_USER, &valid_target);
+        assert!(valid.status.installed);
+        assert!(valid.status.manifest_valid);
+        assert_eq!(valid.status.version.as_deref(), Some("2.2.0"));
+        assert_eq!(valid.semantic_version, Some(Version::new(2, 2, 0)));
+
+        let foreign = inspect_cep_installation(CEP_SCOPE_PER_MACHINE, &foreign_target);
+        assert!(foreign.status.installed);
+        assert!(!foreign.status.manifest_valid);
+        assert_eq!(foreign.status.version.as_deref(), Some("9.9.9"));
+        assert!(foreign.semantic_version.is_none());
+
+        let malformed = inspect_cep_installation(CEP_SCOPE_PER_MACHINE, &malformed_target);
+        assert!(malformed.status.installed);
+        assert!(!malformed.status.manifest_valid);
+        assert!(malformed.status.version.is_none());
+
+        let invalid_version =
+            inspect_cep_installation(CEP_SCOPE_PER_MACHINE, &invalid_version_target);
+        assert!(invalid_version.status.installed);
+        assert!(!invalid_version.status.manifest_valid);
+        assert_eq!(invalid_version.status.version.as_deref(), Some("2.2"));
+
+        let empty = inspect_cep_installation(CEP_SCOPE_PER_MACHINE, &empty_target);
+        assert!(empty.status.installed);
+        assert!(!empty.status.manifest_valid);
+        assert!(empty.status.version.is_none());
+
+        let file = inspect_cep_installation(CEP_SCOPE_PER_MACHINE, &file_target);
+        assert!(file.status.installed);
+        assert!(!file.status.manifest_valid);
+        assert!(file.status.version.is_none());
+
+        let missing = inspect_cep_installation(CEP_SCOPE_PER_MACHINE, &missing_target);
+        assert!(!missing.status.installed);
+        assert!(!missing.status.manifest_valid);
+        assert!(missing.status.version.is_none());
+    }
+
+    #[test]
+    fn effective_status_uses_the_highest_valid_semver_across_scopes() {
+        let root = TestDirectory::new("effective-semver");
+        let user = root.path().join("user");
+        let system_beta = root.path().join("system-beta");
+        let system_stable = root.path().join("system-stable");
+        write_cep_manifest(&user, CEP_BUNDLE_ID, "2.1.9");
+        write_cep_manifest(&system_beta, CEP_BUNDLE_ID, "2.2.0-beta.1");
+        write_cep_manifest(&system_stable, CEP_BUNDLE_ID, "2.2.0");
+
+        let candidates = vec![
+            inspect_cep_installation(CEP_SCOPE_PER_USER, &user),
+            inspect_cep_installation(CEP_SCOPE_PER_MACHINE, &system_beta),
+            inspect_cep_installation(CEP_SCOPE_PER_MACHINE, &system_stable),
+        ];
+        let effective =
+            select_effective_installation(&candidates).expect("one valid candidate should win");
+        assert_eq!(effective.status.scope, CEP_SCOPE_PER_MACHINE);
+        assert_eq!(effective.status.version.as_deref(), Some("2.2.0"));
+        assert_eq!(effective.status.path, system_stable.to_string_lossy());
+
+        write_cep_manifest(&user, CEP_BUNDLE_ID, "2.2.0+user.7");
+        write_cep_manifest(&system_stable, CEP_BUNDLE_ID, "2.2.0+system.9");
+        let mut tied = vec![
+            inspect_cep_installation(CEP_SCOPE_PER_USER, &user),
+            inspect_cep_installation(CEP_SCOPE_PER_MACHINE, &system_stable),
+        ];
+        let same_modified = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        tied[0].manifest_modified = Some(same_modified);
+        tied[1].manifest_modified = Some(same_modified);
+        let exact_tie = select_effective_installation(&tied)
+            .expect("a system candidate should win an exact tie");
+        assert_eq!(exact_tie.status.scope, CEP_SCOPE_PER_MACHINE);
+
+        tied[0].manifest_modified = Some(same_modified + Duration::from_secs(1));
+        let newer_user_manifest = select_effective_installation(&tied)
+            .expect("the most recently modified equal-precedence manifest should win");
+        assert_eq!(newer_user_manifest.status.scope, CEP_SCOPE_PER_USER);
+
+        let second_system = root.path().join("second-system");
+        write_cep_manifest(&second_system, CEP_BUNDLE_ID, "2.2.0+second-system");
+        let mut exact_system_order = vec![
+            tied[0].clone(),
+            tied[1].clone(),
+            inspect_cep_installation(CEP_SCOPE_PER_MACHINE, &second_system),
+        ];
+        for candidate in &mut exact_system_order {
+            candidate.manifest_modified = Some(same_modified);
+        }
+        let first_system = select_effective_installation(&exact_system_order)
+            .expect("the first system directory should win the final tie");
+        assert_eq!(first_system.status.path, system_stable.to_string_lossy());
+    }
+
+    #[test]
+    fn manual_downgrade_requires_confirmation_or_the_full_installer() {
+        let root = TestDirectory::new("downgrade-policy");
+        let user = root.path().join("user");
+        let system = root.path().join("system");
+        write_cep_manifest(&user, CEP_BUNDLE_ID, "2.2.0");
+        write_cep_manifest(&system, CEP_BUNDLE_ID, "2.2.0");
+        let selected_older = parse_cep_semver("2.1.0").expect("test SemVer should parse");
+        let selected_newer = parse_cep_semver("2.3.0").expect("test SemVer should parse");
+
+        let user_only = vec![inspect_cep_installation(CEP_SCOPE_PER_USER, &user)];
+        let confirmation_error =
+            assert_downgrade_allowed(&selected_older, "2.1.0", false, &user_only)
+                .expect_err("an unconfirmed per-user downgrade must fail");
+        assert!(confirmation_error.starts_with("cep_downgrade_confirmation_required:"));
+        assert_downgrade_allowed(&selected_older, "2.1.0", true, &user_only)
+            .expect("an explicitly confirmed per-user downgrade should pass");
+        assert_downgrade_allowed(&selected_newer, "2.3.0", false, &user_only)
+            .expect("an upgrade should not require downgrade confirmation");
+
+        let system_only = vec![inspect_cep_installation(CEP_SCOPE_PER_MACHINE, &system)];
+        let full_installer_error =
+            assert_downgrade_allowed(&selected_older, "2.1.0", true, &system_only)
+                .expect_err("a per-user package cannot downgrade a newer system install");
+        assert!(full_installer_error.starts_with("cep_downgrade_requires_full_installer:"));
+
+        write_cep_manifest(&user, CEP_BUNDLE_ID, "2.3.0");
+        let mixed_scopes = vec![
+            inspect_cep_installation(CEP_SCOPE_PER_USER, &user),
+            inspect_cep_installation(CEP_SCOPE_PER_MACHINE, &system),
+        ];
         assert_eq!(
-            select_extension_status_target(
-                &user,
-                true,
-                &[(full.clone(), true), (x86.clone(), true)]
-            ),
-            user
+            select_effective_installation(&mixed_scopes)
+                .and_then(|candidate| candidate.status.version.as_deref()),
+            Some("2.3.0")
         );
+        let shadowed_system_error =
+            assert_downgrade_allowed(&selected_older, "2.1.0", true, &mixed_scopes)
+                .expect_err("a newer system copy would remain effective after the user downgrade");
+        assert!(shadowed_system_error.starts_with("cep_downgrade_requires_full_installer:"));
+
+        write_cep_manifest(&system, CEP_BUNDLE_ID, "2.2.0+machine.7");
+        let same_precedence_system = vec![inspect_cep_installation(CEP_SCOPE_PER_MACHINE, &system)];
+        let selected_same_precedence = parse_cep_semver("2.2.0").expect("test SemVer should parse");
+        assert_downgrade_allowed(
+            &selected_same_precedence,
+            "2.2.0",
+            false,
+            &same_precedence_system,
+        )
+        .expect("build metadata must not turn equal SemVer precedence into a downgrade");
+    }
+
+    #[test]
+    fn zxp_version_must_match_the_confirmed_and_extracted_package_exactly() {
+        assert_zxp_version_unchanged("2.2.0", "2.2.0").expect("the unchanged version should pass");
+        let changed_after_confirmation = assert_zxp_version_unchanged("2.2.0", "2.2.1")
+            .expect_err("a package changed after confirmation must fail");
+        assert!(changed_after_confirmation.starts_with("cep_zxp_changed:"));
+        let changed_build = assert_zxp_version_unchanged("2.2.0+approved", "2.2.0+other")
+            .expect_err("the extracted version must match the inspected text exactly");
+        assert!(changed_build.starts_with("cep_zxp_changed:"));
+    }
+
+    #[test]
+    fn status_serialization_preserves_old_fields_and_adds_inventory() {
+        let root = TestDirectory::new("status-contract");
+        let user = root.path().join("user");
+        let system = root.path().join("system");
+        write_cep_manifest(&user, CEP_BUNDLE_ID, "2.1.0");
+        write_cep_manifest(&system, CEP_BUNDLE_ID, "2.2.0");
+        let candidates = vec![
+            inspect_cep_installation(CEP_SCOPE_PER_USER, &user),
+            inspect_cep_installation(CEP_SCOPE_PER_MACHINE, &system),
+        ];
+        let effective =
+            select_effective_installation(&candidates).expect("system candidate should be valid");
+        let status = CepExtensionStatus {
+            installed: true,
+            version: effective.status.version.clone(),
+            path: effective.status.path.clone(),
+            is_dev_link: effective.status.is_dev_link,
+            scope: Some(effective.status.scope.clone()),
+            installations: candidates
+                .iter()
+                .map(|candidate| candidate.status.clone())
+                .collect(),
+            has_multiple_installations: true,
+        };
+        let json = serde_json::to_value(status).expect("status should serialize");
+
+        assert_eq!(json["installed"], true);
+        assert_eq!(json["version"], "2.2.0");
+        assert_eq!(json["path"], system.to_string_lossy().as_ref());
+        assert_eq!(json["isDevLink"], false);
+        assert_eq!(json["scope"], CEP_SCOPE_PER_MACHINE);
+        assert_eq!(json["hasMultipleInstallations"], true);
+        assert_eq!(json["installations"].as_array().map(Vec::len), Some(2));
+        assert_eq!(json["installations"][0]["scope"], CEP_SCOPE_PER_USER);
+        assert_eq!(json["installations"][0]["manifestValid"], true);
         assert_eq!(
-            select_extension_status_target(
-                &user,
-                false,
-                &[(full.clone(), true), (x86.clone(), true)]
-            ),
-            full
-        );
-        assert_eq!(
-            select_extension_status_target(
-                &user,
-                false,
-                &[(full.clone(), false), (x86.clone(), true)]
-            ),
-            x86
-        );
-        assert_eq!(
-            select_extension_status_target(&user, false, &[(full, false), (x86, false)]),
-            user
+            json["installations"][0]
+                .as_object()
+                .map(serde_json::Map::len),
+            Some(6)
         );
     }
 

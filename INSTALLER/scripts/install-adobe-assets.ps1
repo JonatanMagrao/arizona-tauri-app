@@ -6,15 +6,64 @@ param(
   [string]$StatePath = "",
   [string]$TrustedCertPath = "",
   [string]$AfterEffectsProcessName = "AfterFX",
-  [string[]]$AdobeRoots = @()
+  [string[]]$AdobeRoots = @(),
+  [switch]$AllowCepVersionDowngrade
 )
 
 . "$PSScriptRoot\common.ps1"
 
 $logRoot = Get-InstallerLogRoot $LogRoot
 $payloadRootFull = Get-FullPath $PayloadRoot
+$script:cepOperationLock = $null
+$script:cepOperationLockPath = ""
+$script:cepOperationLockWorkRoot = ""
+$script:cepOperationLockContainerRoot = ""
+
+function Close-CepOperationLock {
+  if ($null -ne $script:cepOperationLock) {
+    try {
+      $script:cepOperationLock.Dispose()
+    } catch {
+    }
+    $script:cepOperationLock = $null
+  }
+  if (![string]::IsNullOrWhiteSpace($script:cepOperationLockPath) -and
+      (Test-Path -LiteralPath $script:cepOperationLockPath -PathType Leaf)) {
+    try {
+      Remove-Item -LiteralPath $script:cepOperationLockPath -Force
+    } catch {
+    }
+  }
+  if (![string]::IsNullOrWhiteSpace($script:cepOperationLockWorkRoot) -and
+      ![string]::IsNullOrWhiteSpace($script:cepOperationLockContainerRoot)) {
+    try {
+      Remove-DirectoryIfEmptySafe `
+        -Path $script:cepOperationLockWorkRoot `
+        -AllowedParent $script:cepOperationLockContainerRoot `
+        -Label "CEP installer work root" | Out-Null
+    } catch {
+    }
+  }
+}
+
+function Exit-CepInstaller {
+  param([Parameter(Mandatory = $true)][int]$Code)
+  Close-CepOperationLock
+  exit $Code
+}
+
+function Get-ReparseTargetToken {
+  param([Parameter(Mandatory = $true)]$Item)
+
+  $target = Get-JsonProperty $Item "Target"
+  if ($null -eq $target) {
+    return ""
+  }
+  return (@($target) | ForEach-Object { [string]$_ }) -join "`n"
+}
 
 trap {
+  Close-CepOperationLock
   Write-InstallerLog "ERROR installing Adobe assets: $($_.Exception.Message)" $logRoot
   Write-Error $_
   exit 1
@@ -83,6 +132,8 @@ if ([string]::IsNullOrWhiteSpace($expectedBundleVersion) -or
     $zxpInfo.BundleVersion -ne $expectedBundleVersion) {
   throw "CEP payload ExtensionBundleVersion does not match release-manifest.json."
 }
+# Reject a malformed release version while the operation is still read-only.
+ConvertTo-ArizonaSemVer $expectedBundleVersion | Out-Null
 
 if ([string]::IsNullOrWhiteSpace($TrustedCertPath)) {
   $TrustedCertPath = Join-Path (Split-Path -Parent $payloadRootFull) "cep-trusted-cert.json"
@@ -106,6 +157,7 @@ if (Test-Path -LiteralPath (Join-Path $payloadRootFull "aex")) {
 }
 
 $legacyAexTargets = @()
+$previousState = $null
 if (Test-Path -LiteralPath $statePathFull -PathType Leaf) {
   try {
     $previousState = Get-Content -LiteralPath $statePathFull -Raw | ConvertFrom-Json
@@ -134,27 +186,6 @@ foreach ($installation in @($afterInstallations)) {
 }
 $legacyAexTargets = @($legacyAexTargets | Sort-Object -Unique)
 
-if (Test-AfterEffectsRunning -ProcessName $AfterEffectsProcessName) {
-  Write-InstallerLog "After Effects is running; close it before installing or upgrading the Arizona CEP extension." $logRoot
-  exit 20
-}
-
-foreach ($pluginPath in $legacyAexTargets) {
-  $pluginDir = Assert-ArizonaAexPath -Path $pluginPath -AdobeRoots $AdobeRoots
-  $pluginsRoot = Split-Path -Parent $pluginDir
-  $aexWasPresent = $null -ne (Get-PathItem $pluginPath)
-  Remove-PathSafe -Path $pluginPath -AllowedParent $pluginDir -Label "legacy Arizona AEX plugin"
-  if ($aexWasPresent) {
-    Write-InstallerLog "Removed legacy AEX plugin from $pluginPath" $logRoot
-  }
-
-  if (Remove-DirectoryIfEmptySafe -Path $pluginDir -AllowedParent $pluginsRoot -Label "legacy Arizona AEX directory") {
-    Write-InstallerLog "Removed empty legacy Arizona plugin directory from $pluginDir" $logRoot
-  } elseif ($null -ne (Get-PathItem $pluginDir)) {
-    Write-InstallerLog "Preserved non-empty legacy Arizona plugin directory at $pluginDir" $logRoot
-  }
-}
-
 if ([string]::IsNullOrWhiteSpace($CepExtensionsRoot)) {
   $systemCommonProgramFiles = Get-SystemCommonProgramFiles
   $CepExtensionsRoot = Join-Path $systemCommonProgramFiles "Adobe\CEP\extensions"
@@ -166,7 +197,7 @@ if ([string]::IsNullOrWhiteSpace($CepExtensionsRoot)) {
   $cepRootTrustAnchor = Split-Path -Parent $CepExtensionsRoot
 }
 
-Write-InstallerLog "Installing Arizona CEP extension from $payloadRootFull" $logRoot
+Write-InstallerLog "Evaluating Arizona CEP extension from $payloadRootFull" $logRoot
 
 $cepDestination = Join-Path $CepExtensionsRoot "com.arizona-carrefour.cep"
 $cepExtensionsRootFull = Assert-ArizonaCepPath -Path $cepDestination -ExpectedExtensionsRoot $CepExtensionsRoot
@@ -195,6 +226,51 @@ Assert-NoIntermediateReparsePoint `
   -Path $cepWorkRoot `
   -TrustedRoot $cepRootTrustAnchor `
   -IncludePath
+
+# Serialize every Full helper before recovery, cleanup or swap. The lock file may
+# survive a crash, but the kernel handle cannot: OpenOrCreate + FileShare.None
+# therefore never turns a stale file into a permanent blocker.
+$script:cepOperationLockPath = Join-Path $cepWorkRoot "com.arizona-carrefour.cep.install.lock"
+$script:cepOperationLockWorkRoot = $cepWorkRoot
+$script:cepOperationLockContainerRoot = $cepContainerRoot
+Assert-PathInside `
+  -Path $script:cepOperationLockPath `
+  -Parent $cepWorkRoot `
+  -Label "CEP installer operation lock"
+try {
+  $script:cepOperationLock = [System.IO.File]::Open(
+    $script:cepOperationLockPath,
+    [System.IO.FileMode]::OpenOrCreate,
+    [System.IO.FileAccess]::ReadWrite,
+    [System.IO.FileShare]::None
+  )
+} catch [System.IO.IOException] {
+  throw "Another Arizona Full CEP operation is already running. Wait for it to finish and retry."
+}
+
+# Full 2.1 copied an unpacked CEP resource beside the current .zxp. The custom
+# in-place upgrade deliberately does not run the old uninstaller, so remove only
+# that exact obsolete resource after the replacement payload has passed every
+# manifest, hash, certificate and content-signature check above.
+if (![string]::IsNullOrWhiteSpace($InstallDir)) {
+  $installDirFull = Get-FullPath $InstallDir
+  $bundledCepRoot = Join-Path $installDirFull "installer\payload\cep"
+  $legacyBundledCep = Join-Path $bundledCepRoot "com.arizona-carrefour.cep"
+  Assert-PathInside `
+    -Path $legacyBundledCep `
+    -Parent $bundledCepRoot `
+    -Label "legacy bundled CEP resource"
+  if ($null -ne (Get-PathItem $legacyBundledCep)) {
+    Assert-NoIntermediateReparsePoint `
+      -Path $legacyBundledCep `
+      -TrustedRoot $installDirFull
+    Remove-PathSafe `
+      -Path $legacyBundledCep `
+      -AllowedParent $bundledCepRoot `
+      -Label "legacy bundled CEP resource"
+    Write-InstallerLog "Removed obsolete unpacked CEP installer resource at $legacyBundledCep" $logRoot
+  }
+}
 
 # The transaction root is a sibling of `extensions` on the same volume. Adobe
 # scans every direct child of `extensions`, so staging and recovery backups must
@@ -266,6 +342,10 @@ if ($null -eq $destinationItem) {
     throw "Multiple CEP recovery backups exist outside the scanned extensions root; refusing to choose one automatically."
   }
   if ($recoveryBackups.Count -eq 1) {
+    if (Test-AfterEffectsRunning -ProcessName $AfterEffectsProcessName) {
+      Write-InstallerLog "After Effects is running; close it before recovering the interrupted CEP installation." $logRoot
+      Exit-CepInstaller 20
+    }
     $recoveryBackup = $recoveryBackups[0]
     $recoveryIsReparse = ($recoveryBackup.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
     if (!$recoveryBackup.PSIsContainer -or $recoveryIsReparse) {
@@ -286,70 +366,241 @@ if ($null -eq $destinationItem) {
   }
 }
 
-$backupCreated = $false
-try {
-  Expand-ZipToDirectory -Path $cepSource -Destination $cepStaging
+$cepDisposition = "install"
+$installedBundleVersion = $null
+$installedReleaseIsIntact = $false
+$stateCepSha256 = $cepSourceSha256
+$destinationSnapshotKind = "absent"
+$destinationSnapshotTarget = ""
+$destinationSnapshotVersion = ""
+$destinationSnapshotIntegrity = $false
+$destinationSnapshotToken = ""
 
-  # The extracted tree must stay byte-identical to the package: CEP verifies the
-  # signature from the installed folder, and these entries are part of it.
-  foreach ($requiredEntry in @("META-INF\signatures.xml", "mimetype", "CSXS\manifest.xml", ".debug")) {
-    if (!(Test-Path -LiteralPath (Join-Path $cepStaging $requiredEntry) -PathType Leaf)) {
-      throw "Extracted CEP extension is missing $requiredEntry; the payload is not a signed .zxp."
+$destinationItem = Get-PathItem $cepDestination
+if ($null -ne $destinationItem) {
+  $destinationIsReparsePoint = `
+    ($destinationItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+  if ($destinationIsReparsePoint) {
+    # A development junction is not a versioned installed release. Preserve its
+    # target and replace only the junction itself through the transactional swap.
+    $cepDisposition = "repair-development-link"
+    $destinationSnapshotKind = "reparse"
+    $destinationSnapshotTarget = Get-ReparseTargetToken $destinationItem
+    Write-InstallerLog "Replacing the per-machine CEP development link with the verified payload." $logRoot
+  } elseif (!$destinationItem.PSIsContainer) {
+    throw "Installed CEP destination is not a regular directory: $cepDestination"
+  } else {
+    $destinationSnapshotTokenBefore = Get-CepDirectorySnapshotToken $cepDestination
+    try {
+      $installedManifestInfo = Get-CepDirectoryManifestInfo -Directory $cepDestination
+      $installedBundleVersion = [string]$installedManifestInfo.BundleVersion
+      ConvertTo-ArizonaSemVer $installedBundleVersion | Out-Null
+    } catch {
+      throw "The installed CEP version cannot be determined safely; refusing to replace it automatically. $($_.Exception.Message)"
+    }
+
+    $installedIntegrityError = $null
+    try {
+      Assert-CepInstalledReleaseIntegrity `
+        -Directory $cepDestination `
+        -ExpectedBundleId "com.arizona-carrefour.cep" `
+        -TrustedCertificateFingerprints $trustedCertificates | Out-Null
+      $installedReleaseIsIntact = $true
+    } catch {
+      $installedIntegrityError = $_.Exception.Message
+      Write-InstallerLog "Installed CEP $installedBundleVersion failed integrity validation: $installedIntegrityError" $logRoot
+    }
+
+    $destinationSnapshotToken = Get-CepDirectorySnapshotToken $cepDestination
+    if ($destinationSnapshotToken -cne $destinationSnapshotTokenBefore) {
+      throw "Installed CEP changed while it was being inspected; retry the Full installer."
+    }
+    $destinationSnapshotKind = "directory"
+    $destinationSnapshotVersion = $installedBundleVersion
+    $destinationSnapshotIntegrity = $installedReleaseIsIntact
+
+    $payloadVsInstalled = Compare-ArizonaSemVer `
+      -Left $expectedBundleVersion `
+      -Right $installedBundleVersion
+    if ($payloadVsInstalled -gt 0) {
+      $cepDisposition = "update"
+      Write-InstallerLog "Updating per-machine CEP $installedBundleVersion to $expectedBundleVersion." $logRoot
+    } elseif ($payloadVsInstalled -eq 0) {
+      if ($installedReleaseIsIntact) {
+        $cepDisposition = "preserve"
+        Write-InstallerLog "Preserving intact per-machine CEP $installedBundleVersion; payload version is equal." $logRoot
+      } else {
+        $cepDisposition = "repair"
+        Write-InstallerLog "Repairing corrupted per-machine CEP $installedBundleVersion with the same verified version." $logRoot
+      }
+    } elseif ($AllowCepVersionDowngrade) {
+      $cepDisposition = "explicit-downgrade"
+      Write-InstallerLog "Explicitly downgrading per-machine CEP $installedBundleVersion to $expectedBundleVersion." $logRoot
+    } elseif ($installedReleaseIsIntact) {
+      $cepDisposition = "preserve"
+      Write-InstallerLog "Preserving intact newer per-machine CEP $installedBundleVersion; automatic downgrade to $expectedBundleVersion is disabled." $logRoot
+    } else {
+      throw "Installed CEP $installedBundleVersion is newer than payload $expectedBundleVersion but failed integrity validation. Automatic downgrade is disabled; use -AllowCepVersionDowngrade only for an explicit supervised recovery. $installedIntegrityError"
     }
   }
-
-  # Re-verify the exact tree that will be committed. This closes the gap between
-  # inspecting the archive and extraction, and proves possession of the private
-  # key instead of trusting a copied public certificate alone.
-  $stagingVerification = Assert-CepDirectoryContentSignature -Directory $cepStaging
-  if ($stagingVerification.CertificateFingerprint -cne $payloadCertificate) {
-    throw "Extracted CEP certificate does not match the verified package."
-  }
-
-  # Extraction can take long enough for After Effects to open in the meantime.
-  # Refuse the commit before touching the current destination. This elevated
-  # per-machine helper intentionally never changes per-user registry settings.
-  if (Test-AfterEffectsRunning -ProcessName $AfterEffectsProcessName) {
-    throw "After Effects opened during installation; close it before replacing the CEP extension."
-  }
-
-  # Re-check both rename endpoints immediately before the privileged commit.
-  # The final destination may itself be a development junction; moving it
-  # relocates the link and must never traverse its target.
-  Assert-NoIntermediateReparsePoint `
-    -Path $cepDestination `
-    -TrustedRoot $cepRootTrustAnchor
-  Assert-NoIntermediateReparsePoint `
-    -Path $cepStaging `
-    -TrustedRoot $cepRootTrustAnchor `
-    -IncludePath
-  $backupCreated = Invoke-CepDirectorySwap `
-    -Destination $cepDestination `
-    -Staging $cepStaging `
-    -Backup $cepBackup `
-    -ExtensionsRoot $cepExtensionsRootFull `
-    -WorkRoot $cepWorkRoot
-  Write-InstallerLog "Installed signed CEP extension to $cepDestination" $logRoot
-} catch {
-  if ($null -ne (Get-PathItem $cepStaging)) {
-    Remove-PathSafe -Path $cepStaging -AllowedParent $cepWorkRoot -Label "partial CEP extension"
-  }
-  if ($backupCreated -and
-      $null -eq (Get-PathItem $cepDestination) -and
-      $null -ne (Get-PathItem $cepBackup)) {
-    [System.IO.Directory]::Move($cepBackup, $cepDestination)
-    Write-InstallerLog "Restored the previous CEP extension at $cepDestination" $logRoot
-  }
-  Remove-DirectoryIfEmptySafe `
-    -Path $cepWorkRoot `
-    -AllowedParent $cepContainerRoot `
-    -Label "CEP installer work root" | Out-Null
-  throw
 }
 
-if ($backupCreated) {
-  # Remove-PathSafe unlinks a development junction instead of deleting its target.
-  Remove-PathSafe -Path $cepBackup -AllowedParent $cepWorkRoot -Label "previous CEP extension"
+$presentLegacyAexTargets = @($legacyAexTargets | Where-Object {
+    $null -ne (Get-PathItem ([string]$_))
+  })
+$requiresAfterEffectsClosed = $cepDisposition -ne "preserve" -or $presentLegacyAexTargets.Count -gt 0
+if ($requiresAfterEffectsClosed -and (Test-AfterEffectsRunning -ProcessName $AfterEffectsProcessName)) {
+  Write-InstallerLog "After Effects is running; close it before changing the Arizona CEP extension or legacy AEX plugin." $logRoot
+  Exit-CepInstaller 20
+}
+
+foreach ($pluginPath in $presentLegacyAexTargets) {
+  $pluginDir = Assert-ArizonaAexPath -Path $pluginPath -AdobeRoots $AdobeRoots
+  $pluginsRoot = Split-Path -Parent $pluginDir
+  $aexWasPresent = $null -ne (Get-PathItem $pluginPath)
+  Remove-PathSafe -Path $pluginPath -AllowedParent $pluginDir -Label "legacy Arizona AEX plugin"
+  if ($aexWasPresent) {
+    Write-InstallerLog "Removed legacy AEX plugin from $pluginPath" $logRoot
+  }
+
+  if (Remove-DirectoryIfEmptySafe -Path $pluginDir -AllowedParent $pluginsRoot -Label "legacy Arizona AEX directory") {
+    Write-InstallerLog "Removed empty legacy Arizona plugin directory from $pluginDir" $logRoot
+  } elseif ($null -ne (Get-PathItem $pluginDir)) {
+    Write-InstallerLog "Preserved non-empty legacy Arizona plugin directory at $pluginDir" $logRoot
+  }
+}
+
+if ($cepDisposition -eq "preserve") {
+  $stateCepSha256 = $null
+  if ($null -ne $previousState -and
+      [int](Get-JsonProperty $previousState "schemaVersion") -eq 2 -and
+      $null -ne (Get-JsonProperty $previousState "cep") -and
+      [string](Get-JsonProperty $previousState.cep "bundleVersion") -ceq $installedBundleVersion) {
+    $previousZxpSha256 = [string](Get-JsonProperty $previousState.cep "zxpSha256")
+    if ($previousZxpSha256 -cmatch '^[0-9A-Fa-f]{64}$') {
+      $stateCepSha256 = $previousZxpSha256
+    }
+  }
+} else {
+  $backupCreated = $false
+  try {
+    Expand-ZipToDirectory -Path $cepSource -Destination $cepStaging
+
+    # The extracted tree must stay byte-identical to the package: CEP verifies the
+    # signature from the installed folder, and these entries are part of it.
+    foreach ($requiredEntry in @("META-INF\signatures.xml", "mimetype", "CSXS\manifest.xml", ".debug")) {
+      if (!(Test-Path -LiteralPath (Join-Path $cepStaging $requiredEntry) -PathType Leaf)) {
+        throw "Extracted CEP extension is missing $requiredEntry; the payload is not a signed .zxp."
+      }
+    }
+
+    # Re-verify the exact tree that will be committed. This closes the gap between
+    # inspecting the archive and extraction, and proves possession of the private
+    # key instead of trusting a copied public certificate alone.
+    $stagingVerification = Assert-CepInstalledReleaseIntegrity `
+      -Directory $cepStaging `
+      -ExpectedBundleId "com.arizona-carrefour.cep" `
+      -TrustedCertificateFingerprints $trustedCertificates
+    if ($stagingVerification.CertificateFingerprint -cne $payloadCertificate) {
+      throw "Extracted CEP certificate does not match the verified package."
+    }
+    if ($stagingVerification.BundleVersion -cne $expectedBundleVersion) {
+      throw "Extracted CEP ExtensionBundleVersion changed after payload validation."
+    }
+
+    # Extraction can take long enough for After Effects to open in the meantime.
+    # Refuse the commit before touching the current destination. This elevated
+    # per-machine helper intentionally never changes per-user registry settings.
+    if (Test-AfterEffectsRunning -ProcessName $AfterEffectsProcessName) {
+      Write-InstallerLog "After Effects opened while the CEP replacement was being prepared; close it and retry." $logRoot
+      Remove-PathSafe -Path $cepStaging -AllowedParent $cepWorkRoot -Label "partial CEP extension"
+      Exit-CepInstaller 20
+    }
+
+    # Re-inspect the exact destination immediately before commit. The process
+    # lock serializes Arizona helpers; this snapshot also fails closed if an
+    # external actor changes the directory while extraction is in progress.
+    $currentDestinationItem = Get-PathItem $cepDestination
+    if ($destinationSnapshotKind -ceq "absent") {
+      if ($null -ne $currentDestinationItem) {
+        throw "Installed CEP destination changed while the replacement was being prepared; retry."
+      }
+    } elseif ($destinationSnapshotKind -ceq "reparse") {
+      if ($null -eq $currentDestinationItem -or
+          ($currentDestinationItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0 -or
+          (Get-ReparseTargetToken $currentDestinationItem) -cne $destinationSnapshotTarget) {
+        throw "Installed CEP development link changed while the replacement was being prepared; retry."
+      }
+    } elseif ($destinationSnapshotKind -ceq "directory") {
+      if ($null -eq $currentDestinationItem -or
+          !$currentDestinationItem.PSIsContainer -or
+          ($currentDestinationItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Installed CEP destination changed shape while the replacement was being prepared; retry."
+      }
+      $currentSnapshotTokenBefore = Get-CepDirectorySnapshotToken $cepDestination
+      if ($currentSnapshotTokenBefore -cne $destinationSnapshotToken) {
+        throw "Installed CEP contents changed while the replacement was being prepared; retry."
+      }
+      $currentManifestInfo = Get-CepDirectoryManifestInfo -Directory $cepDestination
+      if ([string]$currentManifestInfo.BundleVersion -cne $destinationSnapshotVersion) {
+        throw "Installed CEP version changed while the replacement was being prepared; retry."
+      }
+      $currentIntegrity = $false
+      try {
+        Assert-CepInstalledReleaseIntegrity `
+          -Directory $cepDestination `
+          -ExpectedBundleId "com.arizona-carrefour.cep" `
+          -TrustedCertificateFingerprints $trustedCertificates | Out-Null
+        $currentIntegrity = $true
+      } catch {
+        $currentIntegrity = $false
+      }
+      if ($currentIntegrity -ne $destinationSnapshotIntegrity -or
+          (Get-CepDirectorySnapshotToken $cepDestination) -cne $destinationSnapshotToken) {
+        throw "Installed CEP integrity changed while the replacement was being prepared; retry."
+      }
+    } else {
+      throw "Unknown CEP destination snapshot state: $destinationSnapshotKind"
+    }
+
+    # Re-check both rename endpoints immediately before the privileged commit.
+    # The final destination may itself be a development junction; moving it
+    # relocates the link and must never traverse its target.
+    Assert-NoIntermediateReparsePoint `
+      -Path $cepDestination `
+      -TrustedRoot $cepRootTrustAnchor
+    Assert-NoIntermediateReparsePoint `
+      -Path $cepStaging `
+      -TrustedRoot $cepRootTrustAnchor `
+      -IncludePath
+    $backupCreated = Invoke-CepDirectorySwap `
+      -Destination $cepDestination `
+      -Staging $cepStaging `
+      -Backup $cepBackup `
+      -ExtensionsRoot $cepExtensionsRootFull `
+      -WorkRoot $cepWorkRoot
+    Write-InstallerLog "Committed CEP operation '$cepDisposition' to $cepDestination" $logRoot
+  } catch {
+    if ($null -ne (Get-PathItem $cepStaging)) {
+      Remove-PathSafe -Path $cepStaging -AllowedParent $cepWorkRoot -Label "partial CEP extension"
+    }
+    if ($backupCreated -and
+        $null -eq (Get-PathItem $cepDestination) -and
+        $null -ne (Get-PathItem $cepBackup)) {
+      [System.IO.Directory]::Move($cepBackup, $cepDestination)
+      Write-InstallerLog "Restored the previous CEP extension at $cepDestination" $logRoot
+    }
+    Remove-DirectoryIfEmptySafe `
+      -Path $cepWorkRoot `
+      -AllowedParent $cepContainerRoot `
+      -Label "CEP installer work root" | Out-Null
+    throw
+  }
+
+  if ($backupCreated) {
+    # Remove-PathSafe unlinks a development junction instead of deleting its target.
+    Remove-PathSafe -Path $cepBackup -AllowedParent $cepWorkRoot -Label "previous CEP extension"
+  }
 }
 
 Remove-DirectoryIfEmptySafe `
@@ -367,11 +618,12 @@ $state = [pscustomobject]@{
   }
   cep = [pscustomobject]@{
     path = Get-FullPath $cepDestination
-    zxpSha256 = $cepSourceSha256
-    bundleVersion = [string](Get-JsonProperty $manifest "cepBundleVersion")
+    zxpSha256 = $stateCepSha256
+    bundleVersion = if ($cepDisposition -eq "preserve") { $installedBundleVersion } else { $expectedBundleVersion }
   }
 }
 
 Write-JsonFileAtomic -Path $statePathFull -Value $state
 Write-InstallerLog "Recorded installed CEP asset at $statePathFull" $logRoot
+Close-CepOperationLock
 exit 0

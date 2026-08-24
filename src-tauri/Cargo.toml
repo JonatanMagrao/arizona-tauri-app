@@ -1,6 +1,6 @@
 [package]
 name = "arizona-app"
-version = "2.2.0"
+version = "2.3.1"
 description = "A Tauri App"
 authors = ["Jonatan Magrão"]
 edition = "2021"
@@ -28,6 +28,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
 rand = "0.9"
 regex = "1"
+semver = "1"
 base64 = "0.22"
 sha2 = "0.10"
 image = { version = "0.25", default-features = false, features = ["png"] }

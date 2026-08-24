@@ -34,6 +34,11 @@ function producedAuditContract() {
   const sources = new Set();
   for (const path of sourceFiles(functionsDirectory)) {
     const source = readFileSync(path, "utf8");
+    for (const match of source.matchAll(
+      /\bconst\s+[A-Z][A-Z0-9_]*_AUDIT_ACTION\s*=\s*"([a-z][a-z0-9_]*\.[a-z0-9_.]+)"/g,
+    )) {
+      actions.add(match[1]);
+    }
     for (const region of auditEventRegions(source)) {
       const actionExpression = region.actionExpression;
       for (const match of actionExpression.matchAll(/"([a-z][a-z0-9_]*\.[a-z0-9_.]+)"/g)) {
@@ -76,6 +81,7 @@ test("every produced audit action and source has a visual catalog entry", () => 
   assert.deepEqual(
     produced.actions,
     [
+      "access.clock_suspicious",
       "activation_code.generated",
       "device.activated",
       "device.fingerprint_mismatch",
@@ -166,6 +172,48 @@ test("security audit events keep concrete labels without exposing identifiers", 
       nsis_uninstall: "Desinstalador do Arizona",
       app_self_release: "Arizona App",
     },
+  );
+});
+
+test("suspicious clock access events explain the refusal without exposing raw timestamps", () => {
+  const clockSuspicious = auditActionInfo("access.clock_suspicious");
+  assert.equal(clockSuspicious.category, "access");
+  assert.equal(clockSuspicious.tone, "danger");
+  assert.equal(clockSuspicious.icon, "shield");
+  assert.equal(clockSuspicious.label, "Acesso recusado por relógio incorreto");
+  assert.equal(
+    auditSourceLabel(null, "access.clock_suspicious"),
+    "Validação no Arizona App",
+  );
+
+  assert.equal(
+    clockSuspicious.description({ context: {} }),
+    "O acesso foi recusado porque o relógio deste computador estava fora de sincronia.",
+  );
+  assert.match(
+    clockSuspicious.description({ context: { clockSkewSeconds: 7384 } }),
+    /2h 03min adiantado em relação ao servidor/u,
+  );
+  assert.match(
+    clockSuspicious.description({ context: { clockSkewSeconds: -125 } }),
+    /2min 05s atrasado em relação ao servidor/u,
+  );
+
+  const sanitizedDescription = clockSuspicious.description({
+    context: {
+      clockSkewSeconds: "<script>alert(1)</script>",
+      clientLocalTime: "2099-01-02T03:04:05.000Z",
+      serverTime: "2026-08-24T12:34:56.000Z",
+      deviceId: "device-secret-id",
+    },
+  });
+  assert.equal(
+    sanitizedDescription,
+    "O acesso foi recusado porque o relógio deste computador estava fora de sincronia.",
+  );
+  assert.doesNotMatch(
+    sanitizedDescription,
+    /script|2099|2026|device-secret-id/u,
   );
 });
 

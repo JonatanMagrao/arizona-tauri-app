@@ -42,9 +42,37 @@ export function auditSourceLabel(source, action = "") {
     ? AUDIT_SOURCE_LABELS[source]
     : "";
   if (knownSource) return knownSource;
-  if (action === "device.fingerprint_mismatch") return "Validação no Arizona App";
+  if (
+    action === "device.fingerprint_mismatch"
+    || action === "access.clock_suspicious"
+  ) return "Validação no Arizona App";
   if (Object.hasOwn(AUDIT_ACTION_DEFINITIONS, action)) return "Processo do Arizona";
   return "Sistema";
+}
+
+function clockSkewDuration(value) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value === 0) return "";
+
+  const seconds = Math.abs(value);
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainder = seconds % 60;
+
+  if (days) return `${days}d ${String(hours).padStart(2, "0")}h`;
+  if (hours) return `${hours}h ${String(minutes).padStart(2, "0")}min`;
+  if (minutes) return `${minutes}min ${String(remainder).padStart(2, "0")}s`;
+  return `${remainder}s`;
+}
+
+function clockSuspiciousDescription(event) {
+  const base = "O acesso foi recusado porque o relógio deste computador estava fora de sincronia.";
+  const skew = event.context?.clockSkewSeconds;
+  const duration = clockSkewDuration(skew);
+  if (!duration) return base;
+
+  const direction = skew > 0 ? "adiantado" : "atrasado";
+  return `${base} O relógio local estava aproximadamente ${duration} ${direction} em relação ao servidor.`;
 }
 
 function fingerprintMismatchDescription(event) {
@@ -65,6 +93,13 @@ function organizationStatusDescription(event) {
 }
 
 export const AUDIT_ACTION_DEFINITIONS = Object.freeze({
+  "access.clock_suspicious": {
+    category: "access",
+    tone: "danger",
+    icon: "shield",
+    label: "Acesso recusado por relógio incorreto",
+    description: clockSuspiciousDescription,
+  },
   "device.activated": {
     category: "devices",
     tone: "success",

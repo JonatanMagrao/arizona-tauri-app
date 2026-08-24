@@ -14,6 +14,9 @@ $repoRoot = Get-FullPath (Join-Path $PSScriptRoot "..\..")
 $tauriConfigPath = Join-Path $repoRoot "src-tauri\tauri.conf.json"
 $extensionPackageJsonPath = Join-Path $repoRoot "ARIZONA-EXTENSION\package.json"
 $hooksPath = Join-Path $repoRoot "INSTALLER\nsis\hooks.nsh"
+$nsisTemplatePath = Join-Path $repoRoot "INSTALLER\nsis\installer.nsi"
+$packageJsonPath = Join-Path $repoRoot "package.json"
+$packageLockPath = Join-Path $repoRoot "package-lock.json"
 $payloadRoot = if ([string]::IsNullOrWhiteSpace($PayloadRoot)) {
   Join-Path $repoRoot "INSTALLER\payload"
 } else {
@@ -95,6 +98,13 @@ if (!(Test-Path -LiteralPath $extensionPackageJsonPath -PathType Leaf)) {
 if (!(Test-Path -LiteralPath $hooksPath -PathType Leaf)) {
   throw "NSIS hooks file not found: $hooksPath"
 }
+if (!(Test-Path -LiteralPath $nsisTemplatePath -PathType Leaf)) {
+  throw "Pinned NSIS template not found: $nsisTemplatePath"
+}
+if (!(Test-Path -LiteralPath $packageJsonPath -PathType Leaf) -or
+    !(Test-Path -LiteralPath $packageLockPath -PathType Leaf)) {
+  throw "Root package.json/package-lock.json are required to pin the NSIS template generator."
+}
 if (!(Test-Path -LiteralPath $embeddedScriptPath -PathType Leaf)) {
   throw "Embedded After Effects JSX not found: $embeddedScriptPath"
 }
@@ -159,6 +169,19 @@ if ($installAdobeAssets.Contains('Join-Path $cepExtensionsRootFull "com.arizona-
     $installAdobeAssets.Contains('Join-Path $cepExtensionsRootFull "com.arizona-carrefour.cep.bak')) {
   throw "CEP staging and backups must remain outside Adobe's scanned extensions directory."
 }
+foreach ($requiredInstallPolicy in @(
+  "Compare-ArizonaSemVer",
+  "AllowCepVersionDowngrade",
+  "Assert-CepInstalledReleaseIntegrity",
+  "Get-CepDirectorySnapshotToken",
+  "FileShare]::None",
+  '$cepDisposition = "preserve"',
+  '$presentLegacyAexTargets'
+)) {
+  if (!$installAdobeAssets.Contains($requiredInstallPolicy)) {
+    throw "Full CEP helper is missing an upgrade/preservation guard: $requiredInstallPolicy"
+  }
+}
 if (!$collectArtifacts.Contains('ARIZONA-EXTENSION\package.json') -or
     !$collectArtifacts.Contains('dist-cep\arizona-cep-v$extensionVersion.zxp') -or
     !$collectArtifacts.Contains('$zxpInfo.BundleVersion -cne $extensionVersion')) {
@@ -170,6 +193,7 @@ foreach ($requiredHookText in @(
   "NSIS_HOOK_PREINSTALL",
   "NSIS_HOOK_POSTINSTALL",
   "NSIS_HOOK_PREUNINSTALL",
+  "ARIZONA_NSIS_HOOK_AFTER_RESOURCES",
   "ARIZONA_LEGACY_UNINSTALL_KEY",
   'ReadRegStr $R8 HKCU "${ARIZONA_LEGACY_UNINSTALL_KEY}" "DisplayName"',
   'ReadRegStr $R9 HKCU "${ARIZONA_LEGACY_UNINSTALL_KEY}" "Publisher"',
@@ -216,11 +240,60 @@ $nsis = $tauriConfig.bundle.windows.nsis
 if (!$nsis -or $nsis.installerHooks -ne "../INSTALLER/nsis/hooks.nsh") {
   throw "tauri.conf.json does not point to INSTALLER/nsis/hooks.nsh"
 }
+if ($nsis.template -ne "../INSTALLER/nsis/installer.nsi") {
+  throw "tauri.conf.json must use the pinned INSTALLER/nsis/installer.nsi template."
+}
 if ($tauriConfig.bundle.windows.nsis.installMode -ne "perMachine") {
   throw "NSIS installMode must remain perMachine for the official desktop installation."
 }
 if ($tauriConfig.bundle.windows.allowDowngrades -ne $false) {
   throw "bundle.windows.allowDowngrades must be false for official releases."
+}
+
+$packageJson = Get-Content -LiteralPath $packageJsonPath -Raw | ConvertFrom-Json
+$packageLock = Get-Content -LiteralPath $packageLockPath -Raw
+$pinnedTauriCliVersion = "2.8.3"
+$declaredTauriCli = [string](Get-JsonProperty $packageJson.devDependencies "@tauri-apps/cli")
+if ($declaredTauriCli -cne $pinnedTauriCliVersion -or
+    $packageLock -notmatch '"devDependencies"\s*:\s*\{[^}]*"@tauri-apps/cli"\s*:\s*"2\.8\.3"' -or
+    $packageLock -notmatch '"node_modules/@tauri-apps/cli"\s*:\s*\{\s*"version"\s*:\s*"2\.8\.3"') {
+  throw "@tauri-apps/cli must be pinned exactly to $pinnedTauriCliVersion in package.json and package-lock.json."
+}
+
+$nsisTemplate = Get-Content -LiteralPath $nsisTemplatePath -Raw
+foreach ($requiredTemplateText in @(
+  "@tauri-apps/cli 2.8.3",
+  "FE22026F68BDB3292FAB376756035496CE0A35E3D580E06EBAA6A28295916EB3",
+  "Function ArizonaIsStableSemVer",
+  "Call ArizonaIsStableSemVer",
+  'ReadRegStr $R7 SHCTX "${UNINSTKEY}" "DisplayVersion"',
+  'nsis_tauri_utils::SemverCompare "${VERSION}" $R7',
+  "arizona_silent_wix_loop:",
+  "A newer Arizona version is already installed",
+  "ARIZONA_NSIS_HOOK_AFTER_RESOURCES",
+  'File "${MAINBINARYSRCPATH}"',
+  'WriteUninstaller "$INSTDIR\uninstall.exe"'
+)) {
+  if (!$nsisTemplate.Contains($requiredTemplateText)) {
+    throw "Pinned NSIS template is missing an Arizona lifecycle guard: $requiredTemplateText"
+  }
+}
+$resourceCopyIndex = $nsisTemplate.IndexOf("; Copy installer resources first.", [System.StringComparison]::Ordinal)
+$cepHookIndex = $nsisTemplate.IndexOf('!insertmacro ARIZONA_NSIS_HOOK_AFTER_RESOURCES', [System.StringComparison]::Ordinal)
+$mainBinaryIndex = $nsisTemplate.IndexOf('File "${MAINBINARYSRCPATH}"', [System.StringComparison]::Ordinal)
+$uninstallerIndex = $nsisTemplate.IndexOf('WriteUninstaller "$INSTDIR\uninstall.exe"', [System.StringComparison]::Ordinal)
+if ($resourceCopyIndex -lt 0 -or
+    $cepHookIndex -le $resourceCopyIndex -or
+    $mainBinaryIndex -le $cepHookIndex -or
+    $uninstallerIndex -le $mainBinaryIndex) {
+  throw "NSIS must validate/commit CEP after resources and before replacing the app or uninstaller."
+}
+$updateModeAssignments = [regex]::Matches(
+  $nsisTemplate,
+  [regex]::Escape('StrCpy $UpdateMode 1')
+).Count
+if ($updateModeAssignments -ne 2) {
+  throw "Pinned NSIS template must not synthesize UpdateMode; only installer/uninstaller /UPDATE parsing may set it."
 }
 
 $resourceMap = $tauriConfig.bundle.resources

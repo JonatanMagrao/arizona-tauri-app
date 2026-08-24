@@ -85,7 +85,7 @@ dependencies = [
 
 [[package]]
 name = "arizona-app"
-version = "2.2.0"
+version = "2.3.1"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -96,6 +96,7 @@ dependencies = [
  "regex",
  "roxmltree",
  "rusqlite",
+ "semver",
  "serde",
  "serde_json",
  "sha2",

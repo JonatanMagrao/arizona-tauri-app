@@ -51,8 +51,11 @@ uma instalação e investigar mudanças de acesso:
   de código, ativação ou liberação de dispositivo e redefinição de limites.
 
 Essas ações administrativas já são gravadas em `licensing.audit_log`. A tela
-**Logs de atividade** do Admin apenas consulta esses registros e atualmente é
-restrita à conta master.
+**Logs de atividade** do Admin consulta a view somente leitura
+`licensing.activity_log`, que reúne esses registros e as recusas de acesso por
+relógio suspeito mantidas em `licensing.clock_audits`. O acesso continua
+restrito à conta master, e os horários crus da máquina não são enviados ao
+navegador.
 
 ### 1.2 Dados mantidos localmente
 

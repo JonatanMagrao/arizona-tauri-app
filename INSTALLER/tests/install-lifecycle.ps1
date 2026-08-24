@@ -38,6 +38,46 @@ function Invoke-InstallerScript {
   return [int]$exitCode
 }
 
+function Invoke-TestCepInstall {
+  param(
+    [Parameter(Mandatory = $true)][string]$Script,
+    [Parameter(Mandatory = $true)][string]$PayloadRoot,
+    [Parameter(Mandatory = $true)][string]$InstallDir,
+    [Parameter(Mandatory = $true)][string]$CepExtensionsRoot,
+    [Parameter(Mandatory = $true)][string]$LogRoot,
+    [Parameter(Mandatory = $true)][string]$TrustedCertPath,
+    [Parameter(Mandatory = $true)][string]$AfterEffectsProcessName,
+    [Parameter(Mandatory = $true)][string]$AdobeRoot,
+    [switch]$AllowCepVersionDowngrade
+  )
+
+  $arguments = @(
+    "-PayloadRoot", $PayloadRoot,
+    "-InstallDir", $InstallDir,
+    "-CepExtensionsRoot", $CepExtensionsRoot,
+    "-LogRoot", $LogRoot,
+    "-TrustedCertPath", $TrustedCertPath,
+    "-AfterEffectsProcessName", $AfterEffectsProcessName,
+    "-AdobeRoots", $AdobeRoot
+  )
+  if ($AllowCepVersionDowngrade) {
+    $arguments += "-AllowCepVersionDowngrade"
+  }
+
+  return Invoke-InstallerScript -Script $Script -Arguments $arguments
+}
+
+function Assert-InstalledCepVersion {
+  param(
+    [Parameter(Mandatory = $true)][string]$Directory,
+    [Parameter(Mandatory = $true)][string]$ExpectedVersion,
+    [Parameter(Mandatory = $true)][string]$Message
+  )
+
+  $manifestInfo = Get-CepDirectoryManifestInfo -Directory $Directory
+  Assert-True ([string]$manifestInfo.BundleVersion -ceq $ExpectedVersion) $Message
+}
+
 $testParent = Join-Path ([System.IO.Path]::GetTempPath()) "ArizonaInstallerTests"
 $testRoot = Join-Path $testParent ([guid]::NewGuid().ToString("N"))
 $testAfterEffectsProcessName = "ArizonaAeTest$((Split-Path -Leaf $testRoot).Substring(0, 8))"
@@ -97,6 +137,268 @@ try {
       sha256 = $payload.Zxp.CertificateFingerprint
     })
   })
+
+  # Version lifecycle policy: automatic runs only move forward, equal intact
+  # releases are left byte-for-byte in place, and rollback is always explicit.
+  # 2.9 -> 2.10 deliberately proves numeric SemVer ordering rather than a
+  # lexical string comparison.
+  $policyPayloadOld = New-SyntheticCepPayload `
+    -PayloadRoot (Join-Path $testRoot "policy-payload-2.9.0") `
+    -BundleVersion "2.9.0"
+  $policyPayloadCurrent = New-SyntheticCepPayload `
+    -PayloadRoot (Join-Path $testRoot "policy-payload-2.10.0") `
+    -BundleVersion "2.10.0"
+  $policyPayloadNew = New-SyntheticCepPayload `
+    -PayloadRoot (Join-Path $testRoot "policy-payload-2.11.0") `
+    -BundleVersion "2.11.0"
+  $installScript = Join-Path $scriptsRoot "install-adobe-assets.ps1"
+  $policyRoot = Join-Path $testRoot "version-policy"
+  $policyCepExtensionsRoot = Join-Path $policyRoot "Common Files\Adobe\CEP\extensions"
+  $policyCepDestination = Join-Path $policyCepExtensionsRoot "com.arizona-carrefour.cep"
+  $policyCepWorkRoot = Join-Path (Split-Path -Parent $policyCepExtensionsRoot) ".arizona-install-work"
+  $policyInstallDir = Join-Path $policyRoot "Program Files\arizona-app"
+  $policyStatePath = Join-Path $policyInstallDir "installer\installed-assets.json"
+  $policyLogRoot = Join-Path $policyRoot "logs"
+  $policyAdobeRoot = Join-Path $policyRoot "Adobe"
+  $policySupportFiles = Join-Path $policyAdobeRoot "Adobe After Effects 2025\Support Files"
+  $stalePolicyAex = Join-Path $policySupportFiles "Plug-ins\Arizona\ArizonaBridgeTest.aex"
+  New-Item -ItemType Directory -Force -Path $policySupportFiles | Out-Null
+  Set-Content -LiteralPath (Join-Path $policySupportFiles "AfterFX.exe") -Value "fake" -Encoding ASCII
+
+  $policyInitialExit = Invoke-TestCepInstall `
+    -Script $installScript `
+    -PayloadRoot $policyPayloadOld.PayloadRoot `
+    -InstallDir $policyInstallDir `
+    -CepExtensionsRoot $policyCepExtensionsRoot `
+    -LogRoot $policyLogRoot `
+    -TrustedCertPath $trustedCertPath `
+    -AfterEffectsProcessName $testAfterEffectsProcessName `
+    -AdobeRoot $policyAdobeRoot
+  Assert-True ($policyInitialExit -eq 0) "the SemVer policy fixture should install 2.9.0"
+  Assert-InstalledCepVersion `
+    -Directory $policyCepDestination `
+    -ExpectedVersion "2.9.0" `
+    -Message "the initial policy release should be 2.9.0"
+
+  $policyUpgradeExit = Invoke-TestCepInstall `
+    -Script $installScript `
+    -PayloadRoot $policyPayloadCurrent.PayloadRoot `
+    -InstallDir $policyInstallDir `
+    -CepExtensionsRoot $policyCepExtensionsRoot `
+    -LogRoot $policyLogRoot `
+    -TrustedCertPath $trustedCertPath `
+    -AfterEffectsProcessName $testAfterEffectsProcessName `
+    -AdobeRoot $policyAdobeRoot
+  Assert-True ($policyUpgradeExit -eq 0) "2.10.0 should upgrade an intact 2.9.0 installation"
+  Assert-InstalledCepVersion `
+    -Directory $policyCepDestination `
+    -ExpectedVersion "2.10.0" `
+    -Message "SemVer must order 2.10.0 after 2.9.0"
+
+  # File metadata is outside the signed content. A distinctive timestamp proves
+  # that an equal intact payload is preserved rather than silently re-extracted.
+  $policyIndexPath = Join-Path $policyCepDestination "main\index.html"
+  $preservedTimestamp = [DateTime]::SpecifyKind(
+    [DateTime]::new(2001, 2, 3, 4, 5, 6),
+    [DateTimeKind]::Utc
+  )
+  (Get-Item -LiteralPath $policyIndexPath).LastWriteTimeUtc = $preservedTimestamp
+  $preservedTimestampTicks = (Get-Item -LiteralPath $policyIndexPath).LastWriteTimeUtc.Ticks
+  $legacyBundledCep = Join-Path $policyInstallDir "installer\payload\cep\com.arizona-carrefour.cep"
+  New-Item -ItemType Directory -Force -Path $legacyBundledCep | Out-Null
+  Set-Content -LiteralPath (Join-Path $legacyBundledCep "obsolete.txt") -Value "obsolete" -Encoding UTF8
+  $policyEqualExit = Invoke-TestCepInstall `
+    -Script $installScript `
+    -PayloadRoot $policyPayloadCurrent.PayloadRoot `
+    -InstallDir $policyInstallDir `
+    -CepExtensionsRoot $policyCepExtensionsRoot `
+    -LogRoot $policyLogRoot `
+    -TrustedCertPath $trustedCertPath `
+    -AfterEffectsProcessName $testAfterEffectsProcessName `
+    -AdobeRoot $policyAdobeRoot
+  Assert-True ($policyEqualExit -eq 0) "an equal intact CEP release should be preserved"
+  Assert-True ((Get-Item -LiteralPath $policyIndexPath).LastWriteTimeUtc.Ticks -eq $preservedTimestampTicks) `
+    "preserving an equal intact release must not re-extract its files"
+  Assert-True ($null -eq (Get-PathItem $legacyBundledCep)) `
+    "an in-place upgrade should remove the exact obsolete unpacked CEP installer resource"
+
+  # Equal version plus invalid signed content is a repair, not a preserve.
+  Set-Content -LiteralPath $policyIndexPath -Value "corrupted" -Encoding UTF8
+  $policyRepairExit = Invoke-TestCepInstall `
+    -Script $installScript `
+    -PayloadRoot $policyPayloadCurrent.PayloadRoot `
+    -InstallDir $policyInstallDir `
+    -CepExtensionsRoot $policyCepExtensionsRoot `
+    -LogRoot $policyLogRoot `
+    -TrustedCertPath $trustedCertPath `
+    -AfterEffectsProcessName $testAfterEffectsProcessName `
+    -AdobeRoot $policyAdobeRoot
+  Assert-True ($policyRepairExit -eq 0) "an equal corrupted CEP release should be repaired"
+  $repairedRelease = Assert-CepInstalledReleaseIntegrity `
+    -Directory $policyCepDestination `
+    -ExpectedBundleId "com.arizona-carrefour.cep" `
+    -TrustedCertificateFingerprints @($payload.Zxp.CertificateFingerprint)
+  Assert-True ([string]$repairedRelease.BundleVersion -ceq "2.10.0") `
+    "same-version repair should restore the verified 2.10.0 release"
+
+  $policyNewerInstallExit = Invoke-TestCepInstall `
+    -Script $installScript `
+    -PayloadRoot $policyPayloadNew.PayloadRoot `
+    -InstallDir $policyInstallDir `
+    -CepExtensionsRoot $policyCepExtensionsRoot `
+    -LogRoot $policyLogRoot `
+    -TrustedCertPath $trustedCertPath `
+    -AfterEffectsProcessName $testAfterEffectsProcessName `
+    -AdobeRoot $policyAdobeRoot
+  Assert-True ($policyNewerInstallExit -eq 0) "2.11.0 should upgrade 2.10.0"
+  $newerPreservedTimestamp = [DateTime]::SpecifyKind(
+    [DateTime]::new(2002, 3, 4, 5, 6, 7),
+    [DateTimeKind]::Utc
+  )
+  (Get-Item -LiteralPath $policyIndexPath).LastWriteTimeUtc = $newerPreservedTimestamp
+  $newerPreservedTimestampTicks = (Get-Item -LiteralPath $policyIndexPath).LastWriteTimeUtc.Ticks
+  $policyAutomaticDowngradeExit = Invoke-TestCepInstall `
+    -Script $installScript `
+    -PayloadRoot $policyPayloadCurrent.PayloadRoot `
+    -InstallDir $policyInstallDir `
+    -CepExtensionsRoot $policyCepExtensionsRoot `
+    -LogRoot $policyLogRoot `
+    -TrustedCertPath $trustedCertPath `
+    -AfterEffectsProcessName $testAfterEffectsProcessName `
+    -AdobeRoot $policyAdobeRoot
+  Assert-True ($policyAutomaticDowngradeExit -eq 0) `
+    "an automatic run should preserve an intact CEP newer than its payload"
+  Assert-InstalledCepVersion `
+    -Directory $policyCepDestination `
+    -ExpectedVersion "2.11.0" `
+    -Message "an automatic 2.10.0 payload must not downgrade installed CEP 2.11.0"
+  Assert-True ((Get-Item -LiteralPath $policyIndexPath).LastWriteTimeUtc.Ticks -eq $newerPreservedTimestampTicks) `
+    "preserving a newer intact release must not re-extract its files"
+
+  $policyExplicitDowngradeExit = Invoke-TestCepInstall `
+    -Script $installScript `
+    -PayloadRoot $policyPayloadCurrent.PayloadRoot `
+    -InstallDir $policyInstallDir `
+    -CepExtensionsRoot $policyCepExtensionsRoot `
+    -LogRoot $policyLogRoot `
+    -TrustedCertPath $trustedCertPath `
+    -AfterEffectsProcessName $testAfterEffectsProcessName `
+    -AdobeRoot $policyAdobeRoot `
+    -AllowCepVersionDowngrade
+  Assert-True ($policyExplicitDowngradeExit -eq 0) `
+    "a supervised run should accept the explicit CEP downgrade switch"
+  Assert-InstalledCepVersion `
+    -Directory $policyCepDestination `
+    -ExpectedVersion "2.10.0" `
+    -Message "the explicit downgrade should install CEP 2.10.0"
+
+  # A stale schema-1 AEX record must not turn a preserve-only run into a write.
+  # Also exercise cleanup of Full 2.1's unpacked CEP when that exact obsolete
+  # resource is a junction: unlink the junction and retain its external target.
+  Write-JsonFileAtomic -Path $policyStatePath -Value ([pscustomobject]@{
+    schemaVersion = 1
+    aex = @([pscustomobject]@{ path = $stalePolicyAex })
+  })
+  $legacyBundledCepTarget = Join-Path $policyRoot "legacy-bundled-cep-target"
+  New-Item -ItemType Directory -Force -Path $legacyBundledCepTarget, (Split-Path -Parent $legacyBundledCep) | Out-Null
+  $legacyBundledSentinel = Join-Path $legacyBundledCepTarget "keep.txt"
+  Set-Content -LiteralPath $legacyBundledSentinel -Value "keep" -Encoding UTF8
+  New-Item -ItemType Junction -Path $legacyBundledCep -Target $legacyBundledCepTarget | Out-Null
+  $openAePreserveTimestampTicks = (Get-Item -LiteralPath $policyIndexPath).LastWriteTimeUtc.Ticks
+  $fakeAfterEffectsExe = Join-Path $testRoot "$testAfterEffectsProcessName.exe"
+  Copy-Item -LiteralPath $env:ComSpec -Destination $fakeAfterEffectsExe -Force
+  $fakeAfterEffects = Start-Process `
+    -FilePath $fakeAfterEffectsExe `
+    -ArgumentList @("/c", "ping -n 30 127.0.0.1 > nul") `
+    -WindowStyle Hidden `
+    -PassThru
+  try {
+    for ($attempt = 0; $attempt -lt 50 -and
+        !(Test-AfterEffectsRunning -ProcessName $testAfterEffectsProcessName); $attempt++) {
+      Start-Sleep -Milliseconds 50
+    }
+    Assert-True (Test-AfterEffectsRunning -ProcessName $testAfterEffectsProcessName) `
+      "the isolated After Effects policy fixture should be visible"
+
+    $openAePreserveExit = Invoke-TestCepInstall `
+      -Script $installScript `
+      -PayloadRoot $policyPayloadCurrent.PayloadRoot `
+      -InstallDir $policyInstallDir `
+      -CepExtensionsRoot $policyCepExtensionsRoot `
+      -LogRoot $policyLogRoot `
+      -TrustedCertPath $trustedCertPath `
+      -AfterEffectsProcessName $testAfterEffectsProcessName `
+      -AdobeRoot $policyAdobeRoot
+    Assert-True ($openAePreserveExit -eq 0) `
+      "After Effects may remain open when the installed CEP is only being preserved"
+    Assert-True ((Get-Item -LiteralPath $policyIndexPath).LastWriteTimeUtc.Ticks -eq $openAePreserveTimestampTicks) `
+      "an open-After-Effects preserve run must not rewrite the CEP tree"
+    Assert-True ($null -eq (Get-PathItem $stalePolicyAex)) `
+      "the stale AEX fixture must remain absent"
+    Assert-True ($null -eq (Get-PathItem $legacyBundledCep)) `
+      "obsolete unpacked CEP junction should be unlinked during an in-place upgrade"
+    Assert-True (Test-Path -LiteralPath $legacyBundledSentinel -PathType Leaf) `
+      "cleanup of the obsolete CEP junction must preserve its external target"
+
+    $openAeChangeExit = Invoke-TestCepInstall `
+      -Script $installScript `
+      -PayloadRoot $policyPayloadNew.PayloadRoot `
+      -InstallDir $policyInstallDir `
+      -CepExtensionsRoot $policyCepExtensionsRoot `
+      -LogRoot $policyLogRoot `
+      -TrustedCertPath $trustedCertPath `
+      -AfterEffectsProcessName $testAfterEffectsProcessName `
+      -AdobeRoot $policyAdobeRoot
+    Assert-True ($openAeChangeExit -eq 20) `
+      "After Effects should block a CEP upgrade that would change installed files"
+    Assert-InstalledCepVersion `
+      -Directory $policyCepDestination `
+      -ExpectedVersion "2.10.0" `
+      -Message "a blocked CEP upgrade must preserve the installed version"
+  } finally {
+    if ($null -ne $fakeAfterEffects -and !$fakeAfterEffects.HasExited) {
+      Stop-Process -Id $fakeAfterEffects.Id -Force -ErrorAction SilentlyContinue
+      $fakeAfterEffects.WaitForExit(5000) | Out-Null
+    }
+  }
+
+  # Hold the exact kernel lock used by the helper. This is deterministic (no
+  # timing race between child processes) while still exercising a concurrent
+  # installer attempt through the real script entry point.
+  New-Item -ItemType Directory -Force -Path $policyCepWorkRoot | Out-Null
+  $policyLockPath = Join-Path $policyCepWorkRoot "com.arizona-carrefour.cep.install.lock"
+  $policyTokenBeforeLock = Get-CepDirectorySnapshotToken $policyCepDestination
+  $policyLockHandle = [System.IO.File]::Open(
+    $policyLockPath,
+    [System.IO.FileMode]::OpenOrCreate,
+    [System.IO.FileAccess]::ReadWrite,
+    [System.IO.FileShare]::None
+  )
+  try {
+    $concurrentInstallExit = Invoke-TestCepInstall `
+      -Script $installScript `
+      -PayloadRoot $policyPayloadNew.PayloadRoot `
+      -InstallDir $policyInstallDir `
+      -CepExtensionsRoot $policyCepExtensionsRoot `
+      -LogRoot $policyLogRoot `
+      -TrustedCertPath $trustedCertPath `
+      -AfterEffectsProcessName $testAfterEffectsProcessName `
+      -AdobeRoot $policyAdobeRoot
+    Assert-True ($concurrentInstallExit -ne 0) `
+      "a concurrent CEP helper must fail while another process owns the operation lock"
+    Assert-True ((Get-CepDirectorySnapshotToken $policyCepDestination) -ceq $policyTokenBeforeLock) `
+      "a rejected concurrent helper must not change the installed CEP tree"
+  } finally {
+    $policyLockHandle.Dispose()
+  }
+  Remove-PathSafe `
+    -Path $policyLockPath `
+    -AllowedParent $policyCepWorkRoot `
+    -Label "policy test operation lock"
+  Remove-DirectoryIfEmptySafe `
+    -Path $policyCepWorkRoot `
+    -AllowedParent (Split-Path -Parent $policyCepWorkRoot) `
+    -Label "policy test work root" | Out-Null
 
   $adobeRoot = Join-Path $testRoot "Program Files\Adobe"
   $supportFiles = Join-Path $adobeRoot "Adobe After Effects 2025\Support Files"

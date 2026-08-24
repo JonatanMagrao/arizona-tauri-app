@@ -7,6 +7,14 @@ import AdminWindow from "../admin/AdminWindow";
 import DuplicateIdenticalModal from "../duplicates/DuplicateIdenticalModal";
 import HistoryWindow from "../history/HistoryWindow";
 import RoteiroViewer from "./RoteiroViewer";
+import {
+  cepDowngradeRequiresFullInstaller,
+  cepInstallationScopeLabel,
+  cepInstallActionLabel,
+  cepInstallCommandArgs,
+  cepVersionRelation,
+  normalizeCepExtensionStatus,
+} from "./cepExtensionStatus";
 import AppDropdown from "../../components/AppDropdown";
 import previewImg from "../../assets/hierarquia_pracas.jpg";
 import { useAutoHideToast } from "../../hooks/useAutoHideToast";
@@ -1406,15 +1414,24 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
   const [isInspecting, setIsInspecting] = useState(false);
   const [isInstalling, setIsInstalling] = useState(false);
   const [isInstallConfirmOpen, setIsInstallConfirmOpen] = useState(false);
+  const [isDowngradeConfirmed, setIsDowngradeConfirmed] = useState(false);
   const [isDragActive, setIsDragActive] = useState(false);
   const dropHandlerRef = useRef(() => {});
 
-  const isDevLink = Boolean(extensionStatus?.isDevLink);
-  const installedVersion = extensionStatus?.installed ? extensionStatus.version || "" : "";
-  const isReinstall = Boolean(
-    selectedZxp?.version && installedVersion && selectedZxp.version === installedVersion
+  const perUserInstallation = extensionStatus?.installations?.find(
+    (installation) => installation.scope === "perUser"
   );
-  const installLabel = isReinstall ? "Reinstalar" : "Instalar";
+  const isDevLink = Boolean(perUserInstallation?.isDevLink ?? extensionStatus?.isDevLink);
+  const installedVersion = extensionStatus?.installed ? extensionStatus.version || "" : "";
+  const versionRelation = cepVersionRelation(selectedZxp?.version, installedVersion);
+  const isDowngrade = versionRelation === "downgrade";
+  const downgradeRequiresFullInstaller = cepDowngradeRequiresFullInstaller(
+    selectedZxp?.version,
+    extensionStatus
+  );
+  const installLabel = cepInstallActionLabel(versionRelation);
+  const effectiveScopeLabel = cepInstallationScopeLabel(extensionStatus?.scope);
+  const installations = extensionStatus?.installations || [];
   // The dev link only blocks until it is explicitly replaced; installing then
   // removes the shortcut itself and never the build folder it points at.
   const installBlocked = isLoadingStatus;
@@ -1425,7 +1442,9 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
       const status = await invokeCommand(commandNames.cepExtensionStatus);
       setExtensionStatus(normalizeCepExtensionStatus(status));
     } catch (error) {
-      showError(cepErrorMessage(error, "Não foi possível consultar a extensão instalada."));
+      if (!silent) {
+        showError(cepErrorMessage(error, "Não foi possível consultar a extensão instalada."));
+      }
     } finally {
       if (!silent) setIsLoadingStatus(false);
     }
@@ -1467,6 +1486,7 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
     }
     setIsInspecting(true);
     setSelectedZxp(null);
+    setIsDowngradeConfirmed(false);
     try {
       const inspection = await invokeCommand(commandNames.inspectCepZxp, { path: filePath });
       setSelectedZxp({
@@ -1544,14 +1564,18 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
 
   const installSelectedZxp = async () => {
     if (!selectedZxp?.path || isInstalling) return;
+    if (downgradeRequiresFullInstaller || (isDowngrade && !isDowngradeConfirmed)) return;
 
     setIsInstallConfirmOpen(false);
     setIsInstalling(true);
     try {
-      const result = await invokeCommand(commandNames.installCepZxp, {
+      const result = await invokeCommand(commandNames.installCepZxp, cepInstallCommandArgs({
         path: selectedZxp.path,
+        expectedVersion: selectedZxp.version,
         replaceDevLink: isDevLink,
-      });
+        relation: versionRelation,
+        downgradeConfirmed: isDowngradeConfirmed,
+      }));
       const version = String(result?.version || selectedZxp.version || "").trim();
       showSuccess(
         version
@@ -1559,9 +1583,15 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
           : "Extensão instalada. Reabra o After Effects para carregar a nova versão."
       );
       setSelectedZxp(null);
+      setIsDowngradeConfirmed(false);
       await refreshExtensionStatus({ silent: true });
     } catch (error) {
       showError(cepErrorMessage(error, "A instalação falhou."));
+      if (String(error?.message || error || "").startsWith("cep_zxp_changed:")) {
+        setSelectedZxp(null);
+        setIsDowngradeConfirmed(false);
+      }
+      await refreshExtensionStatus({ silent: true });
     } finally {
       setIsInstalling(false);
     }
@@ -1590,6 +1620,7 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
     const handleEscape = (event) => {
       if (event.key === "Escape" && !isInstalling) {
         setIsInstallConfirmOpen(false);
+        setIsDowngradeConfirmed(false);
       }
     };
 
@@ -1628,7 +1659,43 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
             <dt>Versão</dt>
             <dd>{installedVersion ? `v${installedVersion}` : "—"}</dd>
           </div>
+          {effectiveScopeLabel ? (
+            <div>
+              <dt>Instalação efetiva</dt>
+              <dd>{effectiveScopeLabel}</dd>
+            </div>
+          ) : null}
         </dl>
+        {installations.length > 0 ? (
+          <>
+            <p className="settings-ext-hint">Locais verificados</p>
+            <dl className="settings-ext-status">
+              {installations.map((installation) => {
+                const scopeLabel = cepInstallationScopeLabel(installation.scope) || "Local desconhecido";
+                const statusLabel = !installation.installed
+                  ? "Não instalada"
+                  : installation.manifestValid === false
+                    ? "Manifesto inválido"
+                    : installation.version
+                      ? `v${installation.version}${installation.isDevLink ? " · desenvolvimento" : ""}`
+                      : "Versão não identificada";
+                return (
+                  <div key={`${installation.scope || "unknown"}:${installation.path}`}>
+                    <dt>{scopeLabel}</dt>
+                    <dd title={installation.path || undefined}>{statusLabel}</dd>
+                  </div>
+                );
+              })}
+            </dl>
+          </>
+        ) : null}
+        {extensionStatus?.hasMultipleInstallations ? (
+          <p className="settings-ext-note">
+            Há mais de uma instalação do painel. O Arizona usa a maior versão válida como
+            referência; procure o suporte ou use um instalador Full compatível para reparar ou
+            consolidar as cópias.
+          </p>
+        ) : null}
         {isDevLink && (
           <p className="settings-ext-note">
             {CEP_DEV_LINK_MESSAGE} Instalar um .zxp aqui substitui esse atalho pela versão do
@@ -1687,7 +1754,10 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
             <button
               type="button"
               className="btn btn-primary"
-              onClick={() => setIsInstallConfirmOpen(true)}
+              onClick={() => {
+                setIsDowngradeConfirmed(false);
+                setIsInstallConfirmOpen(true);
+              }}
               disabled={installBlocked || isInstalling}
             >
               {isInstalling ? "Instalando..." : installLabel}
@@ -1726,13 +1796,35 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
             aria-labelledby="settingsExtensionInstallTitle"
           >
             <header className="settings-confirm-header">
-              <h2 id="settingsExtensionInstallTitle">{installLabel} a extensão?</h2>
+              <h2 id="settingsExtensionInstallTitle">
+                {downgradeRequiresFullInstaller ? "Use o instalador completo" : `${installLabel} a extensão?`}
+              </h2>
             </header>
-            <p>
-              Feche o After Effects antes de continuar. A versão
-              {selectedZxp.version ? ` v${selectedZxp.version}` : " selecionada"} substituirá a
-              instalação atual da extensão Arizona.
-            </p>
+            {downgradeRequiresFullInstaller ? (
+              <p>
+                Há uma instalação válida para todos os usuários com versão superior à
+                v{selectedZxp.version}. Uma instalação somente para este usuário não substituiria
+                essa versão. Solicite ao suporte um instalador Full compatível.
+              </p>
+            ) : (
+              <p>
+                Feche o After Effects antes de continuar. A versão
+                {selectedZxp.version ? ` v${selectedZxp.version}` : " selecionada"} substituirá a
+                instalação atual da extensão Arizona.
+              </p>
+            )}
+            {isDowngrade && !downgradeRequiresFullInstaller ? (
+              <label className="settings-confirm-check">
+                <input
+                  type="checkbox"
+                  checked={isDowngradeConfirmed}
+                  onChange={(event) => setIsDowngradeConfirmed(event.target.checked)}
+                />
+                <span>
+                  Confirmo a troca da v{installedVersion} pela versão anterior v{selectedZxp.version}.
+                </span>
+              </label>
+            ) : null}
             {isDevLink && (
               <p className="settings-ext-note">
                 Esta máquina usa um atalho para a sua build local. Ele será removido e a pasta
@@ -1744,19 +1836,24 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
               <button
                 type="button"
                 className="btn btn-outline"
-                onClick={() => setIsInstallConfirmOpen(false)}
+                onClick={() => {
+                  setIsInstallConfirmOpen(false);
+                  setIsDowngradeConfirmed(false);
+                }}
                 disabled={isInstalling}
               >
-                Cancelar
+                {downgradeRequiresFullInstaller ? "Fechar" : "Cancelar"}
               </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={installSelectedZxp}
-                disabled={isInstalling}
-              >
-                {isInstalling ? "Instalando..." : installLabel}
-              </button>
+              {!downgradeRequiresFullInstaller ? (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={installSelectedZxp}
+                  disabled={isInstalling || (isDowngrade && !isDowngradeConfirmed)}
+                >
+                  {isInstalling ? "Instalando..." : installLabel}
+                </button>
+              ) : null}
             </div>
           </section>
         </div>
@@ -2372,15 +2469,6 @@ function normalizeAppInfo(info) {
   };
 }
 
-function normalizeCepExtensionStatus(status) {
-  return {
-    installed: Boolean(status?.installed),
-    version: String(status?.version || "").trim(),
-    path: String(status?.path || "").trim(),
-    isDevLink: Boolean(status?.isDevLink),
-  };
-}
-
 function cepErrorMessage(error, fallback = "Operação não concluída.") {
   const text = String(error?.message || error || "");
   const match = text.match(/^([a-z0-9_]+):\s*(.*)$/i);
@@ -2394,6 +2482,15 @@ function cepErrorMessage(error, fallback = "Operação não concluída.") {
     return "A assinatura deste arquivo é inválida ou o conteúdo foi alterado.";
   }
   if (code === "cep_zxp_unreadable") return "Não foi possível ler o arquivo. Verifique se ele ainda existe.";
+  if (code === "cep_downgrade_confirmation_required") {
+    return "Há uma versão mais nova instalada. Confirme explicitamente antes de instalar a versão anterior.";
+  }
+  if (code === "cep_downgrade_requires_full_installer") {
+    return "A versão mais nova está instalada para todos os usuários. Solicite ao suporte um instalador Full compatível para voltar a uma versão anterior.";
+  }
+  if (code === "cep_zxp_changed") {
+    return "O arquivo ZXP mudou depois da validação. Selecione o arquivo novamente para conferir e confirmar a versão correta.";
+  }
   if (code === "cep_install_failed") return "A instalação falhou e nada foi alterado.";
   return publicErrorMessage(error, fallback);
 }

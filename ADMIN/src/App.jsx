@@ -1913,7 +1913,7 @@ function AuditLogPage({
   const filters = [
     { value: "all", label: "Todos" },
     { value: "devices", label: "Computadores" },
-    { value: "access", label: "Ativação" },
+    { value: "access", label: "Acesso" },
     { value: "members", label: "Usuários" },
     { value: "license", label: "Licença" },
     { value: "security", label: "Segurança" },
@@ -1951,7 +1951,7 @@ function AuditLogPage({
         <div>
           <span className="eyebrow">Rastreabilidade</span>
           <h2 id="auditPageTitle">Histórico de atividades</h2>
-          <p>Acompanhe ações administrativas, ativações e mudanças de computadores.</p>
+          <p>Acompanhe ações administrativas, tentativas de acesso e mudanças de computadores.</p>
         </div>
         <div className="audit-page__header-actions">
           <span className="audit-total">

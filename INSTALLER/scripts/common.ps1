@@ -517,6 +517,173 @@ function Get-ZxpManifestInfo {
   }
 }
 
+# CEP bundle versions follow SemVer. Keep the comparison independent from
+# System.Version: prerelease precedence is significant and SemVer identifiers
+# may be larger than a CLR integer.
+function ConvertTo-ArizonaSemVer {
+  param([Parameter(Mandatory = $true)][string]$Version)
+
+  $match = [regex]::Match(
+    $Version,
+    '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$'
+  )
+  if (!$match.Success) {
+    throw "Invalid CEP semantic version: $Version"
+  }
+
+  $prerelease = @()
+  if ($match.Groups[4].Success) {
+    $prerelease = @($match.Groups[4].Value.Split('.'))
+    foreach ($identifier in $prerelease) {
+      if ($identifier -cmatch '^[0-9]+$' -and $identifier.Length -gt 1 -and $identifier.StartsWith('0')) {
+        throw "Invalid CEP semantic version prerelease identifier: $Version"
+      }
+    }
+  }
+
+  return [pscustomobject]@{
+    Original = $Version
+    Major = $match.Groups[1].Value
+    Minor = $match.Groups[2].Value
+    Patch = $match.Groups[3].Value
+    Prerelease = $prerelease
+  }
+}
+
+function Compare-ArizonaSemVerNumericIdentifier {
+  param(
+    [Parameter(Mandatory = $true)][string]$Left,
+    [Parameter(Mandatory = $true)][string]$Right
+  )
+
+  if ($Left.Length -lt $Right.Length) {
+    return -1
+  }
+  if ($Left.Length -gt $Right.Length) {
+    return 1
+  }
+  $comparison = [string]::CompareOrdinal($Left, $Right)
+  if ($comparison -lt 0) {
+    return -1
+  }
+  if ($comparison -gt 0) {
+    return 1
+  }
+  return 0
+}
+
+function Compare-ArizonaSemVer {
+  param(
+    [Parameter(Mandatory = $true)][string]$Left,
+    [Parameter(Mandatory = $true)][string]$Right
+  )
+
+  $leftVersion = ConvertTo-ArizonaSemVer $Left
+  $rightVersion = ConvertTo-ArizonaSemVer $Right
+  foreach ($component in @('Major', 'Minor', 'Patch')) {
+    $comparison = Compare-ArizonaSemVerNumericIdentifier `
+      -Left ([string]$leftVersion.$component) `
+      -Right ([string]$rightVersion.$component)
+    if ($comparison -ne 0) {
+      return $comparison
+    }
+  }
+
+  $leftPrerelease = @($leftVersion.Prerelease)
+  $rightPrerelease = @($rightVersion.Prerelease)
+  if ($leftPrerelease.Count -eq 0 -and $rightPrerelease.Count -eq 0) {
+    return 0
+  }
+  if ($leftPrerelease.Count -eq 0) {
+    return 1
+  }
+  if ($rightPrerelease.Count -eq 0) {
+    return -1
+  }
+
+  $sharedCount = [Math]::Min($leftPrerelease.Count, $rightPrerelease.Count)
+  for ($index = 0; $index -lt $sharedCount; $index++) {
+    $leftIdentifier = [string]$leftPrerelease[$index]
+    $rightIdentifier = [string]$rightPrerelease[$index]
+    $leftIsNumeric = $leftIdentifier -cmatch '^[0-9]+$'
+    $rightIsNumeric = $rightIdentifier -cmatch '^[0-9]+$'
+    if ($leftIsNumeric -and $rightIsNumeric) {
+      $comparison = Compare-ArizonaSemVerNumericIdentifier `
+        -Left $leftIdentifier `
+        -Right $rightIdentifier
+    } elseif ($leftIsNumeric) {
+      $comparison = -1
+    } elseif ($rightIsNumeric) {
+      $comparison = 1
+    } else {
+      $comparison = [string]::CompareOrdinal($leftIdentifier, $rightIdentifier)
+      if ($comparison -lt 0) {
+        $comparison = -1
+      } elseif ($comparison -gt 0) {
+        $comparison = 1
+      }
+    }
+    if ($comparison -ne 0) {
+      return $comparison
+    }
+  }
+
+  if ($leftPrerelease.Count -lt $rightPrerelease.Count) {
+    return -1
+  }
+  if ($leftPrerelease.Count -gt $rightPrerelease.Count) {
+    return 1
+  }
+  return 0
+}
+
+function Get-CepDirectoryManifestInfo {
+  param(
+    [Parameter(Mandatory = $true)][string]$Directory,
+    $Files = $null
+  )
+
+  $root = Get-FullPath $Directory
+  if ($null -eq $Files) {
+    $Files = Get-SafeDirectoryContentFiles $root
+  }
+  $manifestName = 'CSXS/manifest.xml'
+  if (!$Files.ContainsKey($manifestName)) {
+    throw "CEP content tree has no $manifestName`: $root"
+  }
+
+  $manifestFile = $Files[$manifestName]
+  [long]$actualBytes = 0
+  $stream = [System.IO.File]::Open(
+    $manifestFile.FullName,
+    [System.IO.FileMode]::Open,
+    [System.IO.FileAccess]::Read,
+    [System.IO.FileShare]::Read
+  )
+  try {
+    $manifestXml = Read-TextFromLimitedStream `
+      -InputStream $stream `
+      -EntryName $manifestName `
+      -ExpectedLength ([long]$manifestFile.Length) `
+      -Limit ([long]$script:ArizonaMaxCepMetadataBytes) `
+      -TotalBytes ([ref]$actualBytes)
+  } finally {
+    $stream.Dispose()
+  }
+
+  $document = ConvertTo-SafeXmlDocument -Xml $manifestXml -Label "$manifestName in $root"
+  $bundleId = $document.DocumentElement.GetAttribute('ExtensionBundleId')
+  $bundleVersion = $document.DocumentElement.GetAttribute('ExtensionBundleVersion')
+  if ([string]::IsNullOrWhiteSpace($bundleId) -or [string]::IsNullOrWhiteSpace($bundleVersion)) {
+    throw "CEP content tree manifest has no ExtensionBundleId/ExtensionBundleVersion: $root"
+  }
+
+  return [pscustomobject]@{
+    BundleId = $bundleId
+    BundleVersion = $bundleVersion
+  }
+}
+
 # P2 fingerprint contract, shared with src-tauri/src/cep_manager.rs: lowercase
 # hex SHA-256 over the raw DER bytes of the signing certificate. Exactly one
 # certificate may exist in the XML document, and it must be the sole element
@@ -1015,6 +1182,30 @@ function Get-SafeDirectoryContentFiles {
   return ,$files
 }
 
+function Get-CepDirectorySnapshotToken {
+  param([Parameter(Mandatory = $true)][string]$Directory)
+
+  $root = Get-FullPath $Directory
+  $files = Get-SafeDirectoryContentFiles $root
+  $records = @()
+  foreach ($name in @($files.Keys | Sort-Object)) {
+    $file = $files[$name]
+    $sha256 = Get-FileSha256 $file.FullName
+    if ([string]::IsNullOrWhiteSpace($sha256)) {
+      throw "CEP content file changed while its snapshot was being calculated: $($file.FullName)"
+    }
+    $records += "{0}`t{1}`t{2}" -f $name, ([long]$file.Length), $sha256
+  }
+
+  $bytes = [System.Text.Encoding]::UTF8.GetBytes(($records -join "`n"))
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    return (($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString('x2') }) -join '')
+  } finally {
+    $sha.Dispose()
+  }
+}
+
 function Assert-CepDirectoryContentSignature {
   param([Parameter(Mandatory = $true)][string]$Directory)
 
@@ -1076,6 +1267,39 @@ function Assert-CepDirectoryContentSignature {
   }
 
   return $profile
+}
+
+function Assert-CepInstalledReleaseIntegrity {
+  param(
+    [Parameter(Mandatory = $true)][string]$Directory,
+    [Parameter(Mandatory = $true)][string]$ExpectedBundleId,
+    [Parameter(Mandatory = $true)][string[]]$TrustedCertificateFingerprints
+  )
+
+  $root = Get-FullPath $Directory
+  $files = Get-SafeDirectoryContentFiles $root
+  foreach ($requiredEntry in @('META-INF/signatures.xml', 'mimetype', 'CSXS/manifest.xml', '.debug')) {
+    if (!$files.ContainsKey($requiredEntry)) {
+      throw "Installed CEP release is incomplete: $requiredEntry is missing from $root"
+    }
+  }
+
+  $manifestInfo = Get-CepDirectoryManifestInfo -Directory $root -Files $files
+  if ($manifestInfo.BundleId -cne $ExpectedBundleId) {
+    throw "Installed CEP release has an unexpected ExtensionBundleId: $($manifestInfo.BundleId)"
+  }
+  ConvertTo-ArizonaSemVer ([string]$manifestInfo.BundleVersion) | Out-Null
+
+  $profile = Assert-CepDirectoryContentSignature -Directory $root
+  if ($TrustedCertificateFingerprints -cnotcontains [string]$profile.CertificateFingerprint) {
+    throw "Installed CEP release is not signed by a pinned Arizona certificate ($($profile.CertificateFingerprint))."
+  }
+
+  return [pscustomobject]@{
+    BundleId = [string]$manifestInfo.BundleId
+    BundleVersion = [string]$manifestInfo.BundleVersion
+    CertificateFingerprint = [string]$profile.CertificateFingerprint
+  }
 }
 
 # Public pinned manifest, versioned in Git. It carries certificate material

@@ -475,6 +475,14 @@ anteriores ao corte ainda pertencem ao ciclo do dia anterior. A Edge Function
 `validate-license` limita o recibo CEP a 15 minutos e nunca o estende além do
 próximo corte ou da validade da licença.
 
+`validate-license` também recusa com `clock_suspicious` diferenças ou
+retrocessos de relógio superiores a cinco minutos. A evidência permanece em
+`licensing.clock_audits`, separada da auditoria administrativa, e as ocorrências
+`suspicious` aparecem para a conta master na view somente leitura
+`licensing.activity_log`. Repetições do mesmo estado são limitadas a uma por
+hora por dispositivo. Uma falha ao gravar essa observabilidade é registrada nos
+logs da Function, mas nunca muda nem bloqueia a decisão de licenciamento.
+
 `license_expires_on` é o **último dia completo válido**. O bloqueio acontece na
 hora da renovação diária do dia seguinte, em `America/Sao_Paulo`, e não mais às
 `23:59:59.999Z`. O cálculo fica no helper `licenseExpiryInstant`

@@ -14,6 +14,7 @@ Tauri e executado com `AfterFX.exe -r`.
 INSTALLER/
   cep-trusted-cert.json
   nsis/hooks.nsh
+  nsis/installer.nsi
   scripts/
   payload/
 ```
@@ -73,7 +74,7 @@ Authenticode. Para um artefato destinado à distribuição pública, use
 `release:verify-public`: ele executa o build e, somente depois, exige
 `Get-AuthenticodeSignature.Status = Valid` tanto em
 `src-tauri/target/release/arizona-app.exe` quanto no único setup NSIS da versão
-configurada (`arizona-app_2.2.0_<arquitetura>-setup.exe`). Ausência, mais de um
+configurada (`arizona-app_<versão-configurada>_<arquitetura>-setup.exe`). Ausência, mais de um
 setup correspondente ou qualquer status diferente de `Valid` interrompem o
 comando. Esse gate apenas verifica; ele não assina nem acessa chaves.
 
@@ -112,6 +113,28 @@ O hook NSIS:
 7. grava `installer/installed-assets.json` com schema 2 e somente o destino CEP,
    o SHA-256 instalado e a versão do bundle.
 
+O template NSIS está fixado no gerador `@tauri-apps/cli` 2.8.3. Em uma
+instalação NSIS existente, a mesma versão e versões novas do app são aplicadas
+no lugar, sem executar o desinstalador anterior. Assim, a sessão no Credential
+Manager e os dados locais continuam intactos. Uma versão antiga do app, uma
+versão instalada ilegível ou um registro parcial abortam antes de substituir o
+executável. A migração legada de WiX continua no fluxo normal; sob `/S`, ela
+falha de forma segura e pede o fluxo normal em vez de criar uma segunda cópia.
+
+Para o CEP `perMachine`, o Full compara `ExtensionBundleVersion` por precedência
+SemVer:
+
+- payload mais novo: atualiza;
+- mesma versão intacta: preserva sem fechar o After Effects;
+- mesma versão corrompida: repara com o pacote assinado;
+- instalação mais nova e intacta: preserva, mesmo dentro de um Tauri antigo;
+- instalação mais nova e corrompida: aborta em vez de fazer downgrade implícito.
+
+O switch técnico `-AllowCepVersionDowngrade` existe somente para rollback
+explícito e supervisionado pelo suporte; o setup normal nunca o envia. Toda
+troca revalida pacote, árvore extraída e destino imediatamente antes do rename,
+e um lock exclusivo impede dois helpers Full simultâneos.
+
 Payload que não confere com o manifesto aborta a instalação com a extensão
 anterior intacta e sem remover o AEX legado. Como o work root é irmão de
 `extensions` no mesmo volume, a troca final continua sendo um rename, mas crash,
@@ -125,7 +148,10 @@ CEP novo nem dá ao helper elevado de assets autorização para escrever em HKCU
 A instalação/atualização manual iniciada pelo Tauri é um fluxo separado e
 continua `per-user` em
 `%APPDATA%\Adobe\CEP\extensions\com.arizona-carrefour.cep`. Ela usa seu próprio
-work root fora de `extensions`; não altera o destino `perMachine` do Full.
+work root fora de `extensions`; não altera o destino `perMachine` do Full. O app
+mostra o inventário `perUser`/`perMachine`, pede confirmação para downgrade
+`perUser` e bloqueia a operação quando uma cópia `perMachine` mais nova
+continuaria sendo escolhida pela Adobe.
 
 A migração 2.0.0 preserva os dados autenticados em
 `%LOCALAPPDATA%\com.pc.arizona-app`; remove somente o executável, registro e
@@ -137,9 +163,10 @@ O protocolo legado `arizona://` não é mais registrado. Em upgrade ou
 desinstalação, a chave antiga é removida somente se ainda apontar para o
 executável desta instalação.
 
-A instalação ou troca da extensão exige o After Effects fechado, mesmo quando
-nenhum AEX legado existe. A preflight de desinstalação também bloqueia quando um
-AEX legado carregado precisa ser removido.
+A instalação, atualização ou reparo da extensão exige o After Effects fechado.
+Quando o CEP igual ou mais novo é apenas preservado e não existe AEX legado, o
+After Effects pode permanecer aberto. A preflight de desinstalação também
+bloqueia quando um AEX legado carregado precisa ser removido.
 
 ## Desinstalação
 
@@ -199,7 +226,8 @@ setup NSIS cujo nome corresponda ao `productName` e à versão de
 
 ## Testes
 
-Os testes cobrem instalação CEP a partir de `.zxp`, recuperação transacional,
+Os testes cobrem instalação CEP a partir de `.zxp`, política SemVer de
+upgrade/preservação/reparo/downgrade explícito, recuperação transacional,
 rollback, crashes antes/depois do commit sem BundleId duplicado, seleção da raiz
 nativa x64 mesmo sob PowerShell de 32 bits,
 ausência de plugins, limpeza de AEX legado, preservação de arquivo alheio,

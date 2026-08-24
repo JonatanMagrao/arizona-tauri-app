@@ -83,7 +83,11 @@
   ${EndIf}
 !macroend
 
-!macro NSIS_HOOK_POSTINSTALL
+; Arizona's pinned custom Tauri template invokes this immediately after copying
+; installer resources but before MAINBINARY, WriteUninstaller and registry
+; writes. A CEP/After Effects failure therefore leaves the previous desktop app
+; registration and uninstaller intact.
+!macro ARIZONA_NSIS_HOOK_AFTER_RESOURCES
 arizona_install_adobe_retry:
   DetailPrint "Installing and validating the Arizona CEP extension..."
   nsExec::ExecToStack /TIMEOUT=120000 '"${ARIZONA_PS}" -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "${ARIZONA_SCRIPT_ROOT}\install-adobe-assets.ps1" -InstallDir "$INSTDIR" -StatePath "${ARIZONA_STATE_PATH}" -PayloadRoot "${ARIZONA_PAYLOAD_ROOT}"'
@@ -91,7 +95,7 @@ arizona_install_adobe_retry:
   Pop $1
 
   ${If} $0 = 20
-    MessageBox MB_ICONEXCLAMATION|MB_RETRYCANCEL "Close After Effects, then choose Retry. Arizona found an old AEX plugin that must be removed during this upgrade." /SD IDCANCEL IDRETRY arizona_install_adobe_retry
+    MessageBox MB_ICONEXCLAMATION|MB_RETRYCANCEL "Close After Effects, then choose Retry. Arizona needs to update its CEP extension or remove an old AEX plugin." /SD IDCANCEL IDRETRY arizona_install_adobe_retry
     Goto arizona_install_adobe_abort
   ${ElseIf} $0 != 0
     MessageBox MB_ICONSTOP|MB_RETRYCANCEL "Arizona could not install or validate its CEP extension. Choose Retry, or Cancel to stop this installation. See the Arizona Installer log for details." /SD IDCANCEL IDRETRY arizona_install_adobe_retry
@@ -104,6 +108,9 @@ arizona_install_adobe_abort:
   Abort "Arizona installation stopped before completing its CEP extension."
 
 arizona_install_adobe_done:
+!macroend
+
+!macro NSIS_HOOK_POSTINSTALL
   ; Remove the retired deep-link left by older Arizona installers, but only
   ; when it still points to this installation.
   SetRegView 64
