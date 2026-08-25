@@ -62,7 +62,7 @@ fn product_file_matches_code(arquivo: &Path, codigo: &str) -> bool {
     arquivo
         .file_stem()
         .and_then(|stem| stem.to_str())
-        .map(|stem| stem.to_lowercase().contains(&codigo.to_lowercase()))
+        .map(|stem| stem.trim() == codigo)
         .unwrap_or(false)
 }
 
@@ -199,10 +199,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn product_source_match_accepts_exact_stem_ignoring_case() {
+    fn product_source_match_accepts_exact_stem_with_matching_case() {
         assert!(product_file_matches_code(
             Path::new("Fraldinha_Bovina.png"),
-            "fraldinha_bovina"
+            "Fraldinha_Bovina"
         ));
         assert!(product_file_matches_code(
             Path::new("3389987.png"),
@@ -211,18 +211,26 @@ mod tests {
     }
 
     #[test]
-    fn product_source_match_accepts_partial_stem_like_python_importer() {
-        assert!(product_file_matches_code(
+    fn product_source_match_rejects_partial_stem_and_different_case() {
+        assert!(!product_file_matches_code(
             Path::new("4136152_A_OK.png"),
             "4136152"
         ));
-        assert!(product_file_matches_code(
+        assert!(!product_file_matches_code(
             Path::new("Icone_Borda_Memoria_256GB.png"),
             "Borda_Memoria"
         ));
         assert!(!product_file_matches_code(
             Path::new("Fraldinha_Bovina.png"),
-            "Picanha_Bovina"
+            "fraldinha_bovina"
+        ));
+    }
+
+    #[test]
+    fn product_source_match_trims_both_names_before_comparing() {
+        assert!(product_file_matches_code(
+            Path::new(" Produto Exato .png"),
+            "  Produto Exato  "
         ));
     }
 }
