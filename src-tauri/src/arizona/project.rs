@@ -282,7 +282,7 @@ impl Arizona {
                 .file_stem()
                 .and_then(|stem| stem.to_str())
                 .unwrap_or("");
-            if stem.split('_').any(|part| part == praca) {
+            if roteiro_stem_matches_praca(stem, &praca) {
                 roteiro = Some(path);
                 break;
             }
@@ -343,10 +343,7 @@ impl Arizona {
             .filter(|path| {
                 path.file_stem()
                     .and_then(|stem| stem.to_str())
-                    .is_some_and(|stem| {
-                        stem.split('_')
-                            .any(|part| part.eq_ignore_ascii_case(&praca))
-                    })
+                    .is_some_and(|stem| roteiro_stem_matches_praca(stem, &praca))
             })
             .collect::<Vec<_>>();
         candidatos.sort_by_key(|path| {
@@ -401,6 +398,19 @@ fn starts_with_two_digits(value: &str) -> bool {
     bytes.len() >= 2 && bytes[0].is_ascii_digit() && bytes[1].is_ascii_digit()
 }
 
+fn roteiro_stem_matches_praca(stem: &str, praca: &str) -> bool {
+    stem.split('_')
+        .any(|part| roteiro_region_matches(part, praca))
+}
+
+fn roteiro_region_matches(left: &str, right: &str) -> bool {
+    left.eq_ignore_ascii_case(right) || (is_sp_roteiro_region(left) && is_sp_roteiro_region(right))
+}
+
+fn is_sp_roteiro_region(value: &str) -> bool {
+    value.eq_ignore_ascii_case("SP") || value.eq_ignore_ascii_case("SP2")
+}
+
 fn region_from_aep_name(file_name: &str) -> Option<String> {
     Path::new(file_name)
         .file_stem()
@@ -445,7 +455,19 @@ fn project_title_from_aep_name(
 
 #[cfg(test)]
 mod tests {
-    use super::region_from_aep_name;
+    use super::{region_from_aep_name, roteiro_stem_matches_praca};
+
+    #[test]
+    fn treats_sp_and_sp2_as_equivalent_roteiro_regions() {
+        assert!(roteiro_stem_matches_praca("ROTEIRO_SP_OFERTAS", "SP2"));
+        assert!(roteiro_stem_matches_praca("ROTEIRO_SP2_OFERTAS", "SP"));
+        assert!(roteiro_stem_matches_praca("roteiro_sp2_ofertas", "sp"));
+        assert!(roteiro_stem_matches_praca("ROTEIRO_RJ_OFERTAS", "rj"));
+
+        assert!(!roteiro_stem_matches_praca("ROTEIRO_SP20_OFERTAS", "SP"));
+        assert!(!roteiro_stem_matches_praca("ROTEIRO_SP3_OFERTAS", "SP2"));
+        assert!(!roteiro_stem_matches_praca("ROTEIRO_RSP_OFERTAS", "SP"));
+    }
 
     #[test]
     fn derives_only_a_safe_region_for_the_queue_contract() {
