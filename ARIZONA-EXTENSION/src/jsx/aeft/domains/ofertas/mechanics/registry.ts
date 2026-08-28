@@ -1,6 +1,10 @@
 import type { InternalOfferMechanic, MechanicReaderMap } from "../types";
-import { nameMatches } from "../layers/findLayers";
+import { getLayerSource, nameMatches } from "../layers/findLayers";
 import { ALL_TAKE_PAY_MECHANIC_NAME_PATTERN } from "../../../../../shared/allTakePayMechanic";
+import {
+  buildMechanicSourceIdentity,
+  type MechanicSourceIdentity,
+} from "./mechanicIdentity";
 import {
   readCrfCardDePorMechanic,
   readCrfDualMechanic,
@@ -95,18 +99,60 @@ const MECHANICS: MechanicReaderMap[] = [
   },
 ];
 
-export const readMechanic = (
+const readMechanicByIdentity = (
+  identity: string,
   valueLayer: Layer,
   errors: string[]
-): InternalOfferMechanic => {
+): InternalOfferMechanic | null => {
   for (let index = 0; index < MECHANICS.length; index += 1) {
-    if (nameMatches(valueLayer.name, MECHANICS[index].pattern)) {
+    if (nameMatches(identity, MECHANICS[index].pattern)) {
       return MECHANICS[index].reader(valueLayer, errors);
     }
   }
 
+  return null;
+};
+
+const describeUnmappedIdentity = (
+  identity: MechanicSourceIdentity
+): string => {
+  const details: string[] = [];
+
+  if (identity.comment !== "") {
+    details.push('comment "' + identity.comment + '"');
+  }
+
+  if (identity.sourceName !== "") {
+    details.push('source "' + identity.sourceName + '"');
+  }
+
+  return details.length > 0 ? details.join("; ") : "source sem identificacao";
+};
+
+export const readMechanic = (
+  valueLayer: Layer,
+  errors: string[]
+): InternalOfferMechanic => {
+  const source = getLayerSource(valueLayer, "identificacao da mecanica", errors);
+  const identity = buildMechanicSourceIdentity(
+    source === null ? "" : source.comment,
+    source === null ? "" : source.name
+  );
+
+  for (let index = 0; index < identity.candidates.length; index += 1) {
+    const mechanic = readMechanicByIdentity(
+      identity.candidates[index],
+      valueLayer,
+      errors
+    );
+
+    if (mechanic !== null) {
+      return mechanic;
+    }
+  }
+
   return {
-    type: "Mecanica nao mapeada: " + valueLayer.name,
+    type: "Mecanica nao mapeada: " + describeUnmappedIdentity(identity),
     fields: [],
     optionGroups: [],
     unsupported: true,

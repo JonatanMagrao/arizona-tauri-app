@@ -158,7 +158,7 @@ Pacote assinado da extensão (na raiz):
 ```powershell
 npm run cep:cert   # uma única vez; ver docs/LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md
 npm run cep:zxp
-npm run cep:verify -- dist-cep/arizona-cep-v2.2.0.zxp
+npm run cep:verify -- dist-cep/arizona-cep-v2.2.1.zxp
 ```
 
 O número no nome do `.zxp` acompanha `ARIZONA-EXTENSION/package.json`.

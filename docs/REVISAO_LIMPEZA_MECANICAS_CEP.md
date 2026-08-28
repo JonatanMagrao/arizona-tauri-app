@@ -2,7 +2,7 @@
 
 **Status:** primeira limpeza segura aplicada; compatibilidade legada preservada
 
-**Última revisão:** 20 de agosto de 2026
+**Última revisão:** 28 de agosto de 2026
 
 **Escopo:** extensão CEP (`ARIZONA-EXTENSION`), incluindo host JSX, painel React
 e integrações da área de roteiro.
@@ -21,8 +21,8 @@ descrita neste documento. Nenhum reader, mapping do registry, DTO, helper de
 jump ou regra do roteiro foi removido.
 
 O registry possui 17 mappings alcançáveis. Portanto, os readers antigos não são
-`dead code` técnico: basta uma precomp possuir o nome correspondente para que o
-reader volte a ser executado.
+`dead code` técnico: basta o comentário ou, por compatibilidade, o nome do
+source de uma precomp corresponder ao mapping para que o reader seja executado.
 
 Fonte da verdade:
 
@@ -30,6 +30,18 @@ Fonte da verdade:
 - [`snapshot/buildOfferSnapshot.ts`](../ARIZONA-EXTENSION/src/jsx/aeft/domains/ofertas/snapshot/buildOfferSnapshot.ts)
 - [`actions/updateField.ts`](../ARIZONA-EXTENSION/src/jsx/aeft/domains/ofertas/actions/updateField.ts)
 - [`actions/updateOption.ts`](../ARIZONA-EXTENSION/src/jsx/aeft/domains/ofertas/actions/updateOption.ts)
+
+## Identificação da mecânica
+
+A identificação não depende mais do nome da layer na timeline. O contrato é:
+
+1. `valueLayer.source.comment` é a fonte primária e deve conter o nome canônico
+   da mecânica, por exemplo `TODOS A COM LEVE X PAGUE Y`;
+2. quando o comentário estiver vazio ou não for reconhecido, o fallback é
+   `valueLayer.source.name` para preservar projetos ainda não migrados;
+3. `valueLayer.name` não participa da identificação;
+4. espaços externos são ignorados e os padrões continuam aceitando o sufixo
+   numérico criado por duplicações, sem renomear ou alterar o projeto.
 
 ## Mecânicas do projeto-base atual
 

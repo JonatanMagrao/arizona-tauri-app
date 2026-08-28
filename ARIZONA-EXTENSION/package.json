@@ -1,7 +1,7 @@
 {
   "name": "com.arizona-carrefour.cep", 
   "private": true,
-  "version": "2.2.0",
+  "version": "2.2.1",
   "type": "module",
   "scripts": {
     "license:keys": "node scripts/generate-license-trusted-keys.mjs",
@@ -10,7 +10,7 @@
     "prebuild": "npm run license:keys",
     "prezxp": "npm run license:keys",
     "prezip": "npm run license:keys",
-    "test": "node --test --test-isolation=none scripts/all-take-pay-mechanic.test.mjs",
+    "test": "node --test --test-isolation=none scripts/all-take-pay-mechanic.test.mjs scripts/mechanic-source-identity.test.mjs",
     "dev": "vite",
     "watch": "tsc && vite build --watch true",
     "build": "rimraf dist/* && tsc -p \"tsconfig-build.json\" && vite build",
