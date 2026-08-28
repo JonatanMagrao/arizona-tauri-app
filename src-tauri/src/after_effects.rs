@@ -132,14 +132,14 @@ pub fn execute(
     let after_fx = resolve_executable(&config.ae_version);
     if !after_fx.is_file() {
         return Err(format!(
-            "AfterFX.exe nao encontrado para a versao {}. Ajuste a versao do After Effects nas configuracoes.",
+            "AfterFX.exe não encontrado para a versão {}. Ajuste a versão do After Effects nas configurações.",
             config.ae_version.trim()
         ));
     }
 
     if !is_after_effects_running()? {
         return Err(
-            "After Effects nao esta aberto. Abra o After Effects e tente o atalho novamente."
+            "After Effects não está aberto. Abra o After Effects e tente o atalho novamente."
                 .to_string(),
         );
     }
@@ -151,7 +151,7 @@ pub fn execute(
         .spawn()
         .map_err(|err| {
             format!(
-                "Nao foi possivel executar o ExtendScript no After Effects em {}: {err}",
+                "Não foi possível executar o ExtendScript no After Effects em {}: {err}",
                 after_fx.display()
             )
         })?;
@@ -281,10 +281,10 @@ pub(crate) fn is_after_effects_running() -> Result<bool, String> {
     command.creation_flags(CREATE_NO_WINDOW);
 
     let output = command.output().map_err(|err| {
-        format!("Nao foi possivel verificar se o After Effects esta aberto: {err}")
+        format!("Não foi possível verificar se o After Effects está aberto: {err}")
     })?;
     if !output.status.success() {
-        return Err("Nao foi possivel verificar se o After Effects esta aberto.".to_string());
+        return Err("Não foi possível verificar se o After Effects está aberto.".to_string());
     }
 
     Ok(tasklist_contains_after_effects(&String::from_utf8_lossy(
@@ -318,7 +318,7 @@ fn materialize_action_script(
         .join(SCRIPT_DIRECTORY_NAME);
     let directory = action_script_directory(&root_directory, config, action);
     fs::create_dir_all(&directory)
-        .map_err(|err| format!("Nao foi possivel criar {}: {err}", directory.display()))?;
+        .map_err(|err| format!("Não foi possível criar {}: {err}", directory.display()))?;
 
     materialize_action_settings(&directory, config, action)?;
 
@@ -334,7 +334,7 @@ fn materialize_action_script(
 
     if should_write {
         fs::write(&script_path, script.as_bytes())
-            .map_err(|err| format!("Nao foi possivel gravar {}: {err}", script_path.display()))?;
+            .map_err(|err| format!("Não foi possível gravar {}: {err}", script_path.display()))?;
     }
 
     Ok(script_path)
@@ -391,7 +391,7 @@ fn materialize_action_settings(
             .unwrap_or(true);
         if should_write {
             fs::write(&path, value.as_bytes())
-                .map_err(|err| format!("Nao foi possivel gravar {}: {err}", path.display()))?;
+                .map_err(|err| format!("Não foi possível gravar {}: {err}", path.display()))?;
         }
     }
 

@@ -3,8 +3,27 @@ import test from "node:test";
 import {
   DEFAULT_SETTINGS,
   isSettingsReady,
+  missingRequiredPaths,
   normalizeSettings,
 } from "./settings.js";
+
+test("leaves customer-specific folders empty on first use", () => {
+  assert.equal(DEFAULT_SETTINGS.drive, "");
+  assert.equal(DEFAULT_SETTINGS.produtosPath, "");
+  assert.deepEqual(missingRequiredPaths(DEFAULT_SETTINGS), ["Carrefour Drive", "Fotos Flow"]);
+  assert.equal(isSettingsReady(DEFAULT_SETTINGS), false);
+});
+
+test("preserves and normalizes previously saved customer folders", () => {
+  const settings = normalizeSettings({
+    drive: "  I:\\Drives compartilhados\\Cliente  ",
+    produtosPath: "  I:\\Fotos Flow  ",
+  });
+
+  assert.equal(settings.drive, "I:\\Drives compartilhados\\Cliente");
+  assert.equal(settings.produtosPath, "I:\\Fotos Flow");
+  assert.deepEqual(missingRequiredPaths(settings), []);
+});
 
 test("uses backward-compatible defaults for local After Effects actions", () => {
   const settings = normalizeSettings({});
@@ -27,13 +46,18 @@ test("normalizes custom local After Effects action names", () => {
 });
 
 test("requires all local After Effects action names before settings are ready", () => {
-  assert.equal(isSettingsReady(DEFAULT_SETTINGS), true);
+  const configuredSettings = {
+    ...DEFAULT_SETTINGS,
+    drive: "I:\\Drives compartilhados\\Cliente",
+    produtosPath: "I:\\Fotos Flow",
+  };
+  assert.equal(isSettingsReady(configuredSettings), true);
 
   for (const field of [
     "exportPrintCompName",
     "renderMovTemplateName",
     "renderMp4TemplateName",
   ]) {
-    assert.equal(isSettingsReady({ ...DEFAULT_SETTINGS, [field]: "" }), false);
+    assert.equal(isSettingsReady({ ...configuredSettings, [field]: "" }), false);
   }
 });

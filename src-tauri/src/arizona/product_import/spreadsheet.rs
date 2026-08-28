@@ -67,13 +67,13 @@ fn find_sheet_target(
                 && node.tag_name().name() == "sheet"
                 && node.attribute("name") == Some(sheet_name)
         })
-        .ok_or_else(|| format!(r#"Aba "{}" nÃ£o encontrada."#, sheet_name))?;
+        .ok_or_else(|| format!(r#"Aba "{}" não encontrada."#, sheet_name))?;
 
     let relation_id = sheet
         .attributes()
         .find(|attr| attr.name() == "id")
         .map(|attr| attr.value().to_string())
-        .ok_or_else(|| format!(r#"RelaÃ§Ã£o da aba "{}" nÃ£o encontrada."#, sheet_name))?;
+        .ok_or_else(|| format!(r#"Relação da aba "{}" não encontrada."#, sheet_name))?;
 
     let target = find_relationship_target(&rels_xml, &relation_id)?;
     Ok(normalize_workbook_target(&target))
@@ -89,7 +89,7 @@ fn find_relationship_target(rels_xml: &str, relation_id: &str) -> Result<String,
         })
         .and_then(|node| node.attribute("Target"))
         .map(|target| target.to_string())
-        .ok_or_else(|| format!(r#"Target da relaÃ§Ã£o "{}" nÃ£o encontrado."#, relation_id))
+        .ok_or_else(|| format!(r#"Target da relação "{}" não encontrado."#, relation_id))
 }
 
 fn normalize_workbook_target(target: &str) -> String {

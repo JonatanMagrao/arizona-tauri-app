@@ -80,7 +80,7 @@ pub fn load_validated(app: &AppHandle) -> Result<AppConfig, String> {
 }
 
 pub fn save(app: &AppHandle, config: AppConfig) -> Result<AppConfig, String> {
-    let config = validate_config(config)?;
+    let config = validate_storable_config(config)?;
     let path = config_path(app)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
@@ -127,18 +127,24 @@ fn sanitize_config(config: AppConfig) -> AppConfig {
 }
 
 pub fn validate_config(config: AppConfig) -> Result<AppConfig, String> {
+    let config = validate_storable_config(config)?;
+    if config.drive.is_empty() {
+        return Err("Selecione o Carrefour Drive nas configurações.".to_string());
+    }
+    if config.produtos_path.is_empty() {
+        return Err("Selecione a pasta Fotos Flow nas configurações.".to_string());
+    }
+
+    Ok(config)
+}
+
+pub fn validate_storable_config(config: AppConfig) -> Result<AppConfig, String> {
     let config = sanitize_config(config);
     if config.ae_version.is_empty() {
         return Err("Informe a versão do After Effects.".to_string());
     }
-    if config.drive.is_empty() {
-        return Err("Selecione o entrypoint do Drive.".to_string());
-    }
-    if is_incomplete_drive_entrypoint(&config.drive) {
+    if !config.drive.is_empty() && is_incomplete_drive_entrypoint(&config.drive) {
         return Err("Selecione o entrypoint completo do Drive.".to_string());
-    }
-    if config.produtos_path.is_empty() {
-        return Err("Selecione a pasta Fotos Flow.".to_string());
     }
     if config.produtos.is_empty() {
         return Err("Informe o nome da pasta de produtos.".to_string());
@@ -211,7 +217,7 @@ fn default_render_mp4_template_name() -> String {
 }
 
 fn default_drive() -> String {
-    r"I:\Drives compartilhados\Phx CRF Copa".to_string()
+    String::new()
 }
 
 fn default_produtos() -> String {
@@ -223,7 +229,7 @@ fn default_produtos_year() -> String {
 }
 
 fn default_produtos_path() -> String {
-    r"I:\Drives compartilhados\Phx CRF Copa\CARREFOUR\ASSETS\_FOTOS FLOW".to_string()
+    String::new()
 }
 
 fn sanitize_produtos_year(value: &str) -> String {
@@ -262,7 +268,40 @@ fn is_incomplete_drive_entrypoint(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_config, AppConfig};
+    use super::{validate_config, validate_storable_config, AppConfig};
+
+    fn configured_defaults() -> AppConfig {
+        AppConfig {
+            drive: r"I:\Drives compartilhados\Cliente".to_string(),
+            produtos_path: r"I:\Fotos Flow".to_string(),
+            ..AppConfig::default()
+        }
+    }
+
+    #[test]
+    fn leaves_customer_specific_folders_empty_on_first_use() {
+        let config: AppConfig = serde_json::from_str("{}").unwrap();
+
+        assert!(config.drive.is_empty());
+        assert!(config.produtos_path.is_empty());
+        assert!(validate_storable_config(config.clone()).is_ok());
+        assert!(validate_config(config).is_err());
+    }
+
+    #[test]
+    fn preserves_previously_saved_customer_folders() {
+        let config: AppConfig = serde_json::from_str(
+            r#"{
+                "drive": "I:\\Drives compartilhados\\Cliente",
+                "produtosPath": "I:\\Fotos Flow"
+            }"#,
+        )
+        .unwrap();
+
+        let validated = validate_config(config).unwrap();
+        assert_eq!(validated.drive, r"I:\Drives compartilhados\Cliente");
+        assert_eq!(validated.produtos_path, r"I:\Fotos Flow");
+    }
 
     #[test]
     fn uses_compatible_defaults_for_after_effects_action_names() {
@@ -275,7 +314,7 @@ mod tests {
 
     #[test]
     fn trims_after_effects_action_names() {
-        let mut config = AppConfig::default();
+        let mut config = configured_defaults();
         config.export_print_comp_name = "  PRINT_EXPORT  ".to_string();
         config.render_mov_template_name = "  MOV CUSTOM  ".to_string();
         config.render_mp4_template_name = "  H264 CUSTOM  ".to_string();
@@ -289,18 +328,18 @@ mod tests {
 
     #[test]
     fn rejects_empty_or_multiline_after_effects_action_names() {
-        let mut empty = AppConfig::default();
+        let mut empty = configured_defaults();
         empty.export_print_comp_name.clear();
         assert!(validate_config(empty).is_err());
 
-        let mut multiline = AppConfig::default();
+        let mut multiline = configured_defaults();
         multiline.render_mov_template_name = "PROXY\nCUSTOM".to_string();
         assert!(validate_config(multiline).is_err());
     }
 
     #[test]
     fn allows_every_after_shortcut_to_be_disabled() {
-        let mut config = AppConfig::default();
+        let mut config = configured_defaults();
         config.move_layers_backward_shortcut.clear();
         config.move_layers_forward_shortcut.clear();
         config.move_jump_marker_shortcut.clear();

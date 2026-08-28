@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node --test --test-isolation=none src/features/auth/loginFlow.test.mjs src/features/renderQueue/renderHistoryData.test.mjs src/features/renderQueue/renderTiming.test.mjs src/features/renderQueue/renderWindowContract.test.mjs src/features/secondary/cepExtensionStatus.test.mjs src/features/secondary/roteiroHighlights.test.mjs src/utils/publicErrors.test.mjs src/utils/settings.test.mjs",
+    "test": "node --test --test-isolation=none src/features/auth/loginFlow.test.mjs src/features/renderQueue/renderHistoryData.test.mjs src/features/renderQueue/renderTiming.test.mjs src/features/renderQueue/renderWindowContract.test.mjs src/features/secondary/cepExtensionStatus.test.mjs src/features/secondary/roteiroHighlights.test.mjs src/utils/publicErrors.test.mjs src/utils/settings.test.mjs src/utils/textEncoding.test.mjs scripts/ensure-cep-dev-link.test.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:clean": "cd src-tauri && cargo clean",
@@ -18,6 +18,8 @@
     "cep:zxp": "node scripts/package-cep-zxp.mjs",
     "cep:verify": "node scripts/verify-cep-zxp.mjs",
     "test:cep-signing": "node --test --test-isolation=none scripts/cep-signing.test.mjs",
+    "cep:dev-link": "node scripts/ensure-cep-dev-link.mjs",
+    "predev:all": "npm run cep:dev-link",
     "dev:all": "concurrently -k -n tauri,cep -c cyan,magenta \"npm run tauri:dev\" \"npm run cep:dev\"",
     "license:check": "node ADMIN/scripts/check-license-parity.mjs",
     "release:check": "npm run license:check && npm run test:cep-signing && powershell -NoProfile -ExecutionPolicy Bypass -File INSTALLER/scripts/verify-release.ps1",

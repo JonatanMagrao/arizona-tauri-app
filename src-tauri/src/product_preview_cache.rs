@@ -127,7 +127,7 @@ fn has_complete_manifest(app: &AppHandle, jobao_cod: &str) -> bool {
 fn warmup_job(app: &AppHandle, jobao_cod: &str, products_directory: &Path) -> Result<(), String> {
     if !products_directory.is_dir() {
         return Err(format!(
-            "Pasta de produtos nao encontrada: {}",
+            "Pasta de produtos não encontrada: {}",
             products_directory.display()
         ));
     }
@@ -309,7 +309,7 @@ fn render_psd_preview(task: &PreviewTask) -> Result<(), String> {
 
     if width == 0 || height == 0 {
         return Err(format!(
-            "PSD sem dimensoes validas: {}",
+            "PSD sem dimensões válidas: {}",
             input_path.display()
         ));
     }
@@ -319,7 +319,7 @@ fn render_psd_preview(task: &PreviewTask) -> Result<(), String> {
     let expected_length = (width as usize)
         .checked_mul(height as usize)
         .and_then(|pixels| pixels.checked_mul(4))
-        .ok_or_else(|| format!("Dimensoes PSD invalidas: {width}x{height}"))?;
+        .ok_or_else(|| format!("Dimensões PSD inválidas: {width}x{height}"))?;
 
     if rgba.len() != expected_length {
         return Err(format!(
@@ -332,7 +332,7 @@ fn render_psd_preview(task: &PreviewTask) -> Result<(), String> {
 
     let source = RgbaImage::from_raw(width, height, rgba).ok_or_else(|| {
         format!(
-            "Nao foi possivel montar o bitmap de {}",
+            "Não foi possível montar o bitmap de {}",
             input_path.display()
         )
     })?;
@@ -378,7 +378,7 @@ fn shared_cache_root(app: &AppHandle) -> Result<PathBuf, String> {
     let local_app_data = env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .or_else(|| app.path().app_local_data_dir().ok())
-        .ok_or_else(|| "LOCALAPPDATA nao encontrado.".to_string())?;
+        .ok_or_else(|| "LOCALAPPDATA não encontrado.".to_string())?;
 
     Ok(local_app_data
         .join(CACHE_APP_DIRECTORY)

@@ -34,3 +34,10 @@ test("keeps concise messages that help the user act", () => {
     "A pasta selecionada não está disponível.",
   );
 });
+
+test("keeps a human project lookup message with Portuguese accents", () => {
+  const fallback = "Não foi possível localizar o projeto.";
+  const message = 'Jobão "1369" não encontrado no Carrefour Drive "Phx CRF Copa" em 2026/08_AGOSTO. Confira o Drive em Configurações.';
+
+  assert.equal(publicErrorMessage(message, fallback), message);
+});

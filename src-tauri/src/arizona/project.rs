@@ -16,8 +16,12 @@ use super::{
 
 impl Arizona {
     pub fn get_jobao_path(&self, jobao_cod: &str) -> Result<PathBuf, String> {
-        let reg_exp = Regex::new(&format!(r"\d{{2}}_{}_\d{{5,6}}_w*", jobao_cod))
-            .map_err(|err| err.to_string())?;
+        let jobao_cod = jobao_cod.trim();
+        let reg_exp = Regex::new(&format!(
+            r"^\d{{2}}_{}_\d{{5,6}}_",
+            regex::escape(jobao_cod)
+        ))
+        .map_err(|err| err.to_string())?;
 
         for mes in &self.meses {
             let projeto_path = self
@@ -51,12 +55,17 @@ impl Arizona {
         let searched = self
             .meses
             .iter()
-            .map(|mes| mes.label.as_str())
+            .map(|mes| format!("{}/{}", mes.year, mes.label))
             .collect::<Vec<_>>()
             .join(", ");
+        let configured_drive = self
+            .carrefour_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("não informado");
         Err(format!(
-            r#"JobÃ£o "{}" nÃ£o encontrado em {}!"#,
-            jobao_cod, searched
+            r#"Jobão "{}" não encontrado no Carrefour Drive "{}" em {}. Confira o Drive em Configurações."#,
+            jobao_cod, configured_drive, searched
         ))
     }
 
@@ -66,15 +75,21 @@ impl Arizona {
     }
 
     pub fn open_jobinhos_folder(&self, jobao_cod: &str, jobinho_cod: &str) -> Result<(), String> {
+        let jobinho_cod = jobinho_cod.trim();
         let jobao_path = self.get_jobao_path(jobao_cod)?.join("PROJETOS").join("AE");
-        let reg_exp = Regex::new(&format!(r"{}_", jobinho_cod)).map_err(|err| err.to_string())?;
+        let reg_exp = Regex::new(&format!(r"(?i)^{}[_-]", regex::escape(jobinho_cod)))
+            .map_err(|err| err.to_string())?;
 
         for entry in fs::read_dir(&jobao_path)
             .map_err(|err| format!("Erro ao ler {}: {err}", jobao_path.display()))?
         {
             let entry = entry.map_err(|err| err.to_string())?;
             let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("aep") {
+            if !path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("aep"))
+            {
                 continue;
             }
 
@@ -85,7 +100,11 @@ impl Arizona {
             }
         }
 
-        Ok(())
+        Err(format!(
+            r#"Projeto do Jobinho "{}" não encontrado dentro do Jobão "{}"."#,
+            jobinho_cod,
+            jobao_cod.trim()
+        ))
     }
 
     pub fn abrir_jobinho(
@@ -141,7 +160,13 @@ impl Arizona {
         self.project_candidates_impl(jobao_cod, jobinho_cod, requested_media)?
             .into_iter()
             .next()
-            .ok_or_else(|| format!(r#"Código Jobinho "{}" inválido!"#, jobinho_cod.trim()))
+            .ok_or_else(|| {
+                format!(
+                    r#"Projeto do Jobinho "{}" não encontrado dentro do Jobão "{}"."#,
+                    jobinho_cod.trim(),
+                    jobao_cod.trim()
+                )
+            })
     }
 
     fn project_candidates_impl(
@@ -218,7 +243,11 @@ impl Arizona {
         });
 
         if candidates.is_empty() {
-            Err(format!(r#"Código Jobinho "{}" inválido!"#, jobinho_cod))
+            Err(format!(
+                r#"Projeto do Jobinho "{}" não encontrado dentro do Jobão "{}"."#,
+                jobinho_cod,
+                jobao_cod.trim()
+            ))
         } else {
             Ok(candidates)
         }
@@ -237,7 +266,7 @@ impl Arizona {
             "audio" => jobao_path.join("AUDIO").join("BOUNCE"),
             _ => {
                 return Err(format!(
-                    r#"Pasta "{}" nÃ£o encontrada em {}"#,
+                    r#"Pasta "{}" não encontrada em {}"#,
                     option, jobao_cod
                 ))
             }
@@ -269,7 +298,7 @@ impl Arizona {
         }
 
         let Some(praca) = praca else {
-            return Ok(ActionResponse::err("PraÃ§a nÃ£o encontrada."));
+            return Ok(ActionResponse::err("Praça não encontrada."));
         };
 
         let mut roteiro = None;
@@ -289,7 +318,7 @@ impl Arizona {
         }
 
         let Some(roteiro) = roteiro else {
-            return Ok(ActionResponse::err("Roteiro nÃ£o encontrado."));
+            return Ok(ActionResponse::err("Roteiro não encontrado."));
         };
 
         open_start_file(&roteiro)?;
@@ -371,25 +400,10 @@ impl Arizona {
         jobao_cod: &str,
         jobinho_cod: &str,
     ) -> Result<ActionResponse, String> {
-        let jobao = self.get_jobao_path(jobao_cod)?;
-        let jobinho = jobao.join("PROJETOS").join("AE");
-        let reg_exp = Regex::new(&format!("^{}", jobinho_cod)).map_err(|err| err.to_string())?;
-
-        for entry in fs::read_dir(&jobinho)
-            .map_err(|err| format!("Erro ao ler {}: {err}", jobinho.display()))?
-        {
-            let entry = entry.map_err(|err| err.to_string())?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if reg_exp.is_match(&name) {
-                return Ok(ActionResponse::ok_message(project_title_from_aep_name(
-                    &name,
-                    jobao_cod,
-                    jobinho_cod,
-                )));
-            }
+        match self.project_open_info(jobao_cod, jobinho_cod) {
+            Ok(project) => Ok(ActionResponse::ok_message(project.project_title)),
+            Err(message) => Ok(ActionResponse::err(message)),
         }
-
-        Ok(ActionResponse::ok())
     }
 }
 

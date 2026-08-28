@@ -24,6 +24,7 @@ import { normalizeProductReport } from "../../utils/productReport";
 import { publicErrorMessage } from "../../utils/publicErrors";
 import {
   DEFAULT_SETTINGS,
+  missingRequiredPaths,
   normalizeFourDigits,
   normalizeSettings,
 } from "../../utils/settings";
@@ -215,7 +216,7 @@ function SecondaryWindow() {
 
       {toast.open && (
         <div
-          className={`toast ${toast.variant === "error" ? "toast--error" : toast.variant === "success" ? "toast--success" : ""}`}
+          className={`toast ${toast.variant === "error" ? "toast--error" : toast.variant === "success" ? "toast--success" : toast.variant === "warning" ? "toast--warning" : ""}`}
           role="alert"
           aria-live="polite"
         >
@@ -844,12 +845,13 @@ function SettingsView({ auth, showError, showSuccess }) {
   const shortcutsBusy = busy || isSaving;
   const shortcutSetBusy = shortcutsBusy || Boolean(recordingShortcutField);
   const currentYear = String(new Date().getFullYear());
+  const missingPaths = missingRequiredPaths(settingsDraft);
 
   return (
     <main className="settings-window settings-window--form" aria-label="Configurações">
       <section className="settings-panel">
         <div className="settings-panel__tabs-row">
-          <nav className="settings-tabs" role="tablist" aria-label="Configuracoes">
+          <nav className="settings-tabs" role="tablist" aria-label="Configurações">
             <button
               type="button"
               className={`settings-tab ${activeSettingsTab === SETTINGS_TABS.GENERAL ? "settings-tab--active" : ""}`}
@@ -905,6 +907,12 @@ function SettingsView({ auth, showError, showSuccess }) {
         <form className="settings-form settings-form--window" onSubmit={(event) => event.preventDefault()}>
           {activeSettingsTab === SETTINGS_TABS.GENERAL && (
             <section className="settings-tab-panel" role="tabpanel">
+          {!isLoading && missingPaths.length > 0 && (
+            <div className="settings-paths-warning" role="status">
+              <strong>Configuração necessária</strong>
+              <span>Selecione {missingPaths.join(" e ")} para usar os arquivos do Carrefour.</span>
+            </div>
+          )}
           <label className="settings-field settings-field--drive">
             <span>Carrefour Drive</span>
             <div className="settings-drive-row settings-path-row">
@@ -914,6 +922,7 @@ function SettingsView({ auth, showError, showSuccess }) {
                 value={settingsDraft.drive}
                 readOnly
                 title={settingsDraft.drive}
+                placeholder="Selecione o Carrefour Drive"
                 disabled={isLoading}
               />
               <button
@@ -936,6 +945,7 @@ function SettingsView({ auth, showError, showSuccess }) {
                 value={settingsDraft.produtosPath}
                 readOnly
                 title={settingsDraft.produtosPath}
+                placeholder="Selecione a pasta Fotos Flow"
                 disabled={isLoading}
               />
               <button

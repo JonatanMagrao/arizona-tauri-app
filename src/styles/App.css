@@ -501,6 +501,30 @@ body{
 .job-panel .form-row > span{ grid-column: -1; }
 .job-panel .input-code{ width: 108px; }
 
+.project-validation{
+  margin: -1px 0 8px 91px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255,255,255,.025);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.project-validation--valid{
+  border-color: rgba(34,197,94,.32);
+  background: rgba(34,197,94,.07);
+  color: #a7efbe;
+}
+
+.project-validation--invalid{
+  border-color: rgba(255,179,71,.35);
+  background: rgba(255,179,71,.08);
+  color: #ffd29b;
+}
+
 .label{
   color: var(--muted);
   font-size: 13px;
@@ -1411,6 +1435,10 @@ html, body, #root, .content{ overflow-x: hidden; }
   border-color: #1f5a34;
   background: linear-gradient(180deg, rgba(34,197,94,.12), transparent), #121a16;
 }
+.toast--warning{
+  border-color: rgba(255,179,71,.45);
+  background: linear-gradient(180deg, rgba(255,179,71,.12), transparent), #1c1710;
+}
 .toast__text{ font-size: 14px; line-height: 1.2; opacity: .95; }
 .toast__close{
   margin-left: auto;
@@ -1946,6 +1974,22 @@ textarea:focus{
   font-size: 13px;
   line-height: 1.1;
   font-weight: 850;
+}
+
+.settings-paths-warning{
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255,179,71,.35);
+  border-radius: 8px;
+  background: rgba(255,179,71,.08);
+  color: #ffd29b;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.settings-paths-warning strong{
+  color: #ffe2bd;
 }
 
 .settings-after-shortcuts__header{

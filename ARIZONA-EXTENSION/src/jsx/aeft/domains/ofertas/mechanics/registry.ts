@@ -1,5 +1,6 @@
 import type { InternalOfferMechanic, MechanicReaderMap } from "../types";
 import { nameMatches } from "../layers/findLayers";
+import { ALL_TAKE_PAY_MECHANIC_NAME_PATTERN } from "../../../../../shared/allTakePayMechanic";
 import {
   readCrfCardDePorMechanic,
   readCrfDualMechanic,
@@ -89,7 +90,7 @@ const MECHANICS: MechanicReaderMap[] = [
     reader: readLeveXPagueYMechanic,
   },
   {
-    pattern: mechanicNamePattern("TODOS A LEVE X PAGUE Y"),
+    pattern: mechanicNamePattern(ALL_TAKE_PAY_MECHANIC_NAME_PATTERN),
     reader: readAllTakeXPayYMechanic,
   },
 ];

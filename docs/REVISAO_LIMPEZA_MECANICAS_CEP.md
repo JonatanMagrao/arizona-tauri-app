@@ -39,7 +39,7 @@ A inspeção somente leitura do projeto-base aberto encontrou estas famílias:
 - `DE X POR Y PARCELAMENTO`
 - `DE X POR Y | X% DESCONTO | LEVE X PAGUE Y`
 - `DESCONTO R$ CARTAO CRF`
-- `TODOS A LEVE X PAGUE Y`
+- `TODOS A COM LEVE X PAGUE Y`
 - `TODOS A COM X% DESCONTO`
 
 Essas mecânicas e seus controles devem permanecer.
@@ -121,7 +121,7 @@ ainda reconhece explicitamente vários tipos antigos em:
 
 Lacunas conhecidas:
 
-- `TODOS A LEVE X PAGUE Y` ainda não recebe o tratamento semântico usado por
+- `TODOS A COM LEVE X PAGUE Y` ainda não recebe o tratamento semântico usado por
   `LEVE X PAGUE Y`;
 - `DE X POR Y PARCELAMENTO` ainda não recebe o tratamento específico do antigo
   parcelamento e pode cair na leitura genérica do primeiro preço (`De`).

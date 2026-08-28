@@ -11,10 +11,10 @@ export const DEFAULT_SETTINGS = Object.freeze({
   renderShortcut: "Ctrl+NumpadEnter",
   renderMovTemplateName: "PROXY",
   renderMp4TemplateName: "MP4",
-  drive: "I:\\Drives compartilhados\\Phx CRF Copa",
+  drive: "",
   produtos: "PRODUTOS",
   produtosYear: "",
-  produtosPath: "I:\\Drives compartilhados\\Phx CRF Copa\\CARREFOUR\\ASSETS\\_FOTOS FLOW",
+  produtosPath: "",
 });
 
 export function normalizeSettings(config) {
@@ -33,9 +33,17 @@ export function normalizeSettings(config) {
     renderShortcut: String(next.renderShortcut ?? "").trim(),
     renderMovTemplateName: String(next.renderMovTemplateName ?? "").trim(),
     renderMp4TemplateName: String(next.renderMp4TemplateName ?? "").trim(),
+    drive: String(next.drive ?? "").trim(),
     produtosYear: normalizeProductsYear(next.produtosYear),
     produtosPath: String(next.produtosPath ?? "").trim(),
   };
+}
+
+export function missingRequiredPaths(config) {
+  const missing = [];
+  if (!String(config?.drive ?? "").trim()) missing.push("Carrefour Drive");
+  if (!String(config?.produtosPath ?? "").trim()) missing.push("Fotos Flow");
+  return missing;
 }
 
 export function normalizeProductsYear(value) {
@@ -53,8 +61,7 @@ export function isSettingsReady(config) {
   const aeVersion = String(config?.aeVersion ?? "").trim();
   const year = String(config?.produtosYear ?? "").trim();
   return Boolean(
-    String(config?.drive ?? "").trim()
-      && String(config?.produtosPath ?? "").trim()
+    missingRequiredPaths(config).length === 0
       && /^\d{4}$/.test(aeVersion)
       && String(config?.produtos ?? "").trim()
       && String(config?.exportPrintCompName ?? "").trim()

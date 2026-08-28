@@ -10,6 +10,7 @@ import {
   type MouseEvent,
   type RefObject,
 } from "react";
+import { isAllTakePayMechanicType } from "../../../../../shared/allTakePayMechanic";
 import type { LocalImage } from "../productImages/types";
 import { useOfferShortcuts } from "../hooks/useOfferShortcuts";
 import { useOffersEditor } from "../hooks/useOffersEditor";
@@ -825,8 +826,9 @@ const ProductEditor = ({
   const useSharedMechanicControlsLayout = isSharedMechanic;
   const useAllPercentDiscountControlsLayout =
     product.mechanic.type.toLowerCase() === "todos a com x% desconto";
-  const useAllTakePayControlsLayout =
-    product.mechanic.type.toLowerCase() === "todos a leve x pague y";
+  const useAllTakePayControlsLayout = isAllTakePayMechanicType(
+    product.mechanic.type
+  );
   const hasExtraControls =
     extraFields.length > 0 ||
     controlOptionGroups.length > 0 ||

@@ -46,11 +46,11 @@ impl Arizona {
         let origem = &self.product_folder_path;
         let destino = dstn_folder;
         if origem.as_os_str().is_empty() {
-            return Err("Selecione a pasta Fotos Flow nas configuraÃ§Ãµes.".to_string());
+            return Err("Selecione a pasta Fotos Flow nas configurações.".to_string());
         }
         if !origem.is_dir() {
             return Err(format!(
-                "Pasta Fotos Flow nÃ£o encontrada: {}",
+                "Pasta Fotos Flow não encontrada: {}",
                 origem.display()
             ));
         }

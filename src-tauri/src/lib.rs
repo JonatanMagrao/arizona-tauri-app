@@ -451,11 +451,11 @@ fn register_after_command_shortcuts(app: &AppHandle, config: &AppConfig) -> Resu
     let suspended = *shortcut_state
         .suspended
         .lock()
-        .map_err(|_| "Nao foi possivel atualizar os atalhos do After.".to_string())?;
+        .map_err(|_| "Não foi possível atualizar os atalhos do After.".to_string())?;
     let previous = shortcut_state
         .registered
         .lock()
-        .map_err(|_| "Nao foi possivel atualizar os atalhos do After.".to_string())?
+        .map_err(|_| "Não foi possível atualizar os atalhos do After.".to_string())?
         .clone();
 
     if previous == requested {
@@ -466,7 +466,7 @@ fn register_after_command_shortcuts(app: &AppHandle, config: &AppConfig) -> Resu
         *shortcut_state
             .registered
             .lock()
-            .map_err(|_| "Nao foi possivel atualizar os atalhos do After.".to_string())? =
+            .map_err(|_| "Não foi possível atualizar os atalhos do After.".to_string())? =
             requested;
         return Ok(());
     }
@@ -483,7 +483,7 @@ fn register_after_command_shortcuts(app: &AppHandle, config: &AppConfig) -> Resu
     *shortcut_state
         .registered
         .lock()
-        .map_err(|_| "Nao foi possivel atualizar os atalhos do After.".to_string())? =
+        .map_err(|_| "Não foi possível atualizar os atalhos do After.".to_string())? =
         registered_now;
 
     after_shortcut_registration_result(registration_errors)
@@ -495,7 +495,7 @@ fn suspend_after_command_shortcuts(app: &AppHandle) -> Result<(), String> {
         let mut suspended = shortcut_state
             .suspended
             .lock()
-            .map_err(|_| "Nao foi possivel suspender os atalhos do After.".to_string())?;
+            .map_err(|_| "Não foi possível suspender os atalhos do After.".to_string())?;
         if *suspended {
             return Ok(());
         }
@@ -503,7 +503,7 @@ fn suspend_after_command_shortcuts(app: &AppHandle) -> Result<(), String> {
         let registered = shortcut_state
             .registered
             .lock()
-            .map_err(|_| "Nao foi possivel suspender os atalhos do After.".to_string())?
+            .map_err(|_| "Não foi possível suspender os atalhos do After.".to_string())?
             .clone();
         for item in &registered {
             let _ = app.global_shortcut().unregister(item.shortcut);
@@ -521,7 +521,7 @@ fn resume_after_command_shortcuts(app: &AppHandle) -> Result<(), String> {
         let suspended = shortcut_state
             .suspended
             .lock()
-            .map_err(|_| "Nao foi possivel restaurar os atalhos do After.".to_string())?;
+            .map_err(|_| "Não foi possível restaurar os atalhos do After.".to_string())?;
         if !*suspended {
             return Ok(());
         }
@@ -530,7 +530,7 @@ fn resume_after_command_shortcuts(app: &AppHandle) -> Result<(), String> {
     let registered = shortcut_state
         .registered
         .lock()
-        .map_err(|_| "Nao foi possivel restaurar os atalhos do After.".to_string())?
+        .map_err(|_| "Não foi possível restaurar os atalhos do After.".to_string())?
         .clone();
 
     let (registered_now, registration_errors) =
@@ -541,13 +541,13 @@ fn resume_after_command_shortcuts(app: &AppHandle) -> Result<(), String> {
     *shortcut_state
         .registered
         .lock()
-        .map_err(|_| "Nao foi possivel restaurar os atalhos do After.".to_string())? =
+        .map_err(|_| "Não foi possível restaurar os atalhos do After.".to_string())? =
         registered_now;
 
     *shortcut_state
         .suspended
         .lock()
-        .map_err(|_| "Nao foi possivel restaurar os atalhos do After.".to_string())? = false;
+        .map_err(|_| "Não foi possível restaurar os atalhos do After.".to_string())? = false;
 
     after_shortcut_registration_result(registration_errors)
 }
@@ -685,7 +685,7 @@ fn parse_after_shortcut(label: &str, shortcut_text: &str) -> Result<Shortcut, St
     let shortcut_text = shortcut_text.trim();
     shortcut_text
         .parse()
-        .map_err(|err| format!("Atalho invalido em {label} (\"{shortcut_text}\"): {err}"))
+        .map_err(|err| format!("Atalho inválido em {label} (\"{shortcut_text}\"): {err}"))
 }
 
 #[cfg(test)]
@@ -817,14 +817,18 @@ fn notify_after_effects_shortcut_error(
 }
 
 fn after_effects_shortcut_notice(message: &str) -> (&'static str, &'static str) {
-    let normalized = message.to_ascii_lowercase();
-    if normalized.contains("sessao") || normalized.contains("licenca") {
+    let normalized = message.to_lowercase();
+    if normalized.contains("sessão")
+        || normalized.contains("sessao")
+        || normalized.contains("licença")
+        || normalized.contains("licenca")
+    {
         return (
             "after_effects_license_required",
             AFTER_EFFECTS_LICENSE_NOTICE_MESSAGE,
         );
     }
-    if normalized.contains("nao esta aberto") {
+    if normalized.contains("não está aberto") || normalized.contains("nao esta aberto") {
         return (
             "after_effects_not_open",
             "Abra o After Effects e tente o atalho novamente.",
@@ -841,6 +845,47 @@ fn after_effects_shortcut_notice(message: &str) -> (&'static str, &'static str) 
         "after_effects_command_failed",
         "Não foi possível executar o atalho no After Effects.",
     )
+}
+
+#[cfg(test)]
+mod after_effects_shortcut_notice_tests {
+    use super::after_effects_shortcut_notice;
+
+    #[test]
+    fn recognizes_accented_session_and_license_errors() {
+        for message in [
+            "Sessão expirada. Entre novamente.",
+            "Licença local inválida ou expirada.",
+        ] {
+            assert_eq!(
+                after_effects_shortcut_notice(message).0,
+                "after_effects_license_required"
+            );
+        }
+    }
+
+    #[test]
+    fn recognizes_accented_after_effects_closed_error() {
+        assert_eq!(
+            after_effects_shortcut_notice(
+                "After Effects não está aberto. Abra o After Effects e tente novamente."
+            )
+            .0,
+            "after_effects_not_open"
+        );
+    }
+
+    #[test]
+    fn preserves_legacy_ascii_error_classification() {
+        assert_eq!(
+            after_effects_shortcut_notice("Sessao ausente.").0,
+            "after_effects_license_required"
+        );
+        assert_eq!(
+            after_effects_shortcut_notice("After Effects nao esta aberto.").0,
+            "after_effects_not_open"
+        );
+    }
 }
 
 fn disable_browser_accelerator_keys(app: &tauri::App) {
@@ -2368,7 +2413,7 @@ fn after_effects_action_command(
             "Uma ação desconhecida do After Effects foi recusada.",
             None,
         );
-        return Ok(ActionResponse::err("Acao do After Effects invalida."));
+        return Ok(ActionResponse::err("Ação do After Effects inválida."));
     };
 
     Ok(run_after_effects_action(&app, &auth, action))
@@ -2470,7 +2515,7 @@ fn restrict_admin_session(
         let mut stored_session = auth
             .session
             .lock()
-            .map_err(|_| "Nao foi possivel atualizar a sessao.".to_string())?;
+            .map_err(|_| "Não foi possível atualizar a sessão.".to_string())?;
         let Some(session) = stored_session.as_mut() else {
             return Ok(ActionResponse::err("Confirme seu acesso para continuar."));
         };
@@ -2492,7 +2537,7 @@ fn store_auth_session(auth: &State<AuthState>, session: AuthSession) -> Result<(
     let mut stored_session = auth
         .session
         .lock()
-        .map_err(|_| "Nao foi possivel atualizar a sessao.".to_string())?;
+        .map_err(|_| "Não foi possível atualizar a sessão.".to_string())?;
     *stored_session = Some(session);
     Ok(())
 }
@@ -2544,7 +2589,7 @@ fn sync_cep_license_receipt(app: &AppHandle, receipt: Option<&str>) -> Result<()
     let path = cep_license_receipt_file_path(app)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
-            .map_err(|err| format!("Nao foi possivel criar {}: {err}", parent.display()))?;
+            .map_err(|err| format!("Não foi possível criar {}: {err}", parent.display()))?;
     }
 
     let file = CepLicenseReceiptFile {
@@ -2554,7 +2599,7 @@ fn sync_cep_license_receipt(app: &AppHandle, receipt: Option<&str>) -> Result<()
     };
     let text = serde_json::to_string_pretty(&file).map_err(|err| err.to_string())?;
     fs::write(&path, text)
-        .map_err(|err| format!("Nao foi possivel salvar {}: {err}", path.display()))
+        .map_err(|err| format!("Não foi possível salvar {}: {err}", path.display()))
 }
 
 fn clear_cep_license_receipt(app: &AppHandle) -> Result<(), String> {
@@ -2563,7 +2608,7 @@ fn clear_cep_license_receipt(app: &AppHandle) -> Result<(), String> {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(format!(
-            "Nao foi possivel remover {}: {err}",
+            "Não foi possível remover {}: {err}",
             path.display()
         )),
     }
@@ -3055,7 +3100,7 @@ fn show_secondary_window_preserving_media_load(
     let _ = window.unminimize();
     window
         .show()
-        .map_err(|err| format!("Nao foi possivel exibir a janela secundaria: {err}"))?;
+        .map_err(|err| format!("Não foi possível exibir a janela secundária: {err}"))?;
     let _ = window.set_focus();
     set_secondary_active_view(&app, Some(&active_view));
 
@@ -3151,7 +3196,7 @@ fn require_authenticated(auth: &State<AuthState>) -> Result<(), String> {
 fn authenticated_session(auth: &State<AuthState>) -> Result<AuthSession, String> {
     auth.session
         .lock()
-        .map_err(|_| "Nao foi possivel ler a sessao.".to_string())?
+        .map_err(|_| "Não foi possível ler a sessão.".to_string())?
         .clone()
         .ok_or_else(|| "Confirme seu acesso para continuar.".to_string())
 }
@@ -3170,7 +3215,7 @@ fn admin_window_auth(
         .to_string();
 
     if role != "admin" {
-        return Err("Acesso admin disponivel apenas para gestores.".to_string());
+        return Err("Acesso administrativo disponível apenas para gestores.".to_string());
     }
 
     if let Err(err) = ensure_secure_auth_matches_session(&session) {
@@ -3188,7 +3233,7 @@ fn admin_window_auth(
         .to_string();
 
     if organization_id.is_empty() {
-        return Err("Sessao admin incompleta. Entre novamente.".to_string());
+        return Err("Sessão administrativa incompleta. Entre novamente.".to_string());
     }
 
     Ok(AdminWindowAuth {
@@ -3216,7 +3261,7 @@ fn ensure_secure_auth_matches_session(session: &AuthSession) -> Result<(), Strin
     let entry = secure_auth_entry()?;
     let record = read_secure_auth_record(&entry)?;
     let Some(record) = record else {
-        return Err("Sessao segura nao encontrada. Entre novamente.".to_string());
+        return Err("Sessão segura não encontrada. Entre novamente.".to_string());
     };
 
     let session_refresh_token = session.refresh_token.as_deref().unwrap_or_default().trim();
@@ -3226,7 +3271,7 @@ fn ensure_secure_auth_matches_session(session: &AuthSession) -> Result<(), Strin
         || record.refresh_token.trim() != session_refresh_token
         || !record.email.trim().eq_ignore_ascii_case(session_email)
     {
-        return Err("Sessao segura invalida. Entre novamente.".to_string());
+        return Err("Sessão segura inválida. Entre novamente.".to_string());
     }
 
     Ok(())
@@ -3239,7 +3284,7 @@ fn clear_runtime_auth_session(
     let mut stored_session = auth
         .session
         .lock()
-        .map_err(|_| "Nao foi possivel limpar a sessao.".to_string())?;
+        .map_err(|_| "Não foi possível limpar a sessão.".to_string())?;
     *stored_session = None;
     drop(stored_session);
     bridge.set_license_status(LicenseStatus::no_session());
@@ -3747,7 +3792,7 @@ fn save_app_config(
     config: AppConfig,
 ) -> Result<AppConfig, String> {
     require_authenticated(&auth)?;
-    let config = settings::validate_config(config)?;
+    let config = settings::validate_storable_config(config)?;
     register_after_command_shortcuts(&app, &config)?;
     settings::save(&app, config)
 }

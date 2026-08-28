@@ -10,6 +10,7 @@
     "prebuild": "npm run license:keys",
     "prezxp": "npm run license:keys",
     "prezip": "npm run license:keys",
+    "test": "node --test --test-isolation=none scripts/all-take-pay-mechanic.test.mjs",
     "dev": "vite",
     "watch": "tsc && vite build --watch true",
     "build": "rimraf dist/* && tsc -p \"tsconfig-build.json\" && vite build",

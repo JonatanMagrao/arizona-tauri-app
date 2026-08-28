@@ -32,7 +32,7 @@ impl Arizona {
         media_type: &str,
     ) -> Result<MediaFile, String> {
         let media_type =
-            MediaType::parse(media_type).ok_or_else(|| "Tipo de vÃ­deo invÃ¡lido.".to_string())?;
+            MediaType::parse(media_type).ok_or_else(|| "Tipo de vídeo inválido.".to_string())?;
 
         match self.project_open_info_for_media(jobao_cod, cod_jobinho, media_type) {
             Ok(project) => {
@@ -43,7 +43,7 @@ impl Arizona {
                 .or_else(|| find_video_path_by_code(&project.jobao_path, cod_jobinho, media_type));
 
                 let Some(video) = video else {
-                    return Err("VÃ­deo nÃ£o encontrado.".to_string());
+                    return Err("Vídeo não encontrado.".to_string());
                 };
 
                 Ok(media_file_from_path(video, "video"))
@@ -65,7 +65,7 @@ impl Arizona {
 
         if !audio_folder.is_dir() {
             return Err(format!(
-                "Pasta de Ã¡udio nÃ£o encontrada em {}",
+                "Pasta de áudio não encontrada em {}",
                 audio_folder.display()
             ));
         }
@@ -147,9 +147,9 @@ fn find_audio_file(
             .trim()
             .is_empty()
             .then(String::new)
-            .unwrap_or_else(|| format!(" para a regiÃ£o {}", region.trim().to_uppercase()));
+            .unwrap_or_else(|| format!(" para a região {}", region.trim().to_uppercase()));
         return Err(format!(
-            "Ãudio{} nÃ£o encontrado em {}.",
+            "Áudio{} não encontrado em {}.",
             region_detail,
             audio_folder.display()
         ));

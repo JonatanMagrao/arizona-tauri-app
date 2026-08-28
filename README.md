@@ -130,6 +130,12 @@ Tudo junto:
 npm run dev:all
 ```
 
+Antes de iniciar, `predev:all` garante que a extensão per-user seja uma
+junction para `ARIZONA-EXTENSION\dist\cep`. Na primeira execução, uma pasta
+instalada anteriormente é movida para
+`%APPDATA%\Adobe\CEP\.arizona-dev-backup\`; nada é apagado. Feche o After
+Effects nessa primeira conversão se o Windows mantiver a pasta em uso.
+
 Tauri:
 
 ```powershell

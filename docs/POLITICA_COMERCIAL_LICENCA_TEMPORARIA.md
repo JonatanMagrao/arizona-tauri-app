@@ -1,9 +1,12 @@
-# Política comercial da licença temporária
+# Política comercial de licenciamento e assinatura
 
-**Status:** referência comercial vigente para elaboração de propostas  
-**Última revisão:** 2026-08-22  
-**Escopo:** licenciamento temporário do Arizona App, extensão CEP e recursos
-associados  
+**Status:** referência comercial vigente para elaboração de propostas
+
+**Última revisão:** 2026-08-28
+
+**Escopo:** licenciamento temporário e assinatura contínua do Arizona App,
+extensão CEP e recursos associados
+
 **Fonte da verdade técnica:** `README.md`, `ADMIN/README.md` e
 `docs/LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md`
 
@@ -13,12 +16,20 @@ entre os três projetos. A proposta aceita pelas partes continua sendo a fonte
 da verdade para preço, período, quantidade de dispositivos e condições de
 atendimento de cada contratação.
 
-## Natureza da contratação
+## Modalidades de contratação
 
-O produto é oferecido como **licença temporária de uso**, normalmente ativada
-em períodos de pico. A contratação não é uma assinatura mensal contínua e não
-gera obrigação de disponibilidade, manutenção ou atendimento nos períodos sem
-licença paga.
+O produto pode ser contratado de duas formas, sempre definidas expressamente na
+proposta:
+
+- **licença temporária**, normalmente ativada em períodos de pico e paga
+  antecipadamente; ou
+- **assinatura contínua**, com acesso recorrente e pagamento mensal.
+
+As modalidades são alternativas e não se acumulam. A licença temporária não é
+uma assinatura mensal contínua e não gera obrigação de disponibilidade,
+manutenção ou atendimento nos períodos sem licença paga.
+
+### Regras da licença temporária
 
 - Cada período é contratado e pago antecipadamente.
 - Os dias são consecutivos; a licença não pode ser pausada, fracionada ou
@@ -35,14 +46,14 @@ licença paga.
 
 ## Tabela de referência
 
-| Modalidade | Janela consecutiva | Preço antecipado | Equivalente mensal aproximado | Desconto sobre R$ 2.000/mês |
-|---|---:|---:|---:|---:|
-| Diária | 1 dia operacional | R$ 350 | — | — |
-| Semanal | 7 dias operacionais | R$ 1.000 | — | — |
-| Mensal | 30 dias operacionais | R$ 2.000 | R$ 2.000 | — |
-| Trimestral | 90 dias operacionais | R$ 5.000 | R$ 1.667 | 16,7% |
-| Semestral | 180 dias operacionais | R$ 9.000 | R$ 1.500 | 25% |
-| Anual | 365 dias operacionais | R$ 16.000 | R$ 1.333 | 33,3% |
+| Modalidade |    Janela consecutiva | Preço antecipado | Equivalente mensal aproximado | Desconto sobre R$ 2.000/mês |
+|------------|----------------------:|-----------------:|------------------------------:|----------------------------:|
+| Diária     |     1 dia operacional |           R$ 350 |                             — |                           — |
+| Semanal    |   7 dias operacionais |         R$ 1.000 |                             — |                           — |
+| Mensal     |  30 dias operacionais |         R$ 2.000 |                      R$ 2.000 |                           — |
+| Trimestral |  90 dias operacionais |         R$ 5.000 |                      R$ 1.667 |                       16,7% |
+| Semestral  | 180 dias operacionais |         R$ 9.000 |                      R$ 1.500 |                         25% |
+| Anual      | 365 dias operacionais |        R$ 16.000 |                      R$ 1.333 |                       33,3% |
 
 Esses valores são uma referência inicial para o escopo e a quantidade de
 dispositivos definidos na proposta. Mais usuários, mais dispositivos, uso
@@ -69,9 +80,61 @@ antecipado e compromisso contínuo.
 - Renovações futuras podem receber nova proposta; a primeira condição
   comercial não congela o preço indefinidamente.
 
-## O que a licença não inclui
+## Assinatura contínua — crivo de negociação
 
-Salvo contratação expressa, o preço da licença não inclui:
+A assinatura contínua é a opção preferencial quando fornecedor e cliente
+buscam previsibilidade. Os valores abaixo são referências mínimas para o escopo
+e a quantidade de dispositivos definidos na proposta.
+
+| Plano                   | Compromisso | Pagamento         | Valor de referência |
+|-------------------------|-------------|-------------------|--------------------:|
+| Sem SLA                 | 12 meses    | Mensal antecipado |          R$ 790/mês |
+| Com SLA                 | 12 meses    | Mensal antecipado |          R$ 990/mês |
+| Com SLA, sem fidelidade | Mensal      | Mensal antecipado |        R$ 1.190/mês |
+
+O compromisso anual permite pagamento mensal, mas mantém a contratação pelos
+12 meses. Eventual cancelamento antecipado, inadimplência e aviso de renovação
+devem ser tratados na proposta ou no contrato. A modalidade sem fidelidade pode
+ser encerrada com aviso prévio de 30 dias.
+
+Os planos incluem:
+
+- licença de uso contínuo para o escopo contratado;
+- infraestrutura atual do produto dentro do uso normal;
+- recebimento e correção, sem cobrança de desenvolvimento, de defeitos
+  reproduzíveis atribuíveis à versão suportada do produto; e
+- atualizações corretivas disponibilizadas durante a vigência.
+
+No plano **sem SLA**, a correção entra na agenda normal, sem prazo garantido de
+resposta ou entrega. No plano **com SLA**, o atendimento ocorre em horário
+comercial, com o seguinte compromisso mínimo:
+
+- incidente crítico, com o uso principal bloqueado: primeira resposta em até
+  4 horas úteis e meta de contorno em até 1 dia útil;
+- falha importante, mas com uso parcial possível: primeira resposta em até
+  1 dia útil e meta de correção em até 5 dias úteis; e
+- falha normal ou visual: primeira resposta em até 2 dias úteis e correção
+  programada na agenda de atualização.
+
+O SLA garante prioridade de resposta, triagem e acompanhamento. As metas de
+contorno e correção não são garantia absoluta de solução quando houver
+dependência de diagnóstico, acesso do cliente ou serviço de terceiro. Plantão,
+atendimento fora do horário comercial e disponibilidade 24 horas não estão
+incluídos.
+
+O valor inclui a infraestrutura-base atual, inclusive o plano de produção do
+Supabase. Consumo extraordinário, mudança de faixa, ambiente adicional ou
+aumento relevante de custos de terceiros pode ser cobrado separadamente, após
+comunicação e aprovação do cliente.
+
+Novas funcionalidades, mudanças de fluxo, customizações, integrações,
+treinamento, manutenção evolutiva e adaptação a novas versões de terceiros são
+orçados separadamente. Os valores são reajustados anualmente pelo IPCA; uma
+mudança material de escopo pode exigir nova proposta.
+
+## O que as modalidades não incluem
+
+Salvo contratação expressa, o preço da modalidade não inclui:
 
 - instalação, configuração ou treinamento;
 - atendimento remoto ou presencial;
@@ -90,7 +153,8 @@ Uma **correção do produto** é a alteração de um defeito reproduzível na ve
 atual suportada, em ambiente compatível, quando o comportamento contradiz a
 documentação ou impede um fluxo que a versão declara oferecer.
 
-Uma correção confirmada pode ser feita sem cobrança de desenvolvimento, mas:
+Na licença temporária e na assinatura sem SLA, uma correção confirmada pode ser
+feita sem cobrança de desenvolvimento, mas:
 
 - entra na agenda normal do fornecedor;
 - não possui prazo de início, resposta ou entrega;
@@ -100,8 +164,8 @@ Uma correção confirmada pode ser feita sem cobrança de desenvolvimento, mas:
   como defeito do produto;
 - não transforma a licença em contrato de manutenção contínua.
 
-Sem suporte contratado, o cliente deve enviar, quando solicitado, versão do
-aplicativo, passos para reprodução e o pacote de diagnóstico local exportado
+Sem SLA ou suporte contratado, o cliente deve enviar, quando solicitado, versão
+do aplicativo, passos para reprodução e o pacote de diagnóstico local exportado
 conscientemente pelo Arizona App. O recebimento do relato não cria SLA nem
 obrigação de interrupção de outros trabalhos.
 
@@ -122,21 +186,21 @@ de diagnóstico pode ser tratado como suporte cobrado. Antes de iniciar trabalho
 cobrável adicional, o fornecedor deve informar o enquadramento e obter a
 aprovação do cliente.
 
-Quando um defeito confirmado do produto impedir o uso principal, a solução
-comercial preferencial é avaliar a extensão dos dias comprovadamente perdidos
-depois que a correção estiver disponível. Isso não cria atendimento urgente,
-reembolso automático ou indenização. Se o cliente precisar de diagnóstico ou
-correção prioritária, deverá contratar atendimento com prioridade e receber a
-confirmação de disponibilidade do fornecedor.
+Na licença temporária ou assinatura sem SLA, quando um defeito confirmado do
+produto impedir o uso principal, a solução comercial preferencial é avaliar a
+extensão dos dias comprovadamente perdidos depois que a correção estiver
+disponível. Isso não cria atendimento urgente, reembolso automático ou
+indenização. Na assinatura com SLA, aplicam-se os prazos de resposta e as metas
+operacionais definidos na proposta.
 
 ## Suporte cobrado separadamente
 
-| Modalidade | Referência comercial | Condição |
-|---|---:|---|
-| Agendado em horário comercial | R$ 250/h | Mínimo de 1 hora |
-| Prioritário no mesmo dia útil | R$ 400/h | Mínimo de 2 horas e sujeito a aceite prévio |
-| Noite, fim de semana ou plantão | R$ 500/h | Mínimo de 2 horas e sujeito a aceite prévio |
-| Pacote pré-pago de 5 horas | R$ 1.100 | Validade de 90 dias |
+| Modalidade                      | Referência comercial | Condição                                    |
+|---------------------------------|---------------------:|---------------------------------------------|
+| Agendado em horário comercial   |             R$ 250/h | Mínimo de 1 hora                            |
+| Prioritário no mesmo dia útil   |             R$ 400/h | Mínimo de 2 horas e sujeito a aceite prévio |
+| Noite, fim de semana ou plantão |             R$ 500/h | Mínimo de 2 horas e sujeito a aceite prévio |
+| Pacote pré-pago de 5 horas      |             R$ 1.100 | Validade de 90 dias                         |
 
 A primeira hora pode ser usada para triagem e diagnóstico. Depois dela, o
 fornecedor deve apresentar uma estimativa antes de continuar. Frações e forma
@@ -160,7 +224,9 @@ do cliente — deve ser classificado como suporte, adaptação ou nova evoluçã
 orçado separadamente. O pagamento de uma nova janela de licença não quita
 retroativamente manutenção que não foi contratada.
 
-## Texto curto para proposta
+## Textos curtos para proposta
+
+### Licença temporária
 
 > Licença temporária de uso do Arizona App pelo período contratado e para a
 > quantidade de dispositivos indicada na proposta. O valor não inclui suporte,
@@ -169,3 +235,20 @@ retroativamente manutenção que não foi contratada.
 > desenvolvimento, conforme a disponibilidade do fornecedor e sem prazo
 > garantido. Diagnóstico de ambiente, atendimento prioritário, alterações
 > decorrentes de terceiros e novas funcionalidades serão cobrados separadamente.
+
+### Assinatura sem SLA
+
+> Assinatura contínua do Arizona App, com compromisso de 12 meses e pagamento
+> mensal antecipado de R$ 790. Inclui licença de uso, infraestrutura-base e
+> correções de defeitos reproduzíveis da versão suportada, atendidas na agenda
+> normal e sem prazo garantido. Suporte, novas funcionalidades, customizações e
+> custos extraordinários de infraestrutura serão cobrados separadamente.
+
+### Assinatura com SLA
+
+> Assinatura contínua do Arizona App, com compromisso de 12 meses e pagamento
+> mensal antecipado de R$ 990. Inclui licença de uso, infraestrutura-base e
+> prioridade para correção de defeitos reproduzíveis da versão suportada em
+> horário comercial, conforme o SLA da proposta. Novas funcionalidades,
+> customizações, plantão e custos extraordinários de infraestrutura serão
+> cobrados separadamente.

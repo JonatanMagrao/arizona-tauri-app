@@ -1,4 +1,5 @@
 import type { InternalOfferMechanic } from "../types";
+import { ALL_TAKE_PAY_MECHANIC_TYPE } from "../../../../../shared/allTakePayMechanic";
 import {
   addError,
   getLayerByIndex,
@@ -87,7 +88,7 @@ export function readAllTakeXPayYMechanic(
 ): InternalOfferMechanic {
   const source = getLayerSource(
     valueLayer,
-    "todos a leve x pague y",
+    "todos a com leve x pague y",
     errors
   );
   const candidateControllerLayer = getLayerByIndex(source, 3);
@@ -96,7 +97,7 @@ export function readAllTakeXPayYMechanic(
   if (controllerLayer === null) {
     addError(
       errors,
-      "Nao encontrei a layer 3 Controlador de Mecanica em Todos a Leve X Pague Y."
+      "Nao encontrei a layer 3 Controlador de Mecanica em Todos a Com Leve X Pague Y."
     );
   } else if (
     String(controllerLayer.name).toLowerCase() !==
@@ -113,19 +114,19 @@ export function readAllTakeXPayYMechanic(
     controllerLayer,
     1,
     "Subtipo",
-    "todos a leve x pague y",
+    "todos a com leve x pague y",
     errors
   );
 
   return {
-    type: "Todos A Leve X Pague Y",
+    type: ALL_TAKE_PAY_MECHANIC_TYPE,
     fields: [
       makeIndexedTextField(
         source,
         4,
         "Leve X",
         "integer",
-        "todos a leve x pague y",
+        "todos a com leve x pague y",
         errors
       ),
       makeIndexedTextField(
@@ -133,7 +134,7 @@ export function readAllTakeXPayYMechanic(
         5,
         "Pague Y",
         "integer",
-        "todos a leve x pague y",
+        "todos a com leve x pague y",
         errors
       ),
     ],

@@ -17,6 +17,7 @@ function JobPanel({
   setJobaoCod,
   jobinhoCod,
   setJobinhoCod,
+  projectValidation,
   openJobao,
   openJobinho,
   abrirAE,
@@ -182,6 +183,16 @@ function JobPanel({
           <img src={renderQueueIcon} alt="" aria-hidden="true" />
         </button>
       </div>
+
+      {projectValidation?.status !== "idle" && (
+        <div
+          className={`project-validation project-validation--${projectValidation.status}`}
+          role="status"
+          aria-live="polite"
+        >
+          {projectValidation.message}
+        </div>
+      )}
 
       {/* Linha Pastas utilitárias – só botões */}
       <div className="form-row form-row--util">

@@ -14,6 +14,7 @@ import {
   auditRoleLabel,
   auditSourceLabel,
 } from "./auditCatalog.js";
+import { hasUserContent, resizeUsersForSeatInput } from "./license-users.js";
 import arizonaIcon from "./assets/arizona-icon.png";
 
 const flashKey = `arizona-admin-flash:${adminConfig.projectRef}`;
@@ -537,11 +538,10 @@ export default function AdminApp() {
 
   function updateSeatsAllowed(value) {
     setLicenseDraft((current) => {
-      const nextSeats = Math.max(1, Number(value) || 1);
       return {
         ...current,
         seatsAllowed: value,
-        users: resizeUsers(current.users, nextSeats),
+        users: resizeUsersForSeatInput(current.users, value, createUser),
       };
     });
   }
@@ -3239,16 +3239,6 @@ function auditActionIcon(icon) {
 
 function deviceLabel(device) {
   return device?.label || device?.installId || "Maquina ativa";
-}
-
-function hasUserContent(user) {
-  return Boolean(
-    user?.memberId
-    || user?.activeDevice
-    || cleanText(user?.name)
-    || cleanText(user?.email)
-    || user?.isManager
-  );
 }
 
 function firstDayOfMonth(date) {

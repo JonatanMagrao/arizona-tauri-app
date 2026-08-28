@@ -43,7 +43,7 @@ pub(super) fn queue_product_copy_tasks(
         let file_name = arquivo
             .file_name()
             .and_then(|name| name.to_str())
-            .ok_or_else(|| format!("Nome de arquivo invÃ¡lido: {}", arquivo.display()))?
+            .ok_or_else(|| format!("Nome de arquivo inválido: {}", arquivo.display()))?
             .to_string();
         if queued_copy_names.insert(file_name.to_lowercase()) {
             copy_tasks.push((arquivo, file_name));
