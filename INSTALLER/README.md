@@ -69,6 +69,11 @@ identidade estável da Arizona. Os fluxos oficiais `release:installer` e
 `release:all` sempre constroem um pacote novo antes de coletar o payload; não
 reutilizam silenciosamente um artefato antigo de `dist-cep/`.
 
+Ao terminar a geração assinada, `postcep:zxp` remove somente a junction per-user
+que aponta para `ARIZONA-EXTENSION\dist\cep`. O alvo, instalações comuns e
+backups permanecem intactos. Isso deixa o ambiente fora do modo dev após o
+release; `npm run dev:all` recria a junction quando necessário.
+
 `release:all` continua sendo o build local, sem exigir acesso a certificado
 Authenticode. Para um artefato destinado à distribuição pública, use
 `release:verify-public`: ele executa o build e, somente depois, exige

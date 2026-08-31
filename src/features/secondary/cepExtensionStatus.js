@@ -35,9 +35,39 @@ export function normalizeCepExtensionStatus(status) {
 }
 
 export function cepInstallationScopeLabel(scope) {
-  if (scope === "perUser") return "Somente este usuário";
-  if (scope === "perMachine") return "Todos os usuários (instalador Full)";
+  if (scope === "perUser") return "Este usuário";
+  if (scope === "perMachine") return "Todos os usuários";
   return "";
+}
+
+function normalizeWindowsPath(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\//g, "\\")
+    .replace(/\\+$/, "")
+    .toLowerCase();
+}
+
+export function cepInstallationLocationLabel(installation) {
+  const scope = normalizeScope(installation?.scope);
+  const path = normalizeWindowsPath(installation?.path);
+
+  if (scope === "perMachine" && /(?:^|\\)program files \(x86\)(?:\\|$)/i.test(path)) {
+    return "Legada (32 bits)";
+  }
+
+  return cepInstallationScopeLabel(scope) || "Outro local";
+}
+
+export function cepAdditionalInstallations(status) {
+  const installations = Array.isArray(status?.installations) ? status.installations : [];
+  const effectivePath = status?.installed ? normalizeWindowsPath(status?.path) : "";
+
+  return installations.filter((installation) => {
+    if (!installation?.installed) return false;
+    if (!effectivePath) return true;
+    return normalizeWindowsPath(installation.path) !== effectivePath;
+  });
 }
 
 function parseSemver(value) {

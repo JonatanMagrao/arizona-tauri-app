@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  cepAdditionalInstallations,
   cepDowngradeRequiresFullInstaller,
+  cepInstallationLocationLabel,
   cepInstallationScopeLabel,
   cepInstallActionLabel,
   cepInstallCommandArgs,
@@ -65,12 +67,69 @@ test("keeps the effective CEP candidate and sanitizes installation details", () 
   assert.equal(status.installations[0].isDevLink, true);
   assert.equal(status.installations[1].manifestValid, true);
   assert.equal(status.hasMultipleInstallations, true);
-  assert.equal(cepInstallationScopeLabel("perUser"), "Somente este usuário");
-  assert.equal(
-    cepInstallationScopeLabel("perMachine"),
-    "Todos os usuários (instalador Full)",
-  );
+  assert.equal(cepInstallationScopeLabel("perUser"), "Este usuário");
+  assert.equal(cepInstallationScopeLabel("perMachine"), "Todos os usuários");
   assert.equal(cepInstallationScopeLabel("unexpected"), "");
+});
+
+test("shows only real additional CEP installations with unambiguous labels", () => {
+  const effectivePath = "C:\\Program Files\\Common Files\\Adobe\\CEP\\extensions\\com.arizona-carrefour.cep";
+  const legacyPath = "C:\\Program Files (x86)\\Common Files\\Adobe\\CEP\\extensions\\com.arizona-carrefour.cep";
+  const status = normalizeCepExtensionStatus({
+    installed: true,
+    version: "2.2.1",
+    path: effectivePath,
+    scope: "perMachine",
+    installations: [
+      {
+        scope: "perUser",
+        installed: false,
+        path: "C:\\Users\\Arizona\\AppData\\Roaming\\Adobe\\CEP\\extensions\\com.arizona-carrefour.cep",
+      },
+      {
+        scope: "perMachine",
+        installed: true,
+        version: "2.2.1",
+        path: effectivePath.toUpperCase().replaceAll("\\", "/"),
+        manifestValid: true,
+      },
+      {
+        scope: "perMachine",
+        installed: false,
+        path: legacyPath,
+      },
+    ],
+  });
+
+  assert.equal(cepInstallationLocationLabel(status), "Todos os usuários");
+  assert.deepEqual(cepAdditionalInstallations(status), []);
+
+  status.installations[2].installed = true;
+  status.installations[2].version = "2.1.0";
+  status.installations[2].manifestValid = true;
+
+  const additional = cepAdditionalInstallations(status);
+  assert.equal(additional.length, 1);
+  assert.equal(cepInstallationLocationLabel(additional[0]), "Legada (32 bits)");
+});
+
+test("keeps an invalid occupied CEP location visible when there is no effective install", () => {
+  const status = normalizeCepExtensionStatus({
+    installed: false,
+    installations: [
+      {
+        scope: "perMachine",
+        installed: true,
+        path: "C:\\Program Files (x86)\\Common Files\\Adobe\\CEP\\extensions\\com.arizona-carrefour.cep",
+        manifestValid: false,
+      },
+    ],
+  });
+
+  const additional = cepAdditionalInstallations(status);
+  assert.equal(additional.length, 1);
+  assert.equal(additional[0].manifestValid, false);
+  assert.equal(cepInstallationLocationLabel(additional[0]), "Legada (32 bits)");
 });
 
 test("classifies upgrades, reinstalls and downgrades with SemVer precedence", () => {

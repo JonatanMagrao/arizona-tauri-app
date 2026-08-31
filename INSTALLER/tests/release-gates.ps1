@@ -143,6 +143,16 @@ try {
   $normalReleaseCommand = [string](Get-JsonProperty $packageJson.scripts "release:all")
   Assert-True (!$normalReleaseCommand.Contains("RequireSignedTauri")) `
     "the normal local release build must remain usable without an Authenticode certificate"
+  Assert-True (!$normalReleaseCommand.Contains("tauri:clean") -and !$normalReleaseCommand.Contains("cargo clean")) `
+    "the release must not erase reusable Cargo build artifacts"
+
+  $cepDevCleanCommand = [string](Get-JsonProperty $packageJson.scripts "cep:dev-clean")
+  Assert-True ($cepDevCleanCommand.Contains("ensure-cep-dev-link.mjs --remove")) `
+    "package.json must expose the scoped CEP development-junction cleanup"
+
+  $postCepZxpCommand = [string](Get-JsonProperty $packageJson.scripts "postcep:zxp")
+  Assert-True ($postCepZxpCommand -ceq "npm run cep:dev-clean") `
+    "every successful signed CEP build must remove its development junction afterwards"
 
   $signedFixtureSource = Join-Path $PSHOME "powershell.exe"
   Assert-True (Test-Path -LiteralPath $signedFixtureSource -PathType Leaf) `

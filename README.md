@@ -162,6 +162,12 @@ npm run cep:verify -- dist-cep/arizona-cep-v2.2.1.zxp
 ```
 
 O número no nome do `.zxp` acompanha `ARIZONA-EXTENSION/package.json`.
+Depois de um `cep:zxp` bem-sucedido — inclusive dentro de `release:all` — o
+hook `postcep:zxp` remove somente a junction CEP de desenvolvimento. O build em
+`ARIZONA-EXTENSION\dist\cep`, instalações normais e backups são preservados;
+`npm run dev:all` recria a junction quando o desenvolvimento for retomado.
+Processos não são encerrados à força, portanto finalize o `dev:all` e feche o
+After Effects antes de iniciar um release.
 
 Admin:
 

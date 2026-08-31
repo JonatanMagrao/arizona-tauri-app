@@ -15,7 +15,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { ensureCepDevLink } from "./ensure-cep-dev-link.mjs";
+import {
+  ensureCepDevLink,
+  removeCepDevLink,
+} from "./ensure-cep-dev-link.mjs";
 
 const EXTENSION_ID = "com.arizona-carrefour.cep";
 
@@ -32,6 +35,18 @@ function fixture() {
 
 function removeFixture(root) {
   rmSync(root, { recursive: true, force: true });
+}
+
+function pathEntryExists(value) {
+  try {
+    lstatSync(value);
+    return true;
+  } catch (error) {
+    if (error && typeof error === "object" && error.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
 }
 
 test("preserves a normal CEP installation and replaces it with the development junction", () => {
@@ -152,6 +167,129 @@ test("refuses to replace an unexpected file at the CEP destination", () => {
       /não é uma pasta nem uma junction/u,
     );
     assert.equal(readFileSync(paths.installedPath, "utf8"), "não é uma extensão");
+  } finally {
+    removeFixture(paths.root);
+  }
+});
+
+test("removes only the expected development junction and preserves its target", () => {
+  const paths = fixture();
+  try {
+    mkdirSync(paths.devTargetPath, { recursive: true });
+    writeFileSync(path.join(paths.devTargetPath, "keep.txt"), "preservado");
+    mkdirSync(path.dirname(paths.installedPath), { recursive: true });
+    symlinkSync(
+      paths.devTargetPath,
+      paths.installedPath,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    const result = removeCepDevLink(paths);
+
+    assert.equal(result.status, "removed");
+    assert.equal(pathEntryExists(paths.installedPath), false);
+    assert.equal(readFileSync(path.join(paths.devTargetPath, "keep.txt"), "utf8"), "preservado");
+  } finally {
+    removeFixture(paths.root);
+  }
+});
+
+test("treats an absent development junction as an idempotent cleanup", () => {
+  const paths = fixture();
+  try {
+    const result = removeCepDevLink(paths);
+
+    assert.equal(result.status, "absent");
+    assert.equal(pathEntryExists(paths.installedPath), false);
+  } finally {
+    removeFixture(paths.root);
+  }
+});
+
+test("preserves a regular per-user CEP installation", () => {
+  const paths = fixture();
+  try {
+    mkdirSync(paths.installedPath, { recursive: true });
+    writeFileSync(path.join(paths.installedPath, "installed.txt"), "produção");
+
+    const result = removeCepDevLink(paths);
+
+    assert.equal(result.status, "preserved");
+    assert.equal(readFileSync(path.join(paths.installedPath, "installed.txt"), "utf8"), "produção");
+  } finally {
+    removeFixture(paths.root);
+  }
+});
+
+test("refuses to remove a junction that points outside this repository target", () => {
+  const paths = fixture();
+  try {
+    const otherTarget = path.join(paths.root, "other-extension");
+    mkdirSync(otherTarget, { recursive: true });
+    writeFileSync(path.join(otherTarget, "keep.txt"), "alheio");
+    mkdirSync(path.dirname(paths.installedPath), { recursive: true });
+    symlinkSync(
+      otherTarget,
+      paths.installedPath,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    assert.throws(
+      () => removeCepDevLink(paths),
+      /destino inesperado e foi preservada/u,
+    );
+    assert.equal(pathEntryExists(paths.installedPath), true);
+    assert.equal(readFileSync(path.join(otherTarget, "keep.txt"), "utf8"), "alheio");
+  } finally {
+    removeFixture(paths.root);
+  }
+});
+
+test("removes a broken junction when its recorded target is the expected dev build", () => {
+  const paths = fixture();
+  try {
+    mkdirSync(paths.devTargetPath, { recursive: true });
+    mkdirSync(path.dirname(paths.installedPath), { recursive: true });
+    symlinkSync(
+      paths.devTargetPath,
+      paths.installedPath,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    rmSync(paths.devTargetPath, { recursive: true, force: true });
+
+    assert.equal(pathEntryExists(paths.installedPath), true);
+    const result = removeCepDevLink(paths);
+
+    assert.equal(result.status, "removed");
+    assert.equal(pathEntryExists(paths.installedPath), false);
+  } finally {
+    removeFixture(paths.root);
+  }
+});
+
+test("keeps the junction and target intact when unlinking fails", () => {
+  const paths = fixture();
+  try {
+    mkdirSync(paths.devTargetPath, { recursive: true });
+    writeFileSync(path.join(paths.devTargetPath, "keep.txt"), "preservado");
+    mkdirSync(path.dirname(paths.installedPath), { recursive: true });
+    symlinkSync(
+      paths.devTargetPath,
+      paths.installedPath,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    assert.throws(
+      () => removeCepDevLink({
+        ...paths,
+        removeLink() {
+          throw new Error("falha simulada ao remover");
+        },
+      }),
+      /falha simulada ao remover/u,
+    );
+    assert.equal(pathEntryExists(paths.installedPath), true);
+    assert.equal(readFileSync(path.join(paths.devTargetPath, "keep.txt"), "utf8"), "preservado");
   } finally {
     removeFixture(paths.root);
   }

@@ -8,8 +8,9 @@ import DuplicateIdenticalModal from "../duplicates/DuplicateIdenticalModal";
 import HistoryWindow from "../history/HistoryWindow";
 import RoteiroViewer from "./RoteiroViewer";
 import {
+  cepAdditionalInstallations,
   cepDowngradeRequiresFullInstaller,
-  cepInstallationScopeLabel,
+  cepInstallationLocationLabel,
   cepInstallActionLabel,
   cepInstallCommandArgs,
   cepVersionRelation,
@@ -1440,8 +1441,13 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
     extensionStatus
   );
   const installLabel = cepInstallActionLabel(versionRelation);
-  const effectiveScopeLabel = cepInstallationScopeLabel(extensionStatus?.scope);
-  const installations = extensionStatus?.installations || [];
+  const effectiveInstallationLabel = extensionStatus?.installed
+    ? cepInstallationLocationLabel({
+      scope: extensionStatus.scope,
+      path: extensionStatus.path,
+    })
+    : "";
+  const additionalInstallations = cepAdditionalInstallations(extensionStatus);
   // The dev link only blocks until it is explicitly replaced; installing then
   // removes the shortcut itself and never the build folder it points at.
   const installBlocked = isLoadingStatus;
@@ -1669,29 +1675,31 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
             <dt>Versão</dt>
             <dd>{installedVersion ? `v${installedVersion}` : "—"}</dd>
           </div>
-          {effectiveScopeLabel ? (
+          {effectiveInstallationLabel ? (
             <div>
-              <dt>Instalação efetiva</dt>
-              <dd>{effectiveScopeLabel}</dd>
+              <dt>Instalação</dt>
+              <dd title={extensionStatus?.path || undefined}>{effectiveInstallationLabel}</dd>
             </div>
           ) : null}
         </dl>
-        {installations.length > 0 ? (
+        {additionalInstallations.length > 0 ? (
           <>
-            <p className="settings-ext-hint">Locais verificados</p>
+            <p className="settings-ext-hint">
+              {additionalInstallations.length === 1
+                ? "Outra instalação encontrada"
+                : "Outras instalações encontradas"}
+            </p>
             <dl className="settings-ext-status">
-              {installations.map((installation) => {
-                const scopeLabel = cepInstallationScopeLabel(installation.scope) || "Local desconhecido";
-                const statusLabel = !installation.installed
-                  ? "Não instalada"
-                  : installation.manifestValid === false
+              {additionalInstallations.map((installation) => {
+                const locationLabel = cepInstallationLocationLabel(installation);
+                const statusLabel = installation.manifestValid === false
                     ? "Manifesto inválido"
                     : installation.version
                       ? `v${installation.version}${installation.isDevLink ? " · desenvolvimento" : ""}`
                       : "Versão não identificada";
                 return (
                   <div key={`${installation.scope || "unknown"}:${installation.path}`}>
-                    <dt>{scopeLabel}</dt>
+                    <dt>{locationLabel}</dt>
                     <dd title={installation.path || undefined}>{statusLabel}</dd>
                   </div>
                 );

@@ -113,16 +113,19 @@ try {
   Assert-Smoke ($openProcesses.Count -eq 0) `
     "Close After Effects, CEPHtmlEngine and Arizona before running this smoke."
 
-  $userItem = Get-Item -LiteralPath $userCep -Force -ErrorAction Stop
-  $devTarget = [string](@($userItem.Target)[0])
-  Assert-Smoke ($userItem.LinkType -eq "Junction") `
-    "Per-user CEP is not the expected development junction: $userCep"
-  Assert-Smoke (
-    [System.IO.Path]::GetFullPath($devTarget).Equals(
-      [System.IO.Path]::GetFullPath($expectedDevTarget),
-      [System.StringComparison]::OrdinalIgnoreCase
-    )
-  ) "Development junction points to an unexpected target: $devTarget"
+  $userItem = Get-Item -LiteralPath $userCep -Force -ErrorAction SilentlyContinue
+  $devTarget = ""
+  if ($null -ne $userItem) {
+    $devTarget = [string](@($userItem.Target)[0])
+    Assert-Smoke ($userItem.LinkType -eq "Junction") `
+      "Per-user CEP is neither absent nor the expected development junction: $userCep"
+    Assert-Smoke (
+      [System.IO.Path]::GetFullPath($devTarget).Equals(
+        [System.IO.Path]::GetFullPath($expectedDevTarget),
+        [System.StringComparison]::OrdinalIgnoreCase
+      )
+    ) "Development junction points to an unexpected target: $devTarget"
+  }
 
   [pscustomobject]@{
     repoRoot = $RepoRoot
@@ -136,14 +139,16 @@ try {
   } | ConvertTo-Json -Depth 3 |
     Set-Content -LiteralPath (Join-Path $smokeRoot "before.json") -Encoding UTF8
 
-  [System.IO.Directory]::Move($userCep, $parkedJunction)
-  $junctionParked = $true
-  Assert-Smoke (!(Test-Path -LiteralPath $userCep)) `
-    "Development junction remained in Adobe's scanned per-user directory."
-  Assert-Smoke ((Get-Item -LiteralPath $parkedJunction -Force).LinkType -eq "Junction") `
-    "Parked development path is no longer a junction."
-  Assert-Smoke (Test-Path -LiteralPath (Join-Path $expectedDevTarget "CSXS\manifest.xml") -PathType Leaf) `
-    "Parking the junction affected its repository target."
+  if ($null -ne $userItem) {
+    [System.IO.Directory]::Move($userCep, $parkedJunction)
+    $junctionParked = $true
+    Assert-Smoke (!(Test-Path -LiteralPath $userCep)) `
+      "Development junction remained in Adobe's scanned per-user directory."
+    Assert-Smoke ((Get-Item -LiteralPath $parkedJunction -Force).LinkType -eq "Junction") `
+      "Parked development path is no longer a junction."
+    Assert-Smoke (Test-Path -LiteralPath (Join-Path $expectedDevTarget "CSXS\manifest.xml") -PathType Leaf) `
+      "Parking the junction affected its repository target."
+  }
 
   if ($debugExisted) {
     Remove-ItemProperty -LiteralPath $debugKey -Name $debugName

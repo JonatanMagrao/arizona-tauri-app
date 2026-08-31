@@ -292,7 +292,7 @@ Function PageReinstall
   wix_loop_done:
 
   ; Check if there is an existing installation, if not, abort the reinstall page
-  ReadRegStr $R0 SHCTX "${UNINSTKEY}" ""
+  ReadRegStr $R0 SHCTX "${UNINSTKEY}" "DisplayName"
   ReadRegStr $R1 SHCTX "${UNINSTKEY}" "UninstallString"
   ${IfThen} "$R0$R1" == "" ${|} Abort ${|}
 
@@ -671,7 +671,7 @@ Section EarlyChecks
       Quit
     arizona_silent_wix_done:
 
-    ReadRegStr $R8 SHCTX "${UNINSTKEY}" ""
+    ReadRegStr $R8 SHCTX "${UNINSTKEY}" "DisplayName"
     ReadRegStr $R9 SHCTX "${UNINSTKEY}" "UninstallString"
     ${If} "$R8$R9" != ""
       ${If} $R8 == ""
