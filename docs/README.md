@@ -8,9 +8,13 @@ histórico continua disponível no Git.
 ## Operação e segurança
 
 - [Política comercial de licenciamento, assinatura e código-fonte](./POLITICA_COMERCIAL_LICENCA_TEMPORARIA.md):
-  referência de períodos e preços, assinatura contínua com ou sem SLA, entrega
-  de fonte com licença interna, cessão patrimonial, documentação, continuidade
-  e modalidades de suporte cobrado separadamente.
+  referência interna de preços, custos, remuneração e margens, assinatura,
+  pacotes de serviço, venda com ou sem cessão e condições de revisão. Contém
+  informações financeiras reservadas ao fornecedor.
+- [Pitch comercial do Arizona](./PITCH_COMERCIAL_ARIZONA.md): apresentação para
+  a Arizona Crossmedia, sem cifras ou premissas internas. Material de proposta
+  mantido pela política comercial, revisado em 2026-09-05 e fundamentado nos
+  recursos descritos nos READMEs do app e da extensão CEP.
 - [Licenciamento e chaves — não apagar](./LICENCIAMENTO_E_CHAVES_NAO_APAGAR.md):
   contrato de licença, recibo CEP, assinatura do `.zxp`, segredos e rotações.
 - [Ações manuais de segurança e release](./ACOES_MANUAIS_SEGURANCA.md): itens que
