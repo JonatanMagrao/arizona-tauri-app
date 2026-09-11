@@ -8,6 +8,7 @@ import { RoteiroPanel } from "./domains/roteiro/components/RoteiroPanel";
 import { useArizonaBridgeLicense } from "./hooks/useArizonaBridgeLicense";
 import { useHostTheme } from "./hooks/useHostTheme";
 import { useProjectIdentity } from "./hooks/useProjectIdentity";
+import { useProjectOpening } from "./hooks/useProjectOpening";
 import { getPublicErrorMessage } from "./utils/errors";
 import {
   createDiagnosticOperationId,
@@ -68,9 +69,55 @@ interface LicensedAppProps {
 const LicensedApp = ({ bgColor }: LicensedAppProps) => {
   const { projectKey, projectName, refreshProjectIdentity } =
     useProjectIdentity();
+  const [activeView, setActiveView] = useState<ActiveView>("offers");
+  const [projectRevision, setProjectRevision] = useState(0);
+  const reloadProject = useCallback(async () => {
+    await refreshProjectIdentity(true);
+    // Reopening the same file must also discard the old snapshots/previews.
+    setProjectRevision((current) => current + 1);
+  }, [refreshProjectIdentity]);
+  const { isOpeningProject, openProject } = useProjectOpening(reloadProject);
+
+  return (
+    <ProjectPanel
+      key={`${projectKey || "no-project"}-${projectRevision}`}
+      bgColor={bgColor}
+      projectKey={projectKey}
+      projectName={projectName}
+      refreshProjectIdentity={refreshProjectIdentity}
+      activeView={activeView}
+      setActiveView={setActiveView}
+      isOpeningProject={isOpeningProject}
+      onOpenProject={openProject}
+    />
+  );
+};
+
+interface ProjectPanelProps extends LicensedAppProps {
+  projectKey: string;
+  projectName: string;
+  refreshProjectIdentity: () => Promise<string>;
+  activeView: ActiveView;
+  setActiveView: (view: ActiveView) => void;
+  isOpeningProject: boolean;
+  onOpenProject: () => Promise<void>;
+}
+
+const ProjectPanel = ({
+  bgColor,
+  projectKey,
+  projectName,
+  refreshProjectIdentity,
+  activeView,
+  setActiveView,
+  isOpeningProject,
+  onOpenProject,
+}: ProjectPanelProps) => {
   const projectViewKey = projectKey || "no-project";
   const projectKeyRef = useRef(projectKey);
-  const [activeView, setActiveView] = useState<ActiveView>("offers");
+  const isOpeningProjectRef = useRef(isOpeningProject);
+  isOpeningProjectRef.current = isOpeningProject;
+  const [isProjectBusy, setIsProjectBusy] = useState(false);
   const [requestedOfferLayerIndex, setRequestedOfferLayerIndex] = useState<
     number | undefined
   >(undefined);
@@ -169,17 +216,20 @@ const LicensedApp = ({ bgColor }: LicensedAppProps) => {
 
   const selectActiveView = useCallback(
     async (view: ActiveView) => {
+      if (isOpeningProjectRef.current || isProjectBusy) return;
       await refreshProjectIdentity();
+      if (isOpeningProjectRef.current) return;
       setActiveView(view);
     },
-    [refreshProjectIdentity]
+    [isProjectBusy, refreshProjectIdentity, setActiveView]
   );
 
   const keepCurrentProjectForAction = useCallback(async () => {
+    if (isOpeningProjectRef.current) return false;
     const currentProjectKey = projectKeyRef.current;
     const nextProjectKey = await refreshProjectIdentity();
 
-    return nextProjectKey === currentProjectKey;
+    return !isOpeningProjectRef.current && nextProjectKey === currentProjectKey;
   }, [refreshProjectIdentity]);
 
   const openOfferFromRoteiro = async (offerLayerIndex: number) => {
@@ -197,6 +247,7 @@ const LicensedApp = ({ bgColor }: LicensedAppProps) => {
           : "app arizona-carrefour"
       }
       style={appStyle}
+      aria-busy={isOpeningProject}
     >
       <div className="panel-topbar">
         <div className="panel-tabs" role="tablist" aria-label="Visualizacao">
@@ -205,6 +256,7 @@ const LicensedApp = ({ bgColor }: LicensedAppProps) => {
             role="tab"
             aria-selected={activeView === "offers"}
             className={activeView === "offers" ? "is-active" : ""}
+            disabled={isOpeningProject || isProjectBusy}
             onClick={() => void selectActiveView("offers")}
           >
             Ofertas
@@ -214,6 +266,7 @@ const LicensedApp = ({ bgColor }: LicensedAppProps) => {
             role="tab"
             aria-selected={activeView === "roteiro"}
             className={activeView === "roteiro" ? "is-active" : ""}
+            disabled={isOpeningProject || isProjectBusy}
             onClick={() => void selectActiveView("roteiro")}
           >
             Roteiro
@@ -222,10 +275,24 @@ const LicensedApp = ({ bgColor }: LicensedAppProps) => {
 
         <button
           type="button"
+          className="panel-open-project-button"
+          aria-label="Abrir outro projeto"
+          aria-busy={isOpeningProject}
+          disabled={!window.cep || isOpeningProject || isProjectBusy || isClearingPreviewCache}
+          title={isOpeningProject ? "Abrindo projeto..." : "Abrir outro projeto"}
+          onClick={() => void onOpenProject()}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16l3-11H5l-1 7V6h7l2 2h7V6h-8l-2-2Zm-3.3 7h13.7l-1.9 7H4.8l1.9-7Z" />
+          </svg>
+        </button>
+
+        <button
+          type="button"
           className="panel-cache-button"
           aria-label="Limpar imagens temporárias"
           aria-busy={isClearingPreviewCache}
-          disabled={!hasNodeAccess || isClearingPreviewCache}
+          disabled={!hasNodeAccess || isClearingPreviewCache || isOpeningProject}
           title={previewCacheMessage}
           onClick={() => void handleClearPreviewCache()}
         >
@@ -236,11 +303,16 @@ const LicensedApp = ({ bgColor }: LicensedAppProps) => {
       </div>
 
       <div className="arizona-carrefour-content">
-        {activeView === "roteiro" ? (
+        {isOpeningProject ? (
+          <div className="panel-project-opening" role="status">
+            Abrindo projeto...
+          </div>
+        ) : activeView === "roteiro" ? (
           <div className="arizona-carrefour-roteiro">
             <RoteiroPanel
               key={`roteiro-${projectViewKey}`}
               onOpenOfferInOffers={openOfferFromRoteiro}
+              onBusyChange={setIsProjectBusy}
             />
           </div>
         ) : (
@@ -257,6 +329,7 @@ const LicensedApp = ({ bgColor }: LicensedAppProps) => {
                 setRequestedOfferLayerIndex(undefined)
               }
               onStatus={setStatus}
+              onBusyChange={setIsProjectBusy}
             />
           </div>
         )}

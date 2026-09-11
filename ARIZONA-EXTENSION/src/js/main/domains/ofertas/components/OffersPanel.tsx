@@ -42,6 +42,7 @@ interface OffersPanelProps {
   onRefreshProductImages?: () => Promise<void>;
   onBeforeOfferNavigation?: () => Promise<boolean>;
   onRequestedOfferLayerIndexHandled?: () => void;
+  onBusyChange?: (busy: boolean) => void;
   onStatus: (message: string) => void;
 }
 
@@ -1731,6 +1732,7 @@ export const OffersPanel = ({
   onRefreshProductImages,
   onBeforeOfferNavigation,
   onRequestedOfferLayerIndexHandled,
+  onBusyChange,
   onStatus,
 }: OffersPanelProps) => {
   const isRnProject = isRnAfterProject(projectName);
@@ -1753,6 +1755,7 @@ export const OffersPanel = ({
   const {
     snapshot,
     loading,
+    busy,
     refreshOffers,
     selectOffer,
     openOfferPrecomp,
@@ -1773,6 +1776,17 @@ export const OffersPanel = ({
     onStatus,
   });
   const selectedOffer = snapshot?.selectedOffer ?? null;
+
+  useEffect(() => {
+    onBusyChange?.(busy);
+  }, [busy, onBusyChange]);
+
+  useEffect(
+    () => () => {
+      onBusyChange?.(false);
+    },
+    [onBusyChange]
+  );
 
   const handleUndo = useCallback(async () => {
     const offersRefreshed = await undo();

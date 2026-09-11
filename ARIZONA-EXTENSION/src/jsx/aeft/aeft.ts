@@ -10,6 +10,8 @@ import {
 export { helloArrayStr, helloError, helloNum, helloObj, helloStr, helloVoid };
 export { getProjectProductsDirectory } from "./domains/ofertas/projectProductPaths";
 export { getProjectIdentity } from "./domains/project/projectIdentity";
+export { openProject } from "./domains/project/openProject";
+export type { OpenProjectResult } from "./domains/project/openProject";
 export { getProjectRoteiroInfo } from "./domains/roteiro/roteiroPath";
 export {
   getProjectWavFootageInfo,

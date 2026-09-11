@@ -10,6 +10,7 @@ type OfferStatus = "correct" | "wrong" | "neutral";
 
 interface RoteiroPanelProps {
   onOpenOfferInOffers?: (offerLayerIndex: number) => void;
+  onBusyChange?: (busy: boolean) => void;
 }
 
 interface RoteiroToastMessageProps {
@@ -44,7 +45,10 @@ const formatOfferNumber = (offerIndex: number): string => {
   return number < 10 ? `0${number}` : String(number);
 };
 
-export const RoteiroPanel = ({ onOpenOfferInOffers }: RoteiroPanelProps) => {
+export const RoteiroPanel = ({
+  onOpenOfferInOffers,
+  onBusyChange,
+}: RoteiroPanelProps) => {
   const {
     fileName,
     content,
@@ -66,6 +70,20 @@ export const RoteiroPanel = ({ onOpenOfferInOffers }: RoteiroPanelProps) => {
     toast,
     dismissToast,
   } = useRoteiro();
+
+  const busy = loading || audioUpdating || markerAdjusting ||
+    renderQueueLoading || offerActionLoading;
+
+  useEffect(() => {
+    onBusyChange?.(busy);
+  }, [busy, onBusyChange]);
+
+  useEffect(
+    () => () => {
+      onBusyChange?.(false);
+    },
+    [onBusyChange]
+  );
 
   useEffect(() => {
     void load();

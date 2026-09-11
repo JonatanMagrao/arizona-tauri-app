@@ -59,12 +59,34 @@ export const useOffersEditor = ({
 }: UseOffersEditorOptions) => {
   const [snapshot, setSnapshot] = useState<OfferEditorSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
+  const [pendingActionCount, setPendingActionCount] = useState(0);
   const [actionLog, setActionLog] = useState<string[]>([]);
+  const mountedRef = useRef(true);
+  const pendingActionCountRef = useRef(0);
   const selectedOfferLayerIndexRef = useRef<number | undefined>(
     initialOfferLayerIndex
   );
   const lastUndoAtRef = useRef(0);
   const undoInFlightRef = useRef(false);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const beginAction = useCallback(() => {
+    pendingActionCountRef.current += 1;
+    setPendingActionCount(pendingActionCountRef.current);
+  }, []);
+
+  const endAction = useCallback(() => {
+    pendingActionCountRef.current = Math.max(0, pendingActionCountRef.current - 1);
+    if (mountedRef.current) {
+      setPendingActionCount(pendingActionCountRef.current);
+    }
+  }, []);
 
   const appendLog = useCallback((messages: string | string[]) => {
     const nextMessages = Array.isArray(messages) ? messages : [messages];
@@ -83,12 +105,13 @@ export const useOffersEditor = ({
 
   const refreshOffers = useCallback(
     async (offerLayerIndex = selectedOfferLayerIndexRef.current) => {
-      if (!window.cep) return false;
+      if (!window.cep || !mountedRef.current) return false;
 
       setLoading(true);
 
       try {
         const nextSnapshot = await loadOffersEditorSnapshot(offerLayerIndex);
+        if (!mountedRef.current) return false;
         selectedOfferLayerIndexRef.current =
           nextSnapshot.selectedOfferLayerIndex || offerLayerIndex;
         setSnapshot(nextSnapshot);
@@ -120,6 +143,9 @@ export const useOffersEditor = ({
       actionLabel: string,
       action: () => Promise<OfferEditorActionResult>
     ) => {
+      if (!mountedRef.current) return;
+
+      beginAction();
       const operationId = createDiagnosticOperationId(`offers-${actionName}`);
       const startedAt = Date.now();
       recordLocalDiagnostic({
@@ -132,6 +158,7 @@ export const useOffersEditor = ({
       });
       try {
         const result = await action();
+        if (!mountedRef.current) return;
         const publicMessage = getPublicErrorMessage(
           result.message,
           result.ok
@@ -209,9 +236,11 @@ export const useOffersEditor = ({
             details: { durationMs: Date.now() - startedAt },
           }
         );
+      } finally {
+        endAction();
       }
     },
-    [appendLog, onStatus, refreshOffers]
+    [appendLog, beginAction, endAction, onStatus, refreshOffers]
   );
 
   const selectOffer = useCallback(
@@ -381,12 +410,15 @@ export const useOffersEditor = ({
   );
 
   const undo = useCallback(async () => {
+    if (!mountedRef.current) return false;
+
     const now = Date.now();
     if (undoInFlightRef.current) return false;
     if (now - lastUndoAtRef.current < UNDO_DEDUPE_MS) return false;
 
     lastUndoAtRef.current = now;
     undoInFlightRef.current = true;
+    beginAction();
     const operationId = createDiagnosticOperationId("offers-undo");
     const startedAt = Date.now();
     recordLocalDiagnostic({
@@ -464,8 +496,9 @@ export const useOffersEditor = ({
       return false;
     } finally {
       undoInFlightRef.current = false;
+      endAction();
     }
-  }, [appendLog, onStatus, refreshOffers]);
+  }, [appendLog, beginAction, endAction, onStatus, refreshOffers]);
 
   useEffect(() => {
     void refreshOffers();
@@ -474,6 +507,7 @@ export const useOffersEditor = ({
   return {
     snapshot,
     loading,
+    busy: loading || pendingActionCount > 0,
     actionLog,
     clearActionLog,
     refreshOffers,

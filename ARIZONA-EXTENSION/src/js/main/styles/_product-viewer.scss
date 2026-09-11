@@ -68,19 +68,20 @@
 
 .panel-topbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 30px;
+  grid-template-columns: minmax(0, 1fr) 30px 30px;
   align-items: center;
   gap: 6px;
 }
 
 .panel-tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 107px));
   gap: 6px;
   min-width: 0;
 }
 
 .panel-tabs button,
+.panel-open-project-button,
 .panel-cache-button {
   height: 30px;
   border: 1px solid rgba(255, 122, 0, 0.55);
@@ -92,8 +93,10 @@
   font-weight: 800;
 }
 
-.panel-tabs button:hover,
+.panel-tabs button:hover:not(:disabled),
 .panel-tabs button:focus-visible,
+.panel-open-project-button:hover:not(:disabled),
+.panel-open-project-button:focus-visible,
 .panel-cache-button:hover:not(:disabled),
 .panel-cache-button:focus-visible {
   border-color: rgba(255, 146, 45, 0.9);
@@ -108,22 +111,33 @@
   color: #ff8a1f;
 }
 
-.panel-cache-button {
+.panel-cache-button,
+.panel-open-project-button {
   width: 30px;
   padding: 0;
   display: grid;
   place-items: center;
 }
 
-.panel-cache-button svg {
+.panel-cache-button svg,
+.panel-open-project-button svg {
   width: 15px;
   height: 15px;
   fill: currentColor;
 }
 
+.panel-tabs button:disabled,
+.panel-open-project-button:disabled,
 .panel-cache-button:disabled {
   cursor: default;
   opacity: 0.46;
+}
+
+.panel-project-opening {
+  align-self: center;
+  text-align: center;
+  color: #a9a9a9;
+  font-size: 0.8rem;
 }
 
 .arizona-carrefour-content,

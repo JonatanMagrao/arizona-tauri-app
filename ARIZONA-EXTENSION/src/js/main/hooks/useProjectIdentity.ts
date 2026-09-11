@@ -6,9 +6,14 @@ export const useProjectIdentity = () => {
   const [projectName, setProjectName] = useState("");
   const refreshPromiseRef = useRef<Promise<string> | null>(null);
 
-  const refreshProjectIdentity = useCallback(async () => {
+  const refreshProjectIdentity = useCallback(async (forceRefresh = false) => {
     if (!window.cep) return "";
-    if (refreshPromiseRef.current) return refreshPromiseRef.current;
+    if (refreshPromiseRef.current) {
+      if (!forceRefresh) return refreshPromiseRef.current;
+      // A request started before opening a project must finish before the
+      // explicit post-open refresh reads the new project's identity.
+      await refreshPromiseRef.current;
+    }
 
     const refreshPromise = loadProjectIdentity()
       .then((identity) => {

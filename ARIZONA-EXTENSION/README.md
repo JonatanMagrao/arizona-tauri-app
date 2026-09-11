@@ -44,6 +44,27 @@ atual e os 13 anteriores. Não existe envio automático: o usuário exporta e
 compartilha o pacote somente quando desejar. Formato, saneamento, migração e
 solução de problemas: `../docs/DIAGNOSTICOS_LOCAIS.md`.
 
+## Troca de projeto
+
+O botão de pasta ao lado da engrenagem permite abrir outro `.aep` ou `.aepx`
+dentro do After Effects. O seletor começa na pasta do projeto atual, permitindo
+reabrir o mesmo arquivo ou navegar para outras pastas. Sem projeto salvo ou com
+a pasta indisponível, usa a localização padrão do diálogo.
+Primeiro escolhe o arquivo; em seguida, fecha o projeto
+atual com a confirmação nativa para salvar alterações, limpa os caches do After
+(`PurgeTarget.ALL_CACHES`) e abre o arquivo escolhido. Cancelar a escolha ou o
+fechamento interrompe a operação. A limpeza de cache não apaga as miniaturas do
+Arizona; no After Effects 24.3 ou mais recente, ela limpa RAM e cache de disco.
+
+Após a abertura, o painel recarrega Ofertas, Roteiro e imagens do novo projeto,
+inclusive ao reabrir o mesmo arquivo. A aba atual é mantida. Se a abertura falhar
+depois de fechar o projeto anterior, o painel reflete o estado atual do After.
+Se apenas a limpeza de cache falhar, a abertura continua e exibe um aviso.
+Enquanto uma ação estiver em andamento, o botão fica indisponível.
+
+Essa atualização ocorre ao abrir pelo botão do painel; não há consulta periódica
+para detectar aberturas pelo menu do After Effects.
+
 ## Render local
 
 O CEP não executa `aerender` e não possui uma aba de render dedicada. O botão
