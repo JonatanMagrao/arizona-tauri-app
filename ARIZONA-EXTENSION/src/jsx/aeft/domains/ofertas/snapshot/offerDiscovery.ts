@@ -77,6 +77,11 @@ export const getOffersFirstProductInfo = (): Array<{
         entry.mechanicType = firstProduct.mechanic.type;
 
         const fields = firstProduct.mechanic.fields;
+        const isDePorMechanic =
+          entry.mechanicType === "De Por" ||
+          entry.mechanicType === "De Por Cartao CRF" ||
+          entry.mechanicType === "De Por Meu CRF (Dual)" ||
+          entry.mechanicType === "De X Por Y | X% Desconto | Leve X Pague Y";
         if (entry.mechanicType === "Leve X Pague Y") {
           for (let j = 0; j < fields.length; j += 1) {
             if (fieldNameContains(fields[j], "leve x")) {
@@ -95,20 +100,16 @@ export const getOffersFirstProductInfo = (): Array<{
               };
             }
           }
-        } else if (
-          entry.mechanicType === "De Por" ||
-          entry.mechanicType === "De Por Cartao CRF" ||
-          entry.mechanicType === "De Por Meu CRF (Dual)"
-        ) {
+        } else if (isDePorMechanic) {
           for (let j = 0; j < fields.length; j += 1) {
-            if (fields[j].label === "De") {
+            if (fields[j].label === "De" || fields[j].label === "Preco De") {
               entry.deValue = fields[j].value;
               entry.deField = {
                 fieldId: fields[j].id,
                 fieldIndex: j,
                 value: fields[j].value,
               };
-            } else if (fields[j].label === "Por") {
+            } else if (fields[j].label === "Por" || fields[j].label === "Preco Por") {
               entry.porValue = fields[j].value;
               entry.porField = {
                 fieldId: fields[j].id,
@@ -125,11 +126,7 @@ export const getOffersFirstProductInfo = (): Array<{
           }
         }
 
-        if (
-          entry.mechanicType === "De Por" ||
-          entry.mechanicType === "De Por Cartao CRF" ||
-          entry.mechanicType === "De Por Meu CRF (Dual)"
-        ) {
+        if (isDePorMechanic) {
           // Valida o roteiro contra o preco final ("Por") desta mecanica.
         } else if (entry.mechanicType === "De Por Parcelamento Cartao Carrefour") {
           for (let j = 0; j < fields.length; j += 1) {

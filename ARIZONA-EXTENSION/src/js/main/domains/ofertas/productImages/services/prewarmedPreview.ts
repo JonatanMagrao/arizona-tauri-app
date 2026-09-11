@@ -6,7 +6,7 @@ import {
 import type { LocalImage } from "../types";
 import { getPreviewCacheDirectory } from "./previewCache";
 
-const SHARED_CACHE_VERSION_DIRECTORY = "prewarmed-v1";
+const SHARED_CACHE_VERSION_DIRECTORY = "prewarmed-v2";
 const CACHE_FILES_DIRECTORY = "files";
 const PREVIEW_SIZE = 512;
 

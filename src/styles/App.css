@@ -501,30 +501,6 @@ body{
 .job-panel .form-row > span{ grid-column: -1; }
 .job-panel .input-code{ width: 108px; }
 
-.project-validation{
-  margin: -1px 0 8px 91px;
-  padding: 7px 9px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: rgba(255,255,255,.025);
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-}
-
-.project-validation--valid{
-  border-color: rgba(34,197,94,.32);
-  background: rgba(34,197,94,.07);
-  color: #a7efbe;
-}
-
-.project-validation--invalid{
-  border-color: rgba(255,179,71,.35);
-  background: rgba(255,179,71,.08);
-  color: #ffd29b;
-}
-
 .label{
   color: var(--muted);
   font-size: 13px;

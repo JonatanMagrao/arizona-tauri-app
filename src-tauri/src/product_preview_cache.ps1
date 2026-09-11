@@ -8,7 +8,9 @@ Add-Type -AssemblyName System.Drawing
 Add-Type -TypeDefinition @"
 using System;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
+using System.IO;
 using System.Runtime.InteropServices;
 
 [StructLayout(LayoutKind.Sequential)]
@@ -51,7 +53,38 @@ public static class ArizonaPreviewNativeMethods {
 }
 
 public static class ArizonaShellThumbnailExtractor {
+  private static void SavePng(string inputPath, string outputPath, int size) {
+    using (Image source = Image.FromFile(inputPath)) {
+      double scale = Math.Min(1.0, (double)size / Math.Max(source.Width, source.Height));
+      if (scale == 1.0) {
+        source.Save(outputPath, ImageFormat.Png);
+        return;
+      }
+
+      int width = Math.Max(1, (int)Math.Round(source.Width * scale));
+      int height = Math.Max(1, (int)Math.Round(source.Height * scale));
+      using (Bitmap preview = new Bitmap(width, height, PixelFormat.Format32bppArgb)) {
+        using (Graphics graphics = Graphics.FromImage(preview)) {
+          graphics.CompositingMode = CompositingMode.SourceCopy;
+          graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+          using (ImageAttributes attributes = new ImageAttributes()) {
+            attributes.SetWrapMode(WrapMode.TileFlipXY);
+            graphics.DrawImage(source, new Rectangle(0, 0, width, height),
+              0, 0, source.Width, source.Height, GraphicsUnit.Pixel, attributes);
+          }
+        }
+        preview.Save(outputPath, ImageFormat.Png);
+      }
+    }
+  }
+
   public static void Save(string inputPath, string outputPath, int size) {
+    // Decode PNGs directly: FromHbitmap discards their transparency.
+    if (String.Equals(Path.GetExtension(inputPath), ".png", StringComparison.OrdinalIgnoreCase)) {
+      SavePng(inputPath, outputPath, size);
+      return;
+    }
+
     Guid iid = typeof(IArizonaShellItemImageFactory).GUID;
     IArizonaShellItemImageFactory factory = null;
     ArizonaPreviewNativeMethods.SHCreateItemFromParsingName(
@@ -90,7 +123,7 @@ public static class ArizonaShellThumbnailExtractor {
 }
 "@ -ReferencedAssemblies System.Drawing
 
-$tasks = Get-Content -LiteralPath $TasksPath -Raw | ConvertFrom-Json
+$tasks = Get-Content -LiteralPath $TasksPath -Raw -Encoding UTF8 | ConvertFrom-Json
 
 foreach ($task in $tasks) {
   if (Test-Path -LiteralPath $task.outputPath -PathType Leaf) {

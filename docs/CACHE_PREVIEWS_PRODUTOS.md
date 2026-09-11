@@ -1,7 +1,7 @@
 # Cache compartilhado de previews dos produtos
 
 **Status:** operacional  
-**Última revisão:** 2026-08-09
+**Última revisão:** 2026-09-11
 
 **Fontes da verdade:** `src-tauri/src/product_preview_cache.rs` e
 `ARIZONA-EXTENSION/src/js/main/domains/ofertas/productImages/services/prewarmedPreview.ts`
@@ -30,25 +30,26 @@ consegue localizar e disparar o `.aep` do Jobinho.
 Raiz compartilhada:
 
 ```text
-%LOCALAPPDATA%\Arizona Carrefour\Product Viewer\preview-cache\prewarmed-v1\
+%LOCALAPPDATA%\Arizona Carrefour\Product Viewer\preview-cache\prewarmed-v2\
 ```
 
 Estrutura:
 
 ```text
-prewarmed-v1\
+prewarmed-v2\
   files\
     <cacheKey>.png
   jobs\
     <jobao>.json
   tasks\
     <arquivos temporarios durante o aquecimento>
-  arizona-product-preview-v1.ps1
+  arizona-product-preview-v2.ps1
 ```
 
 Os previews são PNG de até `512 x 512`. PSDs são compostos pelo renderer interno
 do Tauri; se ele não suportar um arquivo específico, o thumbnail provider do
-Windows é usado como fallback. PNGs usam o thumbnail provider do Windows. Cada
+Windows é usado como fallback. PNGs são decodificados diretamente, preservando
+a transparência e a proporção, sem ampliar imagens menores que o limite. Cada
 arquivo é gravado em um temporário e movido para o nome final; assim, o CEP
 nunca deve observar um PNG parcialmente escrito.
 
@@ -103,11 +104,21 @@ Antes de ler PNG ou interpretar PSD, o CEP calcula a mesma chave e procura
 1. Se o arquivo existir, ele é usado imediatamente.
 2. Se ainda estiver sendo preparado ou não estiver disponível, o fluxo local
    anterior continua sem erro.
-3. A limpeza de cache existente remove também `prewarmed-v1`; a próxima
+3. A limpeza de cache existente remove também as pastas versionadas; a próxima
    abertura de um Jobinho volta a aquecer o Jobão.
+
+## Migração para v2
+
+A v1 gerava PNGs pelo thumbnail provider do Windows e pela conversão
+`Image.FromHbitmap`, que descartava a transparência. A v2 usa decodificação
+direta de PNGs e mantém o mesmo algoritmo de chave, tamanho máximo e formato.
+Tauri e CEP usam exclusivamente `prewarmed-v2`, evitando reutilizar previews
+opacos da v1. Os arquivos antigos podem permanecer no disco até a limpeza de
+cache; não são lidos pela versão atual. Sem um preview v2, o CEP usa seu fluxo
+local, que lê o PNG original com transparência.
 
 ## Evolução do contrato
 
 Qualquer alteração na normalização, algoritmo de hash, tamanho ou formato deve
-criar uma nova pasta versionada (`prewarmed-v2`, por exemplo) e ser implementada
-nos dois projetos. Nunca reutilize `prewarmed-v1` com semântica diferente.
+criar uma nova pasta versionada (`prewarmed-v3`, por exemplo) e ser implementada
+nos dois projetos. Nunca reutilize uma versão existente com semântica diferente.

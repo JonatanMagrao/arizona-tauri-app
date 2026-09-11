@@ -15,13 +15,13 @@ use tauri::{AppHandle, Manager};
 const CACHE_APP_DIRECTORY: &str = "Arizona Carrefour";
 const CACHE_PANEL_DIRECTORY: &str = "Product Viewer";
 const CACHE_PREVIEW_DIRECTORY: &str = "preview-cache";
-const SHARED_CACHE_VERSION_DIRECTORY: &str = "prewarmed-v1";
+const SHARED_CACHE_VERSION_DIRECTORY: &str = "prewarmed-v2";
 const CACHE_FILES_DIRECTORY: &str = "files";
 const CACHE_JOBS_DIRECTORY: &str = "jobs";
 const CACHE_TASKS_DIRECTORY: &str = "tasks";
-const POWERSHELL_SCRIPT_NAME: &str = "arizona-product-preview-v1.ps1";
+const POWERSHELL_SCRIPT_NAME: &str = "arizona-product-preview-v2.ps1";
 const PREVIEW_SIZE: u32 = 512;
-const CACHE_VERSION: u32 = 1;
+const CACHE_VERSION: u32 = 2;
 
 static SESSION_COMPLETED_JOBS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static SESSION_ACTIVE_JOBS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();

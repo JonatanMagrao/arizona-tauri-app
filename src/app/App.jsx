@@ -42,7 +42,6 @@ const TOOLS_POPOVER_MARGIN_PX = 6;
 const AFTER_EFFECTS_SHORTCUT_NOTICE_THROTTLE_MS = 30000;
 const RENDER_QUEUE_NOTICE_THROTTLE_MS = 30000;
 const AE_OPEN_COOLDOWN_MS = 8000;
-const EMPTY_PROJECT_VALIDATION = Object.freeze({ status: "idle", message: "" });
 const MAIN_CTA_PHRASES = Object.freeze([
   "Por que fazer isso na mão?",
   "Imagine o resto do fluxo automatizado.",
@@ -185,7 +184,6 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
   const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(false);
   const [mainCtaPhrase] = useState(randomMainCtaPhrase);
   const [projectTitle, setProjectTitle] = useState("");
-  const [projectValidation, setProjectValidation] = useState(EMPTY_PROJECT_VALIDATION);
   const { toast, showToast, hideToast } = useAutoHideToast();
   const projectTitleRef = useRef({ key: "", title: "" });
   const toolsMenuRef = useRef(null);
@@ -548,23 +546,17 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
     if (!jobao || !jobinho) {
       projectTitleRef.current = { key: "", title: "" };
       setProjectTitle("");
-      setProjectValidation(EMPTY_PROJECT_VALIDATION);
       getCurrentWindow().setTitle("Arizona App").catch(() => {});
       return () => {};
     }
 
     if (projectTitleRef.current.key === lookupKey && projectTitleRef.current.title) {
       setProjectTitle(projectTitleRef.current.title);
-      setProjectValidation({
-        status: "valid",
-        message: `Projeto encontrado: ${projectTitleRef.current.title}.`,
-      });
       return () => {};
     }
 
     projectTitleRef.current = { key: lookupKey, title: "" };
     setProjectTitle("");
-    setProjectValidation({ status: "checking", message: "Validando os códigos informados..." });
     getCurrentWindow().setTitle("Arizona App").catch(() => {});
 
     const resolveProjectTitle = async () => {
@@ -577,30 +569,11 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
         if (res?.ok && res.message) {
           projectTitleRef.current = { key: lookupKey, title: res.message };
           setProjectTitle(res.message);
-          setProjectValidation({
-            status: "valid",
-            message: `Projeto encontrado: ${res.message}.`,
-          });
           await setProjectWindowTitle(res.message);
           return;
         }
-
-        setProjectValidation({
-          status: "invalid",
-          message: publicErrorMessage(
-            res?.message,
-            `Não foi possível localizar o Jobão "${jobao}" e o Jobinho "${jobinho}".`
-          ),
-        });
       } catch (e) {
         if (cancelled) return;
-        setProjectValidation({
-          status: "invalid",
-          message: publicErrorMessage(
-            e,
-            `Não foi possível localizar o Jobão "${jobao}" e o Jobinho "${jobinho}".`
-          ),
-        });
       }
 
       if (!cancelled) retryTimer = setTimeout(resolveProjectTitle, 2000);
@@ -952,7 +925,6 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
               setJobaoCod={setJobaoCod}
               jobinhoCod={jobinhoCod}
               setJobinhoCod={setJobinhoCod}
-              projectValidation={projectValidation}
               openJobao={openJobao}
               openJobinho={openJobinho}
               abrirAE={abrirAE}

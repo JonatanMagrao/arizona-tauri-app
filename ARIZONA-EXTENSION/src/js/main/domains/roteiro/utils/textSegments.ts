@@ -19,12 +19,14 @@ const VALIDATED_TYPES = new Set([
   "De Por",
   "De Por Cartao CRF",
   "De Por Meu CRF (Dual)",
+  "De X Por Y | X% Desconto | Leve X Pague Y",
   CARD_INSTALLMENT_MECHANIC_TYPE,
   "Porcentagem Desconto",
   "Desconto X%",
   "Desconto X% Meu CRF",
   "Desconto X% Cartao CRF",
   "Desconto X% Cartao CRF Segunda Unidade",
+  "Todos A Com X% Desconto",
 ]);
 
 const PERCENT_MECHANIC_TYPES = new Set([
@@ -33,12 +35,18 @@ const PERCENT_MECHANIC_TYPES = new Set([
   "Desconto X% Meu CRF",
   "Desconto X% Cartao CRF",
   "Desconto X% Cartao CRF Segunda Unidade",
+  "Todos A Com X% Desconto",
 ]);
 
-const PRICE_PATTERN = /(?:\d{1,3}(?:\.\d{3})+|\d+),\d+/g;
+const PRICE_PATTERN = /(?:\d{1,3}(?:\.\d{3})+|\d+),\d+|\b\d+\s+centavos?\b/gi;
 const PERCENT_PATTERN = /\d+(?:,\d+)?%/g;
 const LEVE_PAGUE_PATTERN =
   /\b(LEVE(?:\s+X)?\s+)(\d+)(\s+(?:E\s+)?PAGUE(?:\s+Y)?\s+)(\d+)\b/i;
+
+const normalizePriceMatch = (value: string): string => {
+  const cents = /^(\d+)\s+centavos?$/i.exec(value);
+  return cents ? (Number(cents[1]) / 100).toFixed(2).replace(".", ",") : value;
+};
 
 const normalizeValue = (value: string): number =>
   parseFloat(value.replace("%", "").replace(/\./g, "").replace(",", "."));
@@ -258,7 +266,8 @@ const buildCardInstallmentSegments = (
       fieldKey !== undefined
         ? getFieldPriceValues(info, fieldKey)
         : getAcceptedPriceValues(info);
-    const roteiroValue = normalizeValue(priceMatch[0]);
+    const fieldValue = normalizePriceMatch(priceMatch[0]);
+    const roteiroValue = normalizeValue(fieldValue);
     const segmentMatch = matchesAnyPriceValue(roteiroValue, aeValues)
       ? "correct"
       : "wrong";
@@ -274,7 +283,7 @@ const buildCardInstallmentSegments = (
       match: segmentMatch,
       fieldKey,
       action,
-      value: priceMatch[0],
+      value: fieldValue,
     });
 
     lastIndex = priceMatch.index + priceMatch[0].length;
@@ -317,7 +326,8 @@ export const buildLineSegments = (
       segments.push({ text: line.slice(lastIndex, match.index) });
     }
 
-    const roteiroValue = normalizeValue(match[0]);
+    const fieldValue = isPercent ? match[0] : normalizePriceMatch(match[0]);
+    const roteiroValue = normalizeValue(fieldValue);
     const segmentMatch = matchesAnyPriceValue(roteiroValue, aeValues)
       ? "correct"
       : "wrong";
@@ -329,7 +339,7 @@ export const buildLineSegments = (
         segmentMatch === "wrong"
           ? getWrongSegmentAction(info, "price")
           : undefined,
-      value: match[0],
+      value: fieldValue,
     });
 
     lastIndex = match.index + match[0].length;
