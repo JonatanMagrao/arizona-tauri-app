@@ -1,6 +1,6 @@
 import type { OfferTextField } from "../types";
 import { getOfferLayers, getOffersComp } from "../layers/findLayers";
-import { generateOfferData } from "./buildOfferSnapshot";
+import { getFirstOfferProductForValidation } from "./firstOfferProductForValidation";
 
 const normalizeValidationFieldName = (value: string): string =>
   String(value)
@@ -69,10 +69,9 @@ export const getOffersFirstProductInfo = (): Array<{
     };
 
     try {
-      const data = generateOfferData(offerLayers[i]);
+      const firstProduct = getFirstOfferProductForValidation(offerLayers[i]);
 
-      if (data.products.length > 0) {
-        const firstProduct = data.products[0];
+      if (firstProduct !== null) {
         entry.productIndex = firstProduct.index;
         entry.mechanicType = firstProduct.mechanic.type;
 

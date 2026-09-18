@@ -178,7 +178,7 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
   const [isOpeningOut, setIsOpeningOut] = useState(false);
   const [isOpeningAE, setIsOpeningAE] = useState(false);
   const [appConfig, setAppConfig] = useState(DEFAULT_SETTINGS);
-  const [isImporting, setIsImporting] = useState(false);
+  const [importingJobaoCod, setImportingJobaoCod] = useState("");
   const [isToolsOpen, setIsToolsOpen] = useState(false);
   const [toolsPopoverPosition, setToolsPopoverPosition] = useState(null);
   const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(false);
@@ -192,6 +192,7 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
   const toolsCloseTimerRef = useRef(null);
   const aeOpenCooldownTimerRef = useRef(null);
   const isOpeningAERef = useRef(false);
+  const isImportingRef = useRef(false);
   const isClosingMainWindowRef = useRef(false);
   const lastAfterEffectsShortcutNoticeRef = useRef({ key: "", shownAt: 0 });
   const lastRenderQueueNoticeRef = useRef({ key: "", shownAt: 0 });
@@ -201,6 +202,7 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
   const appVersionRef = useRef("");
   const appVersionPromiseRef = useRef(null);
   const canAccessAdmin = authSession?.role === "admin";
+  const isImporting = Boolean(importingJobaoCod);
 
   const showError = (msg) => showToast(msg, "error");
 
@@ -641,15 +643,17 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
 
   const importProducts = async (jobaoCode = copyJobaoCod) => {
     const targetJobao = String(jobaoCode || "").trim();
-    if (!targetJobao || isImporting) return;
+    if (!targetJobao || isImportingRef.current) return;
 
-    setIsImporting(true);
+    isImportingRef.current = true;
+    setImportingJobaoCod(targetJobao);
     try {
       await run(commandNames.importProducts, { jobaoCod: targetJobao }, "Não foi possível copiar os arquivos.");
     } catch (e) {
       showError("Não foi possível copiar os arquivos.");
     } finally {
-      setIsImporting(false);
+      isImportingRef.current = false;
+      setImportingJobaoCod("");
     }
   };
 
@@ -728,7 +732,18 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
   const openDuplicateIdentical = async () => openSecondaryView("duplicate", { jobaoCod: "" });
 
   const titlebarLabel = projectTitle || "Arizona App";
-  const mainCta = (
+  const mainFooter = isImporting ? (
+    <div
+      className="product-copy-status"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      title={`Copiando produtos do Jobão ${importingJobaoCod}`}
+    >
+      <span className="product-copy-status__indicator" aria-hidden="true" />
+      <span className="product-copy-status__text">Copiando produtos · Jobão {importingJobaoCod}…</span>
+    </div>
+  ) : (
     <button
       type="button"
       className="main-cta"
@@ -938,7 +953,7 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
               openAudio={openAudio}
               revealVideo={revealVideo}
               openRoteiro={openRoteiro}
-              footer={mainCta}
+              footer={mainFooter}
             />
           )}
 
@@ -948,7 +963,7 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
               setCopyCode={setCopyJobaoCod}
               importProducts={() => importProducts(copyJobaoCod)}
               isImporting={isImporting}
-              footer={mainCta}
+              footer={mainFooter}
             />
           )}
 
@@ -959,18 +974,12 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
               openBitrix={openBitrix}
               openClaro={openClaro}
               openLinks={openLinks}
-              footer={mainCta}
+              footer={mainFooter}
             />
           )}
 
         </main>
       </div>
-
-      {isImporting && (
-        <div className="overlay" role="status" aria-live="polite" aria-busy="true">
-          <div className="loader">Copiando arquivos...</div>
-        </div>
-      )}
 
       {toast.open && (
         <div

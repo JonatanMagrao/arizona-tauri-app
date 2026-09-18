@@ -5,6 +5,7 @@ import { OffersPanel } from "./domains/ofertas/components/OffersPanel";
 import { useProductImageLibrary } from "./domains/ofertas/productImages/hooks/useProductImageLibrary";
 import { useProductImagePreviews } from "./domains/ofertas/productImages/hooks/useProductImagePreviews";
 import { RoteiroPanel } from "./domains/roteiro/components/RoteiroPanel";
+import { createRoteiroDocumentCache } from "./domains/roteiro/services/roteiroDocumentCache";
 import { useArizonaBridgeLicense } from "./hooks/useArizonaBridgeLicense";
 import { useHostTheme } from "./hooks/useHostTheme";
 import { useProjectIdentity } from "./hooks/useProjectIdentity";
@@ -118,6 +119,9 @@ const ProjectPanel = ({
   const isOpeningProjectRef = useRef(isOpeningProject);
   isOpeningProjectRef.current = isOpeningProject;
   const [isProjectBusy, setIsProjectBusy] = useState(false);
+  // ProjectPanel survives tab changes, but its project/revision key replaces
+  // this single-document cache when switching or reopening a project.
+  const [roteiroDocumentCache] = useState(createRoteiroDocumentCache);
   const [requestedOfferLayerIndex, setRequestedOfferLayerIndex] = useState<
     number | undefined
   >(undefined);
@@ -311,6 +315,7 @@ const ProjectPanel = ({
           <div className="arizona-carrefour-roteiro">
             <RoteiroPanel
               key={`roteiro-${projectViewKey}`}
+              documentCache={roteiroDocumentCache}
               onOpenOfferInOffers={openOfferFromRoteiro}
               onBusyChange={setIsProjectBusy}
             />

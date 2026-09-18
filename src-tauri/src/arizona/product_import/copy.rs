@@ -62,7 +62,7 @@ fn product_file_matches_code(arquivo: &Path, codigo: &str) -> bool {
     arquivo
         .file_stem()
         .and_then(|stem| stem.to_str())
-        .map(|stem| stem.trim() == codigo)
+        .map(|stem| stem.trim().to_lowercase() == codigo.to_lowercase())
         .unwrap_or(false)
 }
 
@@ -211,7 +211,7 @@ mod tests {
     }
 
     #[test]
-    fn product_source_match_rejects_partial_stem_and_different_case() {
+    fn product_source_match_rejects_partial_stem() {
         assert!(!product_file_matches_code(
             Path::new("4136152_A_OK.png"),
             "4136152"
@@ -220,10 +220,49 @@ mod tests {
             Path::new("Icone_Borda_Memoria_256GB.png"),
             "Borda_Memoria"
         ));
-        assert!(!product_file_matches_code(
+    }
+
+    #[test]
+    fn product_source_match_ignores_case_including_accented_letters() {
+        assert!(product_file_matches_code(
             Path::new("Fraldinha_Bovina.png"),
             "fraldinha_bovina"
         ));
+        assert!(product_file_matches_code(
+            Path::new("3898520_3898512_B.PNG"),
+            "3898520_3898512_b"
+        ));
+        assert!(product_file_matches_code(
+            Path::new("Maçã_GALA.png"),
+            "MAÇÃ_gala"
+        ));
+        assert!(!product_file_matches_code(
+            Path::new("Maçã_GALA.png"),
+            "maca_gala"
+        ));
+    }
+
+    #[test]
+    fn case_variants_queue_each_file_once_and_preserve_source_names() {
+        let files = vec![
+            PathBuf::from("COXAO_MOLE_BOVINO_A.PNG"),
+            PathBuf::from("COXAO_MOLE_BOVINO_A.psd"),
+            PathBuf::from("COXAO_MOLE_BOVINO_A_EXTRA.png"),
+        ];
+        let mut tasks = Vec::new();
+        let mut names = HashSet::new();
+
+        for code in ["coxao_mole_bovino_a", "COXAO_MOLE_BOVINO_A"] {
+            assert!(queue_product_copy_tasks(&files, code, &mut tasks, &mut names).unwrap());
+        }
+
+        assert_eq!(
+            tasks,
+            vec![
+                (files[0].clone(), "COXAO_MOLE_BOVINO_A.PNG".to_string()),
+                (files[1].clone(), "COXAO_MOLE_BOVINO_A.psd".to_string()),
+            ]
+        );
     }
 
     #[test]

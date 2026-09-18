@@ -49,10 +49,10 @@ function validationSnapshot(mechanicType, fields) {
         return [offerLayer];
       },
     },
-    "./buildOfferSnapshot": {
-      generateOfferData: (actualLayer) => {
+    "./firstOfferProductForValidation": {
+      getFirstOfferProductForValidation: (actualLayer) => {
         assert.equal(actualLayer, offerLayer);
-        return { products: [{ index: 0, mechanic: { type: mechanicType, fields } }] };
+        return { index: 0, mechanic: { type: mechanicType, fields } };
       },
     },
   };

@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useRoteiro, type RoteiroToast } from "../hooks/useRoteiro";
+import type { RoteiroDocumentCache } from "../services/roteiroDocumentCache";
 import {
   buildLineSegments,
   mapLinesToOffers,
@@ -9,6 +10,7 @@ import "./RoteiroPanel.scss";
 type OfferStatus = "correct" | "wrong" | "neutral";
 
 interface RoteiroPanelProps {
+  documentCache: RoteiroDocumentCache;
   onOpenOfferInOffers?: (offerLayerIndex: number) => void;
   onBusyChange?: (busy: boolean) => void;
 }
@@ -46,6 +48,7 @@ const formatOfferNumber = (offerIndex: number): string => {
 };
 
 export const RoteiroPanel = ({
+  documentCache,
   onOpenOfferInOffers,
   onBusyChange,
 }: RoteiroPanelProps) => {
@@ -69,7 +72,7 @@ export const RoteiroPanel = ({
     openOfferPrecomp,
     toast,
     dismissToast,
-  } = useRoteiro();
+  } = useRoteiro(documentCache);
 
   const busy = loading || audioUpdating || markerAdjusting ||
     renderQueueLoading || offerActionLoading;
@@ -89,7 +92,7 @@ export const RoteiroPanel = ({
     void load();
   }, [load]);
 
-  if (loading) {
+  if (loading && !content) {
     return (
       <div className="roteiro-panel roteiro-panel--state">
         <p>Carregando roteiro...</p>
@@ -106,7 +109,7 @@ export const RoteiroPanel = ({
           onClick={() =>
             canChooseRoteiroFile
               ? void chooseRoteiroFile()
-              : void load()
+              : void load(true)
           }
         >
           {canChooseRoteiroFile ? "Escolher arquivo" : "Tentar novamente"}
@@ -119,7 +122,7 @@ export const RoteiroPanel = ({
     return (
       <div className="roteiro-panel roteiro-panel--state">
         <p>Nenhum roteiro encontrado.</p>
-        <button type="button" onClick={() => void load()}>
+        <button type="button" onClick={() => void load(true)}>
           Atualizar
         </button>
       </div>
@@ -140,7 +143,7 @@ export const RoteiroPanel = ({
     .filter(({ line, offerIndex }) => line.trim() !== "" && offerIndex >= 0);
 
   return (
-    <div className="roteiro-panel">
+    <div className="roteiro-panel" aria-busy={loading}>
       <div className="roteiro-panel__header">
         <span className="roteiro-panel__filename" title={fileName}>
           {fileName}
@@ -150,7 +153,7 @@ export const RoteiroPanel = ({
             type="button"
             className="roteiro-panel__audio"
             onClick={() => void updateAudio()}
-            disabled={audioUpdating}
+            disabled={busy}
             title="Atualizar audio"
           >
             {audioUpdating ? "..." : "Audio"}
@@ -158,10 +161,13 @@ export const RoteiroPanel = ({
           <button
             type="button"
             className="roteiro-panel__refresh"
-            onClick={() => void load()}
-            title="Atualizar roteiro"
+            onClick={() => void load(true)}
+            disabled={busy}
+            aria-busy={loading}
+            aria-label={loading ? "Atualizando roteiro..." : "Atualizar roteiro"}
+            title={loading ? "Atualizando roteiro..." : "Atualizar roteiro"}
           >
-          ↺
+            <span className="roteiro-panel__refresh-icon" aria-hidden="true">↺</span>
           </button>
         </div>
       </div>
@@ -199,6 +205,7 @@ export const RoteiroPanel = ({
                     : undefined
                 }
                 onDoubleClick={(event) => {
+                  if (busy) return;
                   if (!info?.offerLayerIndex || !onOpenOfferInOffers) return;
                   if ((event.target as HTMLElement).closest("button")) return;
 
@@ -213,7 +220,7 @@ export const RoteiroPanel = ({
                         <button
                           type="button"
                           onClick={() => void openOfferPrecomp(info)}
-                          disabled={offerActionLoading}
+                          disabled={busy}
                           title="Abrir esta oferta no After Effects"
                         >
                           {formatOfferNumber(offerIndex)}
@@ -246,7 +253,7 @@ export const RoteiroPanel = ({
                             type="button"
                             key={segIdx}
                             className={className}
-                            disabled={offerActionLoading}
+                            disabled={busy}
                             onClick={() =>
                               seg.action === "fix"
                                 ? void fixOfferValue(
@@ -285,7 +292,7 @@ export const RoteiroPanel = ({
         type="button"
         className="roteiro-marker-button"
         onClick={() => void adjustMarkers()}
-        disabled={markerAdjusting}
+        disabled={busy}
         title="Ajustar os tempos das ofertas ao final do roteiro"
       >
         {markerAdjusting ? "..." : "Ajustar tempos"}
@@ -295,7 +302,7 @@ export const RoteiroPanel = ({
         type="button"
         className="roteiro-render-button"
         onClick={() => void queueRender()}
-        disabled={renderQueueLoading}
+        disabled={busy}
         title="Adicionar MOV e MP4 à fila de render do After Effects"
       >
         {renderQueueLoading ? "..." : "Render"}

@@ -56,14 +56,37 @@ atual com a confirmação nativa para salvar alterações, limpa os caches do Af
 fechamento interrompe a operação. A limpeza de cache não apaga as miniaturas do
 Arizona; no After Effects 24.3 ou mais recente, ela limpa RAM e cache de disco.
 
-Após a abertura, o painel recarrega Ofertas, Roteiro e imagens do novo projeto,
-inclusive ao reabrir o mesmo arquivo. A aba atual é mantida. Se a abertura falhar
+Após a abertura, o painel descarta os dados do projeto anterior e carrega a aba
+ativa com os dados do novo projeto, inclusive ao reabrir o mesmo arquivo. A outra
+aba carrega ao ser selecionada. A aba atual é mantida. Se a abertura falhar
 depois de fechar o projeto anterior, o painel reflete o estado atual do After.
 Se apenas a limpeza de cache falhar, a abertura continua e exibe um aviso.
 Enquanto uma ação estiver em andamento, o botão fica indisponível.
 
 Essa atualização ocorre ao abrir pelo botão do painel; não há consulta periódica
 para detectar aberturas pelo menu do After Effects.
+
+## Carregamento do roteiro
+
+Ao voltar à aba Roteiro no mesmo projeto, o painel reaproveita o texto extraído
+do DOCX se caminho, tamanho e datas de alteração dos metadados ainda coincidem.
+O cache fica somente em memória, limitado a um documento de até 2 milhões de
+caracteres. Trocar ou reabrir o projeto cria um cache novo; arquivo alterado,
+ausente ou ilegível não reutiliza o texto antigo. O botão de atualização e a
+escolha manual do DOCX forçam uma nova leitura completa.
+
+Ao atualizar um roteiro já exibido, o conteúdo e a rolagem permanecem na tela
+enquanto o ícone de atualização gira. As ações ficam bloqueadas até a consulta
+terminar; falhas descartam a validação anterior e exibem a mensagem de erro.
+
+A cada entrada na aba, o painel consulta novamente as ofertas no After para
+validar os valores atuais. Essa consulta lê a mecânica do primeiro produto
+ativo de cada oferta, sem montar os dados de imagens, descrições e textos legais
+do editor. Não há consulta periódica nem validações antigas em cache.
+
+Os eventos locais de carregamento registram separadamente o tempo da consulta
+ao After, da localização do DOCX e da leitura/reutilização do texto. Não gravam
+o conteúdo do roteiro, nomes de arquivo ou caminhos.
 
 ## Render local
 

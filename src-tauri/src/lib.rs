@@ -8,6 +8,7 @@ mod diagnostics;
 mod history;
 mod license;
 mod media;
+mod product_import_runtime;
 mod product_preview_cache;
 mod render_process;
 mod render_queue;
@@ -219,6 +220,7 @@ pub fn run() {
         .manage(SecondaryWindowRuntimeState::default())
         .manage(MediaPathCache::default())
         .manage(MediaLoadRuntimeState::default())
+        .manage(product_import_runtime::ProductImportRuntime::default())
         .manage(render_queue::RenderQueueState::new())
         .plugin(tauri_plugin_dialog::init())
         .plugin(
@@ -2907,17 +2909,26 @@ fn open_out(
 }
 
 #[tauri::command]
-fn import_products(
+async fn import_products(
     app: AppHandle,
-    auth: State<AuthState>,
+    auth: State<'_, AuthState>,
+    runtime: State<'_, product_import_runtime::ProductImportRuntime>,
     jobao_cod: String,
 ) -> Result<ActionResponse, String> {
     require_authenticated(&auth)?;
-    let arizona = arizona_from_app(&app)?;
+    let worker_app = app.clone();
+    let result = runtime
+        .run(move || {
+            // Config construction also probes the shared drive; keep all file I/O here.
+            let arizona = arizona_from_app(&worker_app)?;
+            let report = arizona.import_products(&jobao_cod)?;
+            let history_result = history::record_product_import(&worker_app, &report);
+            Ok((report, history_result))
+        })
+        .await;
 
-    match arizona.import_products(&jobao_cod) {
-        Ok(report) => {
-            let history_result = history::record_product_import(&app, &report);
+    match result {
+        Ok((report, history_result)) => {
             let response = show_product_import_report(app, report)?;
 
             if let Err(err) = history_result {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { fs } from "../../../../lib/cep/node";
 import { getPublicErrorMessage } from "../../../utils/errors";
 import {
@@ -29,7 +29,7 @@ import {
   scanRoteiroDirectory,
 } from "../utils/roteiroFiles";
 import { scanAudioDirectory } from "../utils/audioFiles";
-import { readDocxText } from "../utils/docxReader";
+import type { RoteiroDocumentCache } from "../services/roteiroDocumentCache";
 import type {
   OfferValidationFieldKey,
   OfferValidationFieldRef,
@@ -54,6 +54,12 @@ interface LoadedRoteiroData {
   content: string;
   offerValidationInfos: OfferValidationInfo[];
   audioContext: RoteiroAudioContext;
+  loadMetrics: {
+    hostDurationMs: number;
+    directoryDurationMs: number;
+    documentDurationMs: number;
+    documentCacheHit: boolean;
+  };
 }
 
 interface RoteiroSelectionContext {
@@ -94,13 +100,15 @@ const getSelectionKey = (context: RoteiroSelectionContext): string =>
   `${normPath(context.roteiroDirectory)}::${context.projectName.toLowerCase()}`;
 
 const readRoteiroTarget = (
-  target: RoteiroFile | null | undefined
-): { target: RoteiroFile; content: string } | null => {
+  target: RoteiroFile | null | undefined,
+  documentCache: RoteiroDocumentCache,
+  forceRead: boolean
+): { target: RoteiroFile; content: string; cacheHit: boolean } | null => {
   if (!target) return null;
 
   try {
-    const content = readDocxText(target.fullPath);
-    return content.trim() ? { target, content } : null;
+    const { content, cacheHit } = documentCache.read(target.fullPath, forceRead);
+    return content.trim() ? { target, content, cacheHit } : null;
   } catch (caught) {
     recordDiagnosticFailure(
       "roteiro",
@@ -127,7 +135,15 @@ const isAudioToast = (text: string): boolean => {
   );
 };
 
-export const useRoteiro = () => {
+export const useRoteiro = (documentCache: RoteiroDocumentCache) => {
+  const mountedRef = useRef(true);
+  const loadingRef = useRef(false);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   const [fileName, setFileName] = useState("");
   const [content, setContent] = useState("");
   const [offerValidationInfos, setOfferValidationInfos] = useState<
@@ -169,6 +185,7 @@ export const useRoteiro = () => {
   }, []);
 
   const applyLoadedRoteiroData = useCallback((data: LoadedRoteiroData) => {
+    if (!mountedRef.current) return;
     setFileName(data.fileName);
     setContent(data.content);
     setOfferValidationInfos(data.offerValidationInfos);
@@ -318,17 +335,27 @@ export const useRoteiro = () => {
   };
 
   const readCurrentRoteiroData = useCallback(
-    async (selectedFile?: RequestedRoteiroFile): Promise<LoadedRoteiroData> => {
+    async (
+      selectedFile?: RequestedRoteiroFile,
+      forceDocumentRead = false
+    ): Promise<LoadedRoteiroData> => {
+      const hostStartedAt = Date.now();
       const [{ roteiroDirectory, projectName }, offerInfos] =
         await Promise.all([
           loadProjectRoteiroInfo(),
           loadOffersFirstProductInfo(),
         ]);
+      const hostDurationMs = Date.now() - hostStartedAt;
+
+      // A previous tab/project must not populate a retained document cache
+      // after its asynchronous host request finishes.
+      if (!mountedRef.current) throw new Error("Leitura interrompida.");
 
       if (!hasNodeAccess) {
         throw new Error("Acesso ao sistema de arquivos nao disponivel.");
       }
 
+      const directoryStartedAt = Date.now();
       if (!fs.existsSync(roteiroDirectory)) {
         throw new Error("Pasta ROTEIRO nao encontrada.");
       }
@@ -359,10 +386,12 @@ export const useRoteiro = () => {
       if (savedSelectionPath && !savedTarget) {
         manualRoteiroSelections.delete(selectionKey);
       }
+      const directoryDurationMs = Date.now() - directoryStartedAt;
+      const documentStartedAt = Date.now();
 
       let readableTarget = selectedFile
-        ? readRoteiroTarget(selectedTarget)
-        : readRoteiroTarget(automaticTarget);
+        ? readRoteiroTarget(selectedTarget, documentCache, forceDocumentRead)
+        : readRoteiroTarget(automaticTarget, documentCache, forceDocumentRead);
 
       if (!selectedFile && !readableTarget && savedTarget) {
         const isSameAsAutomatic =
@@ -370,7 +399,7 @@ export const useRoteiro = () => {
           normPath(automaticTarget.fullPath) === normPath(savedTarget.fullPath);
 
         if (!isSameAsAutomatic) {
-          readableTarget = readRoteiroTarget(savedTarget);
+          readableTarget = readRoteiroTarget(savedTarget, documentCache, forceDocumentRead);
         }
 
         if (!readableTarget) {
@@ -397,6 +426,12 @@ export const useRoteiro = () => {
         fileName: target.name,
         content: roteiroContent,
         offerValidationInfos: offerInfos,
+        loadMetrics: {
+          hostDurationMs,
+          directoryDurationMs,
+          documentDurationMs: Date.now() - documentStartedAt,
+          documentCacheHit: readableTarget.cacheHit,
+        },
         audioContext: {
           audioBounceDir: deriveAudioBounceDir(roteiroDirectory),
           projectName,
@@ -410,7 +445,7 @@ export const useRoteiro = () => {
 
       return data;
     },
-    [hasNodeAccess]
+    [documentCache, hasNodeAccess]
   );
 
   const showRoteiroLoadError = useCallback((
@@ -450,6 +485,7 @@ export const useRoteiro = () => {
   }, []);
 
   const updateAudio = async () => {
+    if (loadingRef.current || !mountedRef.current) return;
     setAudioUpdating(true);
     setError("");
     setSelectionContext(null);
@@ -569,6 +605,7 @@ export const useRoteiro = () => {
   };
 
   const queueRender = async () => {
+    if (loadingRef.current || !mountedRef.current) return;
     setRenderQueueLoading(true);
     const operationId = createDiagnosticOperationId("roteiro-render");
     const startedAt = Date.now();
@@ -631,6 +668,7 @@ export const useRoteiro = () => {
   };
 
   const adjustMarkers = async () => {
+    if (loadingRef.current || !mountedRef.current) return;
     setMarkerAdjusting(true);
     const operationId = createDiagnosticOperationId("roteiro-markers");
     const startedAt = Date.now();
@@ -689,8 +727,10 @@ export const useRoteiro = () => {
     }
   };
 
-  const load = useCallback(async () => {
-    if (!window.cep) return;
+  const load = useCallback(async (forceDocumentRead = false) => {
+    if (!window.cep || !mountedRef.current || loadingRef.current) return;
+    loadingRef.current = true;
+    if (forceDocumentRead) documentCache.clear();
 
     const operationId = createDiagnosticOperationId("roteiro-load");
     const startedAt = Date.now();
@@ -705,10 +745,12 @@ export const useRoteiro = () => {
     setLoading(true);
     setError("");
     setSelectionContext(null);
-    clearRoteiroState();
+    // Keep the existing rows and scroll container mounted until the new
+    // document and validation are ready. The panel disables actions meanwhile.
 
     try {
-      const data = await readCurrentRoteiroData();
+      const data = await readCurrentRoteiroData(undefined, forceDocumentRead);
+      if (!mountedRef.current) return;
       applyLoadedRoteiroData(data);
       setToast((current) => (current?.variant === "error" ? null : current));
       recordLocalDiagnostic({
@@ -720,22 +762,28 @@ export const useRoteiro = () => {
         details: {
           durationMs: Date.now() - startedAt,
           offerCount: data.offerValidationInfos.length,
+          ...data.loadMetrics,
         },
       });
     } catch (caught) {
+      if (!mountedRef.current) return;
+      documentCache.clear();
+      clearRoteiroState();
       showRoteiroLoadError(caught, operationId);
     } finally {
-      setLoading(false);
+      loadingRef.current = false;
+      if (mountedRef.current) setLoading(false);
     }
   }, [
     applyLoadedRoteiroData,
     clearRoteiroState,
+    documentCache,
     readCurrentRoteiroData,
     showRoteiroLoadError,
   ]);
 
   const chooseRoteiroFile = useCallback(async () => {
-    if (!selectionContext) return;
+    if (!selectionContext || !mountedRef.current || loadingRef.current) return;
 
     const dialogResult = openRoteiroFileDialog(
       selectionContext.roteiroDirectory
@@ -757,6 +805,7 @@ export const useRoteiro = () => {
       return;
     }
 
+    loadingRef.current = true;
     setLoading(true);
     setError("");
     setSelectionContext(null);
@@ -775,7 +824,8 @@ export const useRoteiro = () => {
       const data = await readCurrentRoteiroData({
         fullPath: dialogResult.filePath,
         expectedContext: selectionContext,
-      });
+      }, true);
+      if (!mountedRef.current) return;
       applyLoadedRoteiroData(data);
       setToast(null);
       recordLocalDiagnostic({
@@ -787,22 +837,28 @@ export const useRoteiro = () => {
         details: {
           durationMs: Date.now() - startedAt,
           offerCount: data.offerValidationInfos.length,
+          ...data.loadMetrics,
         },
       });
     } catch (caught) {
+      if (!mountedRef.current) return;
+      documentCache.clear();
       showRoteiroLoadError(caught, operationId);
     } finally {
-      setLoading(false);
+      loadingRef.current = false;
+      if (mountedRef.current) setLoading(false);
     }
   }, [
     applyLoadedRoteiroData,
     clearRoteiroState,
+    documentCache,
     readCurrentRoteiroData,
     selectionContext,
     showRoteiroLoadError,
   ]);
 
   const openOfferPrecomp = async (info: OfferValidationInfo | undefined) => {
+    if (loadingRef.current || !mountedRef.current) return;
     if (!info?.offerLayerIndex) {
       showToast("Não foi possível localizar esta oferta no projeto aberto.", "warning");
       return;
@@ -870,6 +926,7 @@ export const useRoteiro = () => {
     fieldKey: OfferValidationFieldKey | undefined,
     value: string | undefined
   ) => {
+    if (loadingRef.current || !mountedRef.current) return;
     if (!info || !fieldKey || value === undefined) {
       showToast("Não foi possível identificar qual informação da oferta deve ser corrigida.", "warning");
       return;

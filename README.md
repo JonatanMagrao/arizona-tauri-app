@@ -64,6 +64,27 @@ repositório) e a impressão digital pública aceita fica em
 `INSTALLER/cep-trusted-cert.json`, versionada. É essa assinatura que dispensa o
 `PlayerDebugMode` nas máquinas dos clientes.
 
+## Cópia de produtos
+
+A cópia lê a coluna A das linhas visíveis da aba `Consolidado` da planilha do
+Jobão. A busca pelo nome do produto ignora maiúsculas/minúsculas, mantendo a
+correspondência pelo código completo: `123` e `123_A` continuam diferentes.
+
+Grupos separados por `;` são comparados pelo conjunto de códigos da planilha
+atual, ignorando ordem, maiúsculas/minúsculas e códigos repetidos. Códigos não
+encontrados também fazem parte dessa comparação. Cada grupo único é copiado e
+aparece no relatório uma vez. Os arquivos mantêm seus nomes originais.
+
+A pasta conserva o número da primeira ocorrência entre as linhas agrupadas;
+por isso, a sequência pode ter saltos. Pastas de importações anteriores não são
+comparadas nem removidas. A deduplicação é independente para cada importação de
+cada Jobão.
+
+A leitura da planilha e a cópia rodam em segundo plano, mantendo a interface
+disponível enquanto o aplicativo permanece aberto. O rodapé informa o Jobão em
+processamento em qualquer aba; uma segunda cópia fica bloqueada até a operação
+terminar. Ao concluir, o app registra o histórico e exibe o relatório.
+
 ## Diagnóstico local
 
 O Arizona App e a extensão CEP mantêm diagnósticos técnicos somente na máquina,

@@ -140,6 +140,17 @@ Exemplo reduzido do CEP:
 Os valores dos exemplos são ilustrativos. Consumidores devem tolerar campos
 opcionais ausentes e campos novos em versões compatíveis do contrato.
 
+### Tempo de carregamento do roteiro
+
+Nos eventos CEP `roteiro/carregar` e `roteiro/selecionar_docx` concluídos,
+`details` inclui `hostDurationMs` (espera pelas consultas ao After),
+`directoryDurationMs` (localização do documento), `documentDurationMs`
+(verificação do cache ou leitura/descompactação) e `documentCacheHit`, além
+de `durationMs` e `offerCount`. Os tempos são medidos no painel, em milissegundos;
+o tempo do host inclui a espera pela ponte CEP. Esses campos não contêm nomes,
+caminhos, texto do DOCX ou valores de produtos e usam o mesmo destino local e
+a mesma retenção dos demais eventos.
+
 ### Trilha anterior ao erro
 
 Cada processo conserva em memória até 30 ações técnicas recentes. Ao registrar

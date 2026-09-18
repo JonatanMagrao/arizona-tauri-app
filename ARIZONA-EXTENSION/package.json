@@ -1,7 +1,7 @@
 {
   "name": "com.arizona-carrefour.cep", 
   "private": true,
-  "version": "2.2.1",
+  "version": "2.3.0",
   "type": "module",
   "scripts": {
     "license:keys": "node scripts/generate-license-trusted-keys.mjs",
@@ -10,7 +10,7 @@
     "prebuild": "npm run license:keys",
     "prezxp": "npm run license:keys",
     "prezip": "npm run license:keys",
-    "test": "node --test --test-isolation=none scripts/all-take-pay-mechanic.test.mjs scripts/mechanic-source-identity.test.mjs scripts/roteiro-validation.test.mjs scripts/project-open.test.mjs scripts/project-opening-panel.test.mjs",
+    "test": "node --test --test-isolation=none scripts/all-take-pay-mechanic.test.mjs scripts/mechanic-source-identity.test.mjs scripts/roteiro-validation.test.mjs scripts/project-open.test.mjs scripts/project-opening-panel.test.mjs scripts/roteiro-document-cache.test.mjs scripts/roteiro-cache-integration.test.mjs scripts/roteiro-validation-reader.test.mjs",
     "dev": "vite",
     "watch": "tsc && vite build --watch true",
     "build": "rimraf dist/* && tsc -p \"tsconfig-build.json\" && vite build",

@@ -137,8 +137,22 @@ impl Arizona {
             not_found_normais.extend(res.not_found_files);
         }
 
+        let mut seen_groups = HashSet::new();
         for (idx, linha) in linhas_com_grupo.iter().enumerate() {
-            let partes: Vec<String> = linha.split(';').filter_map(first_code_part).collect();
+            let mut seen_codes = HashSet::new();
+            let partes: Vec<String> = linha
+                .split(';')
+                .filter_map(first_code_part)
+                .filter(|code| seen_codes.insert(code.to_lowercase()))
+                .collect();
+            // Include every requested code, even when its source file is missing.
+            let mut group_key: Vec<String> = seen_codes.into_iter().collect();
+            group_key.sort_unstable();
+            if partes.is_empty() || !seen_groups.insert(group_key) {
+                continue;
+            }
+
+            // Keep the first row's original number to preserve existing folder assignments.
             let nome_pasta = format!("produtos_{:02}", idx + 1);
             let subpasta = product_path.join(&nome_pasta);
             fs::create_dir_all(&subpasta).map_err(|err| err.to_string())?;
@@ -178,14 +192,4 @@ fn first_code_part(value: &str) -> Option<String> {
     }
 }
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn resolves_product_source_folder_from_config() {
-        assert_eq!(
-            product_folder_path(r"D:\Produtos Fonte"),
-            PathBuf::from(r"D:\Produtos Fonte")
-        );
-    }
-}
+mod tests;
