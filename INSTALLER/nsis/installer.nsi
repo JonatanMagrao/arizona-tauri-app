@@ -4,10 +4,11 @@ Unicode true
 ; Upstream SHA-256 before the narrowly scoped Arizona changes below:
 ; FE22026F68BDB3292FAB376756035496CE0A35E3D580E06EBAA6A28295916EB3
 ;
-; Arizona markers in this file deliberately do only three things:
+; Arizona customizations in this file are limited to:
 ; - make ordinary NSIS same-version installs and upgrades in-place;
 ; - fail closed on malformed registrations and desktop-app downgrades;
 ; - run the CEP transaction after its resources exist but before replacing the app.
+; - use the Arizona icon for both installer and uninstaller.
 ManifestDPIAware true
 ; Add in `dpiAwareness` `PerMonitorV2` to manifest for Windows 10 1607+ (note this should not affect lower versions since they should be able to ignore this and pick up `dpiAware` `true` set by `ManifestDPIAware true`)
 ; Currently undocumented on NSIS's website but is in the Docs folder of source tree, see
@@ -128,9 +129,10 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
   !include MultiUser.nsh
 !endif
 
-; Installer icon
+; Installer and uninstaller icons
 !if "${INSTALLERICON}" != ""
   !define MUI_ICON "${INSTALLERICON}"
+  !define MUI_UNICON "${INSTALLERICON}"
 !endif
 
 ; Installer sidebar image

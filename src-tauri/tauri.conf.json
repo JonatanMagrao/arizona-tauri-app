@@ -81,6 +81,7 @@
         "silent": true
       },
       "nsis": {
+        "installerIcon": "icons/arizona_icon.ico",
         "installMode": "perMachine",
         "compression": "lzma",
         "startMenuFolder": "Arizona",
