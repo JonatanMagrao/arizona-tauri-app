@@ -69,6 +69,11 @@ identidade estável da Arizona. Os fluxos oficiais `release:installer` e
 `release:all` sempre constroem um pacote novo antes de coletar o payload; não
 reutilizam silenciosamente um artefato antigo de `dist-cep/`.
 
+O próprio `tauri build` também verifica o payload antes de compilar. Se as versões
+do app ou do CEP não corresponderem ao pacote coletado, o build para em vez de
+gerar um NSIS com a extensão antiga. Use `npm run release:all` para reconstruir o
+CEP assinado, coletar o payload atual e gerar o instalador completo.
+
 Ao terminar a geração assinada, `postcep:zxp` remove somente a junction per-user
 que aponta para `ARIZONA-EXTENSION\dist\cep`. O alvo, instalações comuns e
 backups permanecem intactos. Isso deixa o ambiente fora do modo dev após o

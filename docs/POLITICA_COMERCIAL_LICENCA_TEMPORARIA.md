@@ -3,7 +3,7 @@
 **Uso:** reservado ao fornecedor. Contém custos, remuneração, margens e limites
 de negociação. Não encaminhar este documento integralmente ao cliente.
 
-**Última revisão:** 2026-09-05
+**Última revisão:** 2026-10-01
 
 **Status:** mensalidade-base de **R$ 1.490** escolhida pelo fornecedor. Os demais
 preços e condições são referências para propostas, não aceite da Arizona
@@ -510,7 +510,7 @@ e escolher quem mantém a solução, enquanto o fornecedor conserva uma base
 tecnológica para outros negócios. É uma proposta comercial para delimitação
 contratual, não uma cessão já realizada nem minuta jurídica final.
 
-### Cessão total e exclusividade
+### Cessão total e limites de reutilização
 
 O comprador recebe os direitos patrimoniais expressamente cedidos, que podem
 abranger modificação, distribuição, licenciamento, sublicenciamento e revenda.
@@ -530,17 +530,48 @@ ativos que entrem na operação. Render distribuído, direitos de terceiros,
 credenciais pessoais e dados de outros clientes ficam fora. Dependências de
 terceiros continuam regidas por suas próprias licenças.
 
-Não concorrência ou exclusividade de mercado são objetos adicionais: definir
-segmento, clientes, território, prazo e compensação. Não incluir automaticamente
-proibição de atender todo o varejo por tempo indeterminado. Reavaliar o preço
-se a exigência impedir outros negócios, mesmo com boa margem imediata.
+#### Serviços, concorrência e ferramentas equivalentes após a cessão
 
-Atender outras varejistas com desenvolvimento independente não fica proibido
-automaticamente pela cessão de código. Respeitar o objeto cedido, o sigilo e
-eventual restrição contratual válida. O art. 6, III, da Lei do Software trata
-da semelhança decorrente de características funcionais, normas ou limitação
-de formas alternativas de expressão; não confundir isso com autorização para
-copiar implementação exclusiva.
+**Diretriz comercial:** preservar expressamente a liberdade do fornecedor de
+prestar serviços e desenvolver soluções independentes para outras empresas,
+inclusive concorrentes do comprador. A cessão proposta transfere os direitos
+sobre os itens identificados no contrato; não inclui exclusividade de mercado
+nem obrigação geral de não concorrência. Essa liberdade deve constar do
+contrato, respeitando o objeto cedido, a confidencialidade e eventuais
+restrições contratuais válidas.
+
+| Atividade do fornecedor após a venda | Condição a registrar no contrato |
+|---|---|
+| Prestar serviços de motion, consultoria ou desenvolvimento a concorrentes | Preservar essa liberdade, sem usar informações confidenciais ou materiais exclusivos do comprador. |
+| Criar outra ferramenta com funcionalidades equivalentes | Permitir desenvolvimento independente, respeitando os direitos cedidos. Resolver o mesmo problema não autoriza copiar a implementação ou outros elementos protegidos transferidos. |
+| Reutilizar bibliotecas, módulos ou partes do projeto | Permitir apenas quando forem componentes próprios expressamente excluídos da cessão ou quando houver licença de retorno que autorize o uso pretendido. Ser um módulo genérico ou ter sido criado pelo fornecedor não basta se ele foi incluído na cessão. |
+| Copiar o código cedido, trocar a marca e oferecer o produto a outro cliente | Não incluir essa permissão na cessão-base; eventual reutilização ou exploração comercial exige licença de retorno expressa. |
+| Usar dados, marcas, templates, mídias ou segredos exclusivos do comprador | Não autorizar esse uso pela simples liberdade de atender outras empresas. Preservar a confidencialidade e os direitos sobre esses materiais em qualquer modalidade. |
+
+O art. 6, III, da [Lei do Software](https://www.planalto.gov.br/ccivil_03/leis/l9609.htm)
+trata da semelhança decorrente de características funcionais, normas ou
+limitação de formas alternativas de expressão. Isso não é autorização geral
+para reproduzir código ou outros elementos protegidos cedidos. Conhecimento
+geral e experiência podem orientar novos trabalhos, sem dispensar essas
+restrições.
+
+Orientação para a redação pelo advogado, a compatibilizar com o inventário
+dos componentes e os demais compromissos contratuais:
+
+> A cessão não inclui exclusividade de mercado nem obrigação de não
+> concorrência. O fornecedor poderá prestar serviços e desenvolver soluções
+> independentes para terceiros, inclusive concorrentes do comprador,
+> respeitando os direitos cedidos e a confidencialidade. A reutilização de
+> componentes do projeto dependerá de sua exclusão expressa do objeto cedido
+> ou de licença de retorno que autorize os usos pretendidos.
+
+As referências de **R$ 110.000 na abertura e R$ 90.000 no fechamento** não
+incluem proibição de atuar para concorrentes. Se o comprador pedir não
+concorrência ou exclusividade de mercado, negociar separadamente segmento,
+clientes, território, prazo e compensação, com análise do advogado. Reavaliar
+o preço e a viabilidade se a restrição impedir outros negócios; não assumir
+proibição de atender todo o varejo por tempo indeterminado. Esses valores
+também não incluem licença de retorno, conforme a modalidade descrita acima.
 
 ### Valoração, tributos e margem das vendas
 
@@ -666,9 +697,14 @@ de transferência. Esse é o prêmio econômico disponível para justificar abri
 mão dos direitos incluídos, além da base comparável da venda sem cessão.
 Três outros clientes com R$ 400 mensais de contribuição por 36 meses gerariam
 R$ 43.200 potenciais; é apenas um exemplo sem probabilidade, desconto ou
-receita contratada. Não tratar esse valor como custo certo ou acrescê-lo
-automaticamente ao preço. Se oportunidades plausíveis superarem o prêmio,
-preservar o núcleo, negociar licença de retorno ou elevar o preço da cessão.
+receita contratada. Para comparar com a cessão, considerar aqui oportunidades
+de exploração do código que seria transferido e que deixariam de estar
+disponíveis sem reserva ou licença de retorno. A venda não elimina
+automaticamente receitas de serviços ou de novas ferramentas desenvolvidas
+de forma independente para outras empresas. Não tratar o exemplo como custo
+certo ou acrescê-lo automaticamente ao preço. Se oportunidades plausíveis
+de exploração do código superarem o prêmio, preservar o núcleo, negociar
+licença de retorno ou elevar o preço da cessão.
 
 ### Negociação e apresentação da aquisição
 

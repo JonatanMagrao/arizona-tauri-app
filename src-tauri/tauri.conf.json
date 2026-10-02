@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "powershell -NoProfile -ExecutionPolicy Bypass -File INSTALLER/scripts/verify-release.ps1 -RequirePayload && npm run build",
     "frontendDist": "../dist"
   },
   "app": {

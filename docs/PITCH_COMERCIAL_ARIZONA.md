@@ -1,23 +1,19 @@
 # Arizona para a Arizona Crossmedia
 
-O Arizona foi desenvolvido a partir da rotina de produção da Arizona
-Crossmedia. Ele reúne a organização de trabalhos, mídias e produtos com
-recursos para editar ofertas e roteiros no After Effects, simplificando
-etapas repetitivas e ajudando a equipe a manter um fluxo de produção mais
-consistente.
+O Arizona foi desenvolvido enquanto eu executava funções de motion na Arizona
+Crossmedia, a partir das necessidades do trabalho diário. Pensado para o time
+de motion, ele reúne a organização de trabalhos, mídias e produtos com recursos
+para editar ofertas e roteiros no After Effects, simplificando etapas
+repetitivas e ajudando a equipe a manter um fluxo de produção mais consistente.
 
 A proposta é dar mais autonomia à equipe nas tarefas operacionais e liberar
 atenção para criação, revisão e qualidade da entrega. Ao incorporar
 procedimentos recorrentes ao aplicativo, o Arizona facilita a continuidade
 do trabalho e a aplicação dos padrões utilizados pela empresa.
 
-A mensalidade remunera o acesso a uma solução aplicada à operação da Arizona
-Crossmedia, com a infraestrutura prevista para seu funcionamento e as
-correções cobertas pela contratação. O escopo e as responsabilidades ficam
-definidos desde o início, permitindo planejar o uso da ferramenta com
-previsibilidade. Novas funcionalidades, adaptações e condições especiais de
-atendimento são combinadas conforme a necessidade, para que a empresa decida
-quando faz sentido ampliar o investimento.
+O Arizona é uma solução aplicada à operação da Arizona Crossmedia,
+personalizada para as necessidades das funções de motion e para o fluxo de
+produção da equipe.
 
 ## Como o Arizona complementa a Adobe
 
