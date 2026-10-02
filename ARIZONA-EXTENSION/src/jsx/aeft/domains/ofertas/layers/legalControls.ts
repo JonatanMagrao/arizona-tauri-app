@@ -19,9 +19,14 @@ import { makeLayerOptionGroup } from "../mechanics/shared";
 interface LegalTextLayerControlConfig {
   id: string;
   label: string;
+  kind?: "layer" | "checkbox" | "slider";
   layerIndex: number;
   locked?: boolean;
   slider?: boolean;
+  effect?: {
+    name: string;
+    propertyMatchName: string;
+  };
   optionGroup?: {
     id: string;
     label: string;
@@ -43,6 +48,26 @@ const LEGAL_TEXT_LAYER_CONTROLS: LegalTextLayerControlConfig[] = [
     layerIndex: 3,
     locked: true,
     slider: true,
+  },
+  {
+    id: "limitado-por-cpf",
+    label: "Limitado por CPF",
+    kind: "checkbox",
+    layerIndex: 3,
+    effect: {
+      name: "Limitado por CPF",
+      propertyMatchName: "ADBE Checkbox Control-0001",
+    },
+  },
+  {
+    id: "quantidade-por-cpf",
+    label: "Quantidade por CPF",
+    kind: "slider",
+    layerIndex: 3,
+    effect: {
+      name: "Quantidade por CPF",
+      propertyMatchName: "ADBE Slider Control-0001",
+    },
   },
   { id: "selo-leite", label: "Selo leite", layerIndex: 4 },
   { id: "selo-moderacao", label: "Selo beba com moderacao", layerIndex: 5 },
@@ -113,6 +138,29 @@ export const readLegalControls = (
   for (let index = 0; index < LEGAL_TEXT_LAYER_CONTROLS.length; index += 1) {
     const control = LEGAL_TEXT_LAYER_CONTROLS[index];
     const layer = getLayerByIndex(legalSource, control.layerIndex);
+
+    if (control.effect) {
+      const property = getLegalControlEffectProperty(layer, control);
+
+      controls.push({
+        id: control.id,
+        label: control.label,
+        kind: control.kind,
+        layerIndex: control.layerIndex,
+        enabled:
+          property !== null &&
+          (control.kind !== "checkbox" || readValueProperty(property) === "1"),
+        available: property !== null,
+        locked: false,
+        slider:
+          control.kind === "slider"
+            ? makeLegalControlValueField(control.id, property, control.label)
+            : null,
+        optionGroup: null,
+      });
+      continue;
+    }
+
     const slider = control.slider
       ? makeLegalControlSliderField(control.id, control.label, layer, errors)
       : null;
@@ -161,11 +209,19 @@ const makeLegalControlSliderField = (
     errors
   );
 
+  return makeLegalControlValueField(controlId, property);
+};
+
+const makeLegalControlValueField = (
+  controlId: string,
+  property: Property | null,
+  label: string = "Valor"
+): InternalTextField | null => {
   if (property === null) return null;
 
   return {
     id: controlId + "-slider",
-    label: "Valor",
+    label,
     value: readValueProperty(property),
     format: "text",
     enabled: true,
@@ -203,14 +259,36 @@ const getFirstEffectNumericProperty = (
   return property;
 };
 
+export const getLegalControlEffectProperty = (
+  layer: Layer | null,
+  control: LegalTextLayerControlConfig
+): Property | null => {
+  if (layer === null || !control.effect) return null;
+
+  try {
+    const effects = layer.property("ADBE Effect Parade") as PropertyGroup;
+    if (effects === null) return null;
+
+    const effect = effects.property(control.effect.name) as PropertyGroup;
+    if (effect === null) return null;
+
+    const property = effect.property(control.effect.propertyMatchName) as Property;
+    if (
+      property !== null &&
+      property.matchName === control.effect.propertyMatchName &&
+      isNumericValueProperty(property)
+    ) {
+      return property;
+    }
+  } catch (error) {
+  }
+
+  return null;
+};
+
 export const findLegalControl = (
   controlId: string
-): {
-  id: string;
-  label: string;
-  layerIndex: number;
-  locked?: boolean;
-} | null => {
+): LegalTextLayerControlConfig | null => {
   for (let index = 0; index < LEGAL_TEXT_LAYER_CONTROLS.length; index += 1) {
     const control = LEGAL_TEXT_LAYER_CONTROLS[index];
 

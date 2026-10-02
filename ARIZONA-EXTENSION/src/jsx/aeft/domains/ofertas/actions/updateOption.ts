@@ -15,6 +15,10 @@ import {
   DE_X_POR_Y_DISCOUNT_TAKE_PAY_MECHANIC_TYPE,
 } from "../mechanics/deXPorYDescontoLeveXPagueY";
 import { applyOptionGroupSelection } from "../mechanics/shared";
+import {
+  applyMeuCrfCardJump,
+  MEU_CRF_CARD_MECHANIC_TYPE,
+} from "../mechanics/meuCrfCartao";
 import { findOptionGroup, updateOfferProduct } from "./shared";
 
 export const updateOfferOption = (
@@ -64,6 +68,11 @@ export const updateOfferInstallmentJump = (
         DE_X_POR_Y_DISCOUNT_TAKE_PAY_MECHANIC_TYPE
       ) {
         applySharedMechanicJump(product, target);
+      } else if (product.mechanic.type === MEU_CRF_CARD_MECHANIC_TYPE) {
+        applyMeuCrfCardJump(product, target);
+        return target === "preco-cheio"
+          ? "Jump aplicado em Preço por."
+          : "Jump aplicado em Preço por cartão.";
       } else {
         throw new Error("Jump disponivel apenas para parcelamento.");
       }

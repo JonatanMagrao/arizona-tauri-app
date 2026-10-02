@@ -44,6 +44,22 @@ atual e os 13 anteriores. Não existe envio automático: o usuário exporta e
 compartilha o pacote somente quando desejar. Formato, saneamento, migração e
 solução de problemas: `../docs/DIAGNOSTICOS_LOCAIS.md`.
 
+## Mecânica Meu CRF e Cartão CRF
+
+O Comments da precomp `DE X POR Y MEU CRF POR Z CARTAO CRF` identifica a
+mecânica implementada em `src/jsx/aeft/domains/ofertas/mechanics/meuCrfCartao.ts`.
+O editor oferece os três textos `PRECO DE`, `PRECO POR` e `PRECO POR CARTAO`.
+O dropdown nativo chamado `Unidade` é localizado nas camadas dessa precomp,
+independentemente da posição, com as opções `Cada`, `Kg`, `A cada 100g` e
+`Kg/cada`, nessa ordem. Se estiver ausente ou houver mais de um dropdown com
+esse nome, apenas esse controle fica indisponível e a leitura registra o erro.
+
+O Jump alterna entre `Preço por` (camada 2, `PULO PREÇO MEU CRF`) e
+`Preço por cartão` (camada 3, `PULO PREÇO CARTAO CRF`). Usa o segundo marker da
+camada 1, `Marcadores`, validando os índices e os nomes. A camada escolhida tem
+seu início alinhado ao marker; a outra é deslocada para o final da precomp,
+seguindo o comportamento das mecânicas anteriores.
+
 ## Troca de projeto
 
 O botão de pasta ao lado da engrenagem permite abrir outro `.aep` ou `.aepx`

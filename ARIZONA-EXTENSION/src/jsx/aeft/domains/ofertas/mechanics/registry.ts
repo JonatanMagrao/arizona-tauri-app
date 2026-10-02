@@ -22,6 +22,7 @@ import {
 import { readCrfCardValueDiscountMechanic } from "./descontoValor";
 import { readDeXPorYInstallmentMechanic } from "./deXPorYParcelamento";
 import { readDeXPorYDiscountTakePayMechanic } from "./deXPorYDescontoLeveXPagueY";
+import { readMeuCrfCardMechanic } from "./meuCrfCartao";
 import { readCardInstallmentMechanic } from "./parcelamento";
 import {
   readAllTakeXPayYMechanic,
@@ -74,6 +75,10 @@ const MECHANICS: MechanicReaderMap[] = [
   {
     pattern: mechanicNamePattern("DE X POR Y PARCELAMENTO"),
     reader: readDeXPorYInstallmentMechanic,
+  },
+  {
+    pattern: mechanicNamePattern("DE X POR Y MEU CRF POR Z CARTAO CRF"),
+    reader: readMeuCrfCardMechanic,
   },
   {
     pattern: mechanicNamePattern(

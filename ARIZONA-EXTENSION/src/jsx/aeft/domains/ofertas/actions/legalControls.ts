@@ -7,6 +7,7 @@ import {
 import {
   findInternalLegalControl,
   findLegalControl,
+  getLegalControlEffectProperty,
   getLegalTextSource,
 } from "../layers/legalControls";
 import { setFieldValue, setLegalText } from "../layers/textFields";
@@ -68,6 +69,10 @@ export const updateOfferLegalControl = (
       throw new Error("Controle de texto legal nao encontrado.");
     }
 
+    if (control.kind === "slider") {
+      throw new Error(control.label + " deve ser atualizado pelo valor.");
+    }
+
     if (control.locked && !enabled) {
       throw new Error(control.label + " sempre fica visivel.");
     }
@@ -82,7 +87,15 @@ export const updateOfferLegalControl = (
       );
     }
 
-    layer.enabled = enabled;
+    if (control.kind === "checkbox") {
+      const property = getLegalControlEffectProperty(layer, control);
+      if (property === null) {
+        throw new Error("Checkbox de " + control.label + " nao encontrado.");
+      }
+      property.setValue(enabled ? 1 : 0);
+    } else {
+      layer.enabled = enabled;
+    }
     result.ok = true;
     result.selectedOfferLayerIndex = offer.index;
     result.message = control.label + (enabled ? " ativado." : " desativado.");

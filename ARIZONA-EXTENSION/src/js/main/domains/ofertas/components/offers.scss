@@ -368,6 +368,7 @@
   font-weight: 800;
   line-height: 1;
   text-transform: uppercase;
+  margin-top: 12px;
 }
 
 .offer-description-sync input {
@@ -1118,6 +1119,11 @@
   -webkit-appearance: none;
 }
 
+.offer-legal-toggle.is-cpf-limit > .offer-legal-slider-input {
+  height: 24px;
+  margin: 0;
+}
+
 .offer-legal-select {
   width: 142px;
   height: 28px;
@@ -1142,7 +1148,7 @@
 
 .offer-legal-settings-dialog {
   width: min(342px, 100%);
-  max-height: min(520px, calc(100vh - 32px));
+  max-height: calc(100vh - 24px);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 10px;
@@ -1198,7 +1204,8 @@
   min-height: 0;
   display: grid;
   gap: 10px;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .offer-legal-preview {

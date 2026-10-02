@@ -42,6 +42,7 @@ export interface OfferDetails {
 export interface OfferLegalControl {
   id: string;
   label: string;
+  kind?: "layer" | "checkbox" | "slider";
   layerIndex: number;
   enabled: boolean;
   available: boolean;

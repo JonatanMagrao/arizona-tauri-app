@@ -707,9 +707,13 @@ const OfferInstallmentJumpControl = ({
 }) => {
   const installmentJump = product.mechanic.installmentJump;
   if (!installmentJump) return null;
-  const alternateTargetLabel =
-    product.mechanic.type.toLowerCase() ===
-    "de x por y | x% desconto | leve x pague y"
+  const mechanicType = product.mechanic.type.toLowerCase();
+  const isMeuCrfCardMechanic =
+    mechanicType === "de x por y meu crf por z cartao crf";
+  const primaryTargetLabel = isMeuCrfCardMechanic ? "Preço por" : "Preco Cheio";
+  const alternateTargetLabel = isMeuCrfCardMechanic
+    ? "Preço por cartão"
+    : mechanicType === "de x por y | x% desconto | leve x pague y"
       ? "Preco"
       : "Preco Parcela";
 
@@ -725,7 +729,7 @@ const OfferInstallmentJumpControl = ({
           onChange(event.target.value as OfferInstallmentJumpTarget)
         }
       >
-        <option value="preco-cheio">Preco Cheio</option>
+        <option value="preco-cheio">{primaryTargetLabel}</option>
         <option value="preco-parcela">{alternateTargetLabel}</option>
       </select>
     </label>
@@ -1356,18 +1360,21 @@ const OfferLegalTextPreview = ({
 
 const OfferLegalControlToggle = ({
   control,
+  valueControl = control,
   offerLayerIndex,
   onControlChange,
   onControlOptionChange,
   onControlValueChange,
 }: {
   control: OfferLegalControl;
+  valueControl?: OfferLegalControl;
   offerLayerIndex: number;
   onControlChange: OfferLegalSettingsProps["onControlChange"];
   onControlOptionChange: OfferLegalSettingsProps["onControlOptionChange"];
   onControlValueChange: OfferLegalSettingsProps["onControlValueChange"];
 }) => {
   const [checked, setChecked] = useState(control.enabled);
+  const isEffectSlider = control.kind === "slider";
 
   useEffect(() => {
     setChecked(control.enabled);
@@ -1377,19 +1384,21 @@ const OfferLegalControlToggle = ({
     <div
       className={[
         "offer-legal-toggle",
-        control.available ? "" : "is-disabled",
-        control.locked ? "is-locked" : "",
+        control.id === "limitado-por-cpf" ? "is-cpf-limit" : "",
+        control.available || valueControl.available ? "" : "is-disabled",
+        control.locked || isEffectSlider ? "is-locked" : "",
       ]
         .filter(Boolean)
         .join(" ")}
       title={"Layer " + control.layerIndex}
     >
       <div className="offer-legal-toggle-main">
-        {control.locked ? (
+        {isEffectSlider ? null : control.locked ? (
           <span className="offer-legal-fixed-indicator">Fixo</span>
         ) : (
           <input
             type="checkbox"
+            aria-label={control.label}
             checked={checked}
             disabled={!control.available}
             onChange={(event) => {
@@ -1403,10 +1412,10 @@ const OfferLegalControlToggle = ({
         <span>{control.label}</span>
       </div>
 
-      {control.slider ? (
+      {valueControl.slider ? (
         <OfferLegalSliderInput
-          controlId={control.id}
-          field={control.slider}
+          controlId={valueControl.id}
+          field={valueControl.slider}
           offerLayerIndex={offerLayerIndex}
           onCommit={onControlValueChange}
         />
@@ -1496,6 +1505,7 @@ const OfferLegalSliderInput = ({
     <input
       className="offer-legal-slider-input"
       type="number"
+      aria-label={field.label}
       step="1"
       value={value}
       disabled={!field.enabled}
@@ -1531,6 +1541,14 @@ const OfferLegalSettingsDialog = ({
   onControlValueChange,
 }: OfferLegalSettingsProps) => {
   const titleId = "offer-legal-settings-title-" + offerLayerIndex;
+  const cpfQuantityControl = controls.some(
+    (control) => control.id === "limitado-por-cpf"
+  )
+    ? controls.find((control) => control.id === "quantidade-por-cpf")
+    : undefined;
+  const visibleControls = cpfQuantityControl
+    ? controls.filter((control) => control.id !== "quantidade-por-cpf")
+    : controls;
 
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -1577,9 +1595,12 @@ const OfferLegalSettingsDialog = ({
             <span className="offers-legal-controls-title">
               Camadas do texto legal
             </span>
-            {controls.map((control) => (
+            {visibleControls.map((control) => (
               <OfferLegalControlToggle
                 control={control}
+                valueControl={
+                  control.id === "limitado-por-cpf" ? cpfQuantityControl : undefined
+                }
                 offerLayerIndex={offerLayerIndex}
                 key={control.id}
                 onControlChange={onControlChange}

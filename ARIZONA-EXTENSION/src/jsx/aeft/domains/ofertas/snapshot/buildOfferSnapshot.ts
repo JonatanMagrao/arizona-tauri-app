@@ -271,6 +271,7 @@ export const toPublicOfferDetails = (
     legalControls.push({
       id: control.id,
       label: control.label,
+      kind: control.kind,
       layerIndex: control.layerIndex,
       enabled: control.enabled,
       available: control.available,
