@@ -10,5 +10,9 @@ export const useHostTheme = () => {
     }
   }, []);
 
+  useEffect(() => {
+    document.documentElement.style.setProperty("--host-background-color", bgColor);
+  }, [bgColor]);
+
   return bgColor;
 };

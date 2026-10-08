@@ -254,7 +254,7 @@ const ProjectPanel = ({
       aria-busy={isOpeningProject}
     >
       <div className="panel-topbar">
-        <div className="panel-tabs" role="tablist" aria-label="Visualizacao">
+        <div className="panel-tabs" role="tablist" aria-label="Visualização">
           <button
             type="button"
             role="tab"

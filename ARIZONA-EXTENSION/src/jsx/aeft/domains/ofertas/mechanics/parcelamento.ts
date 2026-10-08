@@ -71,13 +71,13 @@ export function readCardInstallmentMechanic(
       ),
     ],
     optionGroups: [
-      makeControllerOptionGroup("cardKind", "Opcao", controllerProperty, [
-        { label: "Cartao Carrefour" },
+      makeControllerOptionGroup("cardKind", "Opção", controllerProperty, [
+        { label: "Cartão Carrefour" },
         { label: "Plano Controle" },
-        { label: "Cartao/Plano" },
-        { label: "De/Por Cartao" },
+        { label: "Cartão/Plano" },
+        { label: "De/Por Cartão" },
         { label: "De/Por Plano" },
-        { label: "De/Por Cartao/Plano" },
+        { label: "De/Por Cartão/Plano" },
       ]),
     ],
     installmentJump: readInstallmentJump(

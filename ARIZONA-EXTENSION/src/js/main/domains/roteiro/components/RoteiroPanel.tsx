@@ -154,9 +154,9 @@ export const RoteiroPanel = ({
             className="roteiro-panel__audio"
             onClick={() => void updateAudio()}
             disabled={busy}
-            title="Atualizar audio"
+            title="Atualizar áudio"
           >
-            {audioUpdating ? "..." : "Audio"}
+            {audioUpdating ? "..." : "Áudio"}
           </button>
           <button
             type="button"
@@ -231,7 +231,10 @@ export const RoteiroPanel = ({
                     </span>
                     {info?.mechanicType && (
                       <span className="roteiro-offer__rule">
-                        {info.mechanicType}
+                        {info.mechanicType
+                          .replace(/\bCartao\b/g, "Cartão")
+                          .replace(/^Mecanica nao mapeada:/, "Mecânica não mapeada:")
+                          .replace(/^Porcentagem Desconto$/, "Porcentagem de desconto")}
                       </span>
                     )}
                   </div>

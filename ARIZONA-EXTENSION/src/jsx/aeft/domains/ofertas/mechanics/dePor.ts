@@ -134,11 +134,11 @@ export function readCrfCardDePorMechanic(
     ],
     optionGroups: [
       makeControllerOptionGroup("subtype", "Subtipo", subtypeProperty, [
-        { label: "Cartao Carrefour De Por" },
-        { label: "NAO EXISTE MAIS, NAO USAR" },
-        { label: "Cartao Carrefour Levando X Unidades" },
-        { label: "Cartao Carrefour Com o Desconto" },
-        { label: "Cartao Carrefour A partir de X Unidades" },
+        { label: "Cartão Carrefour De Por" },
+        { label: "NÃO EXISTE MAIS, NÃO USAR" },
+        { label: "Cartão Carrefour Levando X Unidades" },
+        { label: "Cartão Carrefour Com o Desconto" },
+        { label: "Cartão Carrefour A partir de X Unidades" },
       ]),
       makeControllerOptionGroup("unit", "Unidade", unitProperty, [
         { label: "Cada" },
@@ -229,7 +229,7 @@ export function readCrfDualMechanic(
     optionGroups: [
       makeControllerOptionGroup("subtype", "Subtipo", subtypeProperty, [
         { label: "De Por" },
-        { label: "NAO EXISTE MAIS, NAO USAR!" },
+        { label: "NÃO EXISTE MAIS, NÃO USAR!" },
         { label: "Levando X Unidades" },
         { label: "Com o Desconto" },
         { label: "A partir de X Unidades" },

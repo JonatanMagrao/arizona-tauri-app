@@ -70,7 +70,7 @@ const LEGAL_TEXT_LAYER_CONTROLS: LegalTextLayerControlConfig[] = [
     },
   },
   { id: "selo-leite", label: "Selo leite", layerIndex: 4 },
-  { id: "selo-moderacao", label: "Selo beba com moderacao", layerIndex: 5 },
+  { id: "selo-moderacao", label: "Selo beba com moderação", layerIndex: 5 },
   {
     id: "tarja-eletro-pneu",
     label: "Eletro/Pneu",

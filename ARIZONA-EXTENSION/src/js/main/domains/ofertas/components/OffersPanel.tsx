@@ -371,7 +371,7 @@ const isUndoKey = (event: KeyboardEvent<HTMLElement>) => {
 };
 
 const getImageTitle = (image: OfferImageInfo | null) => {
-  if (image === null) return "Imagem nao encontrada.";
+  if (image === null) return "Imagem não encontrada.";
 
   const details = [
     image.layerName,
@@ -464,7 +464,14 @@ const isInstallmentsField = (field: OfferTextField) =>
   field.id === "numero-de-parcelas";
 
 const getFieldDisplayLabel = (field: OfferTextField) =>
-  isQuantityXField(field) ? "Quantidade" : field.label;
+  isQuantityXField(field) ? "Quantidade" : field.label.replace(/\bPreco\b/g, "Preço");
+
+// Corrige a apresentação sem alterar os nomes usados nas regras das mecânicas.
+const getMechanicDisplayLabel = (type: string) =>
+  type
+    .replace(/\bCartao\b/g, "Cartão")
+    .replace(/^Mecanica nao mapeada:/, "Mecânica não mapeada:")
+    .replace(/^Porcentagem Desconto$/, "Porcentagem de desconto");
 
 const isValueField = (field: OfferTextField) =>
   field.format === "price" ||
@@ -710,12 +717,12 @@ const OfferInstallmentJumpControl = ({
   const mechanicType = product.mechanic.type.toLowerCase();
   const isMeuCrfCardMechanic =
     mechanicType === "de x por y meu crf por z cartao crf";
-  const primaryTargetLabel = isMeuCrfCardMechanic ? "Preço por" : "Preco Cheio";
+  const primaryTargetLabel = isMeuCrfCardMechanic ? "Preço por" : "Preço cheio";
   const alternateTargetLabel = isMeuCrfCardMechanic
     ? "Preço por cartão"
     : mechanicType === "de x por y | x% desconto | leve x pague y"
-      ? "Preco"
-      : "Preco Parcela";
+      ? "Preço"
+      : "Preço da parcela";
 
   return (
     <label
@@ -960,9 +967,9 @@ const ProductEditor = ({
         ) : (
           <span
             className="offer-product-mechanic"
-            title={product.mechanic.type}
+            title={getMechanicDisplayLabel(product.mechanic.type)}
           >
-            {product.mechanic.type}
+            {getMechanicDisplayLabel(product.mechanic.type)}
           </span>
         )}
       </header>
@@ -1056,7 +1063,7 @@ const ProductEditor = ({
                 )
               }
             />
-            <span>Expressão Descritivo</span>
+            <span>Expressão do descritivo</span>
           </label>
         </div>
       </div>
@@ -1338,7 +1345,7 @@ const ProductEditor = ({
           )}
 
           {product.unsupported ? (
-            <p className="offer-warning">{product.mechanic.type}</p>
+            <p className="offer-warning">{getMechanicDisplayLabel(product.mechanic.type)}</p>
           ) : null}
         </div>
       ) : null}
@@ -1578,7 +1585,7 @@ const OfferLegalSettingsDialog = ({
         aria-labelledby={titleId}
       >
         <header className="offer-legal-settings-header">
-          <h3 id={titleId}>Configuracao da Oferta</h3>
+          <h3 id={titleId}>Configuração da oferta</h3>
           <button type="button" onClick={onClose}>
             Fechar
           </button>
@@ -1588,7 +1595,7 @@ const OfferLegalSettingsDialog = ({
           {legalText ? (
             <OfferLegalTextPreview legalText={legalText} />
           ) : (
-            <p className="offer-legal-empty">Texto legal nao encontrado.</p>
+            <p className="offer-legal-empty">Texto legal não encontrado.</p>
           )}
 
           <div className="offers-legal-controls" aria-label="Camadas">
@@ -2075,8 +2082,8 @@ export const OffersPanel = ({
                 <button
                   type="button"
                   className="offers-legal-menu-button"
-                  aria-label="Opcoes do texto legal"
-                  title="Opcoes do texto legal"
+                  aria-label="Opções do texto legal"
+                  title="Opções do texto legal"
                   onClick={() => setIsLegalSettingsOpen(true)}
                   onMouseDown={clearDocumentSelection}
                 >

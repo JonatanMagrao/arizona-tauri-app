@@ -153,7 +153,7 @@ const normalizeLayerOptions = (
 
     if (!option.label) {
       const layer = getLayerByOption(source, option);
-      option.label = layer !== null ? layer.name : "Opcao " + (index + 1);
+      option.label = layer !== null ? layer.name : "Opção " + (index + 1);
     }
 
     options.push(option);

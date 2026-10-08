@@ -116,9 +116,9 @@ export function readCrfPercentDiscountMechanic(
       ),
     ],
     optionGroups: [
-      makeLayerOptionGroup("discountKind", "Opcao", source, [
+      makeLayerOptionGroup("discountKind", "Opção", source, [
         { label: "% desc.", layerIndex: 4 },
-        { label: "% bonus", layerIndex: 5 },
+        { label: "% bônus", layerIndex: 5 },
       ]),
     ],
   };
@@ -147,9 +147,9 @@ export function readCrfSecondUnitDiscountMechanic(
       ),
     ],
     optionGroups: [
-      makeLayerOptionGroup("discountKind", "Opcao", source, [
+      makeLayerOptionGroup("discountKind", "Opção", source, [
         { label: "% desc.", layerIndex: 4 },
-        { label: "% bonus", layerIndex: 6 },
+        { label: "% bônus", layerIndex: 6 },
       ]),
     ],
   };
@@ -178,9 +178,9 @@ export function readCrfCardDiscountMechanic(
       ),
     ],
     optionGroups: [
-      makeLayerOptionGroup("discountKind", "Opcao", source, [
+      makeLayerOptionGroup("discountKind", "Opção", source, [
         { label: "% Desc", layerIndex: 4 },
-        { label: "% Bonus", layerIndex: 5 },
+        { label: "% Bônus", layerIndex: 5 },
       ]),
     ],
   };
@@ -227,9 +227,9 @@ export function readPercentDiscountMechanic(
       ),
     ],
     optionGroups: [
-      makeLayerOptionGroup("discountKind", "Opcao", source, [
+      makeLayerOptionGroup("discountKind", "Opção", source, [
         { label: "direto no caixa", layerIndex: 5 },
-        { label: "na 2a unidade", layerIndex: 6 },
+        { label: "na 2ª unidade", layerIndex: 6 },
       ]),
     ],
   };
