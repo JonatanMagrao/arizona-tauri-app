@@ -28,6 +28,7 @@ export interface InternalTextField extends OfferTextField {
 export interface InternalOptionGroup extends OfferOptionGroup {
   source?: CompItem | null;
   controllerProperty?: Property | null;
+  controllerOptionValues?: number[];
   layerOptions?: LayerOption[];
 }
 
@@ -42,6 +43,7 @@ export interface InternalOfferMechanic extends OfferMechanic {
 }
 
 export interface InternalOfferProduct extends OfferProduct {
+  associationValid?: boolean;
   descriptionLayer: Layer | null;
   descriptionProperty: Property | null;
   mechanic: InternalOfferMechanic;
@@ -104,6 +106,7 @@ export interface OfferLegalControl {
 }
 
 export interface OfferProduct {
+  // Numbered offer slot minus one; inactive slots do not renumber active products.
   index: number;
   description: OfferTextField;
   mechanic: OfferMechanic;

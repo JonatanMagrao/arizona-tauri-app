@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
+import { isAllTakePayMechanicType } from "../src/shared/allTakePayMechanic.js";
 
 const [segmentsSource, discoverySource] = await Promise.all([
   readFile(
@@ -18,10 +19,21 @@ const transpile = (source, module) =>
   ts.transpileModule(source, {
     compilerOptions: { module, target: ts.ScriptTarget.ES2020 },
   }).outputText;
-const { buildLineSegments } = await import(
-  "data:text/javascript;base64," +
-    Buffer.from(transpile(segmentsSource, ts.ModuleKind.ESNext)).toString("base64")
-);
+const sharedMocks = {
+  "../../../../../shared/allTakePayMechanic": { isAllTakePayMechanicType },
+};
+const segmentsModule = { exports: {} };
+vm.runInNewContext(transpile(segmentsSource, ts.ModuleKind.CommonJS), {
+  module: segmentsModule,
+  exports: segmentsModule.exports,
+  require: (specifier) => {
+    assert.ok(Object.hasOwn(sharedMocks, specifier), `Unexpected import: ${specifier}`);
+    return sharedMocks[specifier];
+  },
+});
+const buildLineSegments = (line, info) => JSON.parse(JSON.stringify(
+  segmentsModule.exports.buildLineSegments(line, info)
+));
 const discoveryJavaScript = transpile(discoverySource, ts.ModuleKind.CommonJS);
 
 const COMBINED_TYPE = "De X Por Y | X% Desconto | Leve X Pague Y";
@@ -42,6 +54,10 @@ function validationSnapshot(mechanicType, fields) {
   const comp = { name: "Miolo" };
   const module = { exports: {} };
   const mocks = {
+    ...sharedMocks,
+    "../mechanics/schemaRuntime": {
+      withMechanicsSchema: (callback) => callback(),
+    },
     "../layers/findLayers": {
       getOffersComp: () => comp,
       getOfferLayers: (actualComp) => {
@@ -170,14 +186,146 @@ test("integer quantities and product sizes remain uncolored", () => {
   assert.deepEqual(validatedSegments("OVOS COM 20 UNIDADES - 1 / PACOTE 99 G", info), []);
 });
 
-test("legacy De Por still selects Por and validates grouped decimal prices", () => {
-  const info = validationSnapshot("De Por", [
-    field("preco-de", "De", "1.299,90"),
-    field("preco-por", "Por", "999,90"),
-    field("quantidade-x", "Quantidade X", "1", "integer"),
-  ]);
+test("the current combined mechanic validates grouped decimal prices against Por", () => {
+  const info = validationSnapshot(COMBINED_TYPE, combinedFields("1.299,90", "999,90"));
   assert.equal(info.priceValue, "999,90");
   assert.deepEqual(info.priceField, { fieldId: "preco-por", fieldIndex: 1, value: "999,90" });
   assert.equal(validatedSegments("PRODUTO 999,90", info)[0].match, "correct");
   assert.equal(validatedSegments("PRODUTO 1.299,90", info)[0].match, "wrong");
+});
+
+const installmentFields = (de, price, installment) => [
+  field("preco-de", "De", de),
+  field("preco-cheio", "Preco", price),
+  field("preco-parcela", "Parcela", installment),
+  field("numero-parcelas", "Parcelas", "10", "integer"),
+];
+
+test("current installment discovery uses Parcela, accepts full price and excludes De from generic matches", () => {
+  const info = validationSnapshot("De X Por Y Parcelamento", installmentFields("1.299,90", "999,90", "99,99"));
+  assert.equal(info.priceValue, "99,99");
+  assert.equal(info.porValue, "999,90");
+  assert.equal(info.deValue, "1.299,90");
+  assert.deepEqual(info.priceAcceptedValues, ["999,90", "99,99"]);
+  assert.deepEqual(info.priceField, { fieldId: "preco-parcela", fieldIndex: 2, value: "99,99" });
+  assert.deepEqual(info.porField, { fieldId: "preco-cheio", fieldIndex: 1, value: "999,90" });
+  assert.deepEqual(info.deField, { fieldId: "preco-de", fieldIndex: 0, value: "1.299,90" });
+
+  const segments = validatedSegments("PRODUTO DE 1.299,90 POR 999,90 EM 10 VEZES DE 99,99", info);
+  assert.deepEqual(segments.map(({ match, fieldKey }) => ({ match, fieldKey })), [
+    { match: "correct", fieldKey: "de" },
+    { match: "correct", fieldKey: "por" },
+    { match: "correct", fieldKey: "price" },
+  ]);
+  const ambiguous = validatedSegments("PRODUTO 1.299,90 OU 99,99", info);
+  assert.equal(ambiguous[0].match, "wrong");
+  assert.equal(ambiguous[0].action, "open");
+  assert.equal(ambiguous[1].match, "correct");
+  for (const price of ["999,90", "99,99"]) {
+    const [segment] = validatedSegments(`PRODUTO ${price}`, info);
+    assert.equal(segment.match, "correct");
+  }
+  const [unknownPrice] = validatedSegments("PRODUTO 899,90", info);
+  assert.equal(unknownPrice.match, "wrong");
+  assert.equal(unknownPrice.action, "open");
+  assert.equal(unknownPrice.fieldKey, undefined);
+});
+
+test("current installment corrections retain the exact De, full price and installment field targets", () => {
+  const info = validationSnapshot("De X Por Y Parcelamento", installmentFields("1.299,90", "999,90", "99,99"));
+  const segments = validatedSegments("PRODUTO DE 1.399,90 POR 899,90 EM 10 VEZES DE 89,99", info);
+  assert.deepEqual(segments.map(({ match, fieldKey, action, value }) => ({ match, fieldKey, action, value })), [
+    { match: "wrong", fieldKey: "de", action: "fix", value: "1.399,90" },
+    { match: "wrong", fieldKey: "por", action: "fix", value: "899,90" },
+    { match: "wrong", fieldKey: "price", action: "fix", value: "89,99" },
+  ]);
+  for (const expression of ["10X DE", "10 X DE", "10x", "10 VEZES DE"]) {
+    const [segment] = validatedSegments(`PRODUTO EM ${expression} 89,99`, info);
+    assert.equal(segment.fieldKey, "price");
+    assert.equal(segment.action, "fix");
+  }
+});
+
+test("current installment uses full price when Parcela is unavailable, never De", () => {
+  for (const fields of [
+    installmentFields("1.299,90", "999,90", ""),
+    installmentFields("1.299,90", "999,90", "").filter(({ label }) => label !== "Parcela"),
+  ]) {
+    const info = validationSnapshot("De X Por Y Parcelamento", fields);
+    assert.equal(info.priceValue, "999,90");
+    if (info.priceField) {
+      assert.deepEqual(info.priceField, { fieldId: "preco-parcela", fieldIndex: 2, value: "" });
+    }
+    assert.deepEqual(info.priceAcceptedValues, ["999,90"]);
+    assert.equal(validatedSegments("PRODUTO 999,90", info)[0].match, "correct");
+    assert.equal(validatedSegments("PRODUTO 1.299,90", info)[0].match, "wrong");
+    const [installment] = validatedSegments("PRODUTO EM 10X DE 999,90", info);
+    assert.equal(installment.match, "wrong");
+    assert.equal(installment.fieldKey, "price");
+    assert.equal(installment.action, info.priceField ? "fix" : "open");
+  }
+  const missingPrices = validationSnapshot("De X Por Y Parcelamento", installmentFields("1.299,90", "", ""));
+  assert.equal(missingPrices.priceValue, "");
+  assert.deepEqual(missingPrices.priceAcceptedValues, []);
+  assert.deepEqual(validatedSegments("PRODUTO 1.299,90", missingPrices), []);
+});
+
+test("current all-take-pay family and its alias validate both quantities and retain correction identities", () => {
+  for (const type of ["Todos A Com Leve X Pague Y", "Todos A Leve X Pague Y"]) {
+    const info = validationSnapshot(type, [
+      field("leve", "Leve X", "3", "integer"),
+      field("pague", "Pague Y", "2", "integer"),
+    ]);
+    assert.equal(info.priceValue, "");
+    assert.equal(info.leveValue, "3");
+    assert.equal(info.pagueValue, "2");
+    assert.deepEqual(info.leveField, { fieldId: "leve", fieldIndex: 0, value: "3" });
+    assert.deepEqual(info.pagueField, { fieldId: "pague", fieldIndex: 1, value: "2" });
+    assert.deepEqual(validatedSegments("TODOS OS PRODUTOS LEVE 3 E PAGUE 2", info).map(({ match, fieldKey }) => ({ match, fieldKey })), [
+      { match: "correct", fieldKey: "leve" },
+      { match: "correct", fieldKey: "pague" },
+    ]);
+    assert.deepEqual(validatedSegments("LEVE X 4 PAGUE Y 3", info).map(({ match, fieldKey, action, value }) => ({ match, fieldKey, action, value })), [
+      { match: "wrong", fieldKey: "leve", action: "open", value: "4" },
+      { match: "wrong", fieldKey: "pague", action: "open", value: "3" },
+    ]);
+    assert.deepEqual(validatedSegments("PACOTE COM 3 UNIDADES 2,99", info), []);
+  }
+});
+
+test("all-take-pay missing quantities keep the script readable without a correction target", () => {
+  const info = validationSnapshot("Todos A Com Leve X Pague Y", [field("leve", "Leve X", "3", "integer")]);
+  assert.deepEqual(buildLineSegments("LEVE 3 PAGUE 2", info), [{ text: "LEVE 3 PAGUE 2" }]);
+});
+
+test("removed families and unsupported mechanics do not highlight or offer stale corrections", () => {
+  for (const mechanicType of [
+    "De Por", "De Por Cartao CRF", "De Por Meu CRF (Dual)",
+    "De Por Parcelamento Cartao Carrefour", "Leve X Pague Y",
+    "Desconto X%", "Porcentagem Desconto", "Desconto X% Meu CRF",
+    "Desconto X% Cartao CRF", "Desconto X% Cartao CRF Segunda Unidade",
+    "De A Unidade Sai Por", "Mecanica nao mapeada: DE POR 1",
+  ]) {
+    const info = {
+      ...validationSnapshot(mechanicType, simpleFields("1,99")),
+      leveValue: "3", pagueValue: "2",
+    };
+    const line = "PRODUTO 2,99 COM 20% DE DESCONTO LEVE 4 PAGUE 3";
+    assert.deepEqual(buildLineSegments(line, info), [{ text: line }]);
+  }
+});
+
+test("Meu CRF/card and currency discount retain their readable generic discovery without new highlighting", () => {
+  for (const [type, fields] of [
+    ["De X Por Y Meu CRF Por Z Cartao CRF", [
+      field("preco-de", "De", "4,99"),
+      field("preco-por", "Por", "3,99"),
+      field("preco-por-cartao", "Por cartão", "2,99"),
+    ]],
+    ["Desconto R$ Cartao CRF", [field("desconto", "Desconto", "4,99")]],
+  ]) {
+    const info = validationSnapshot(type, fields);
+    assert.equal(info.priceValue, "4,99");
+    assert.deepEqual(buildLineSegments("PRODUTO 4,99 NO CARTÃO", info), [{ text: "PRODUTO 4,99 NO CARTÃO" }]);
+  }
 });

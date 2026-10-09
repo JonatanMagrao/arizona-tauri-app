@@ -1,0 +1,602 @@
+import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+import vm from "node:vm";
+import ts from "typescript";
+
+const domainDirectory = fileURLToPath(new URL("../src/jsx/aeft/domains/ofertas/", import.meta.url));
+const plain = (value) => JSON.parse(JSON.stringify(value));
+const schemaFilePath = "C:/extension/js/assets/schema.json";
+const schemaBinary = readFileSync(new URL("../src/js/assets/schema.json", import.meta.url)).toString("latin1");
+
+// Mock only native AE objects. Production discovery, association, readers,
+// public actions and serialization run together in these regression tests.
+class Property {
+  constructor(name, value, matchName = name) {
+    this.name = name;
+    this.matchName = matchName;
+    this.currentValue = value;
+    this.propertyValueType = typeof value === "number" ? 1 : 2;
+    this.isDropdownEffect = matchName === "ADBE Dropdown Control-0001";
+    this.writes = [];
+    this.expressionWrites = [];
+    this.canSetExpression = true;
+    this.expression = "";
+    this.currentExpressionEnabled = false;
+    this.valueAtTimeCalls = [];
+  }
+  get value() {
+    return plain(this.currentExpressionEnabled && this.expressionValue !== undefined
+      ? this.expressionValue : this.currentValue);
+  }
+  valueAtTime(time, preExpression = false) {
+    this.valueAtTimeCalls.push([time, preExpression]);
+    return preExpression ? plain(this.currentValue) : this.value;
+  }
+  setValue(value) {
+    if (this.writeFailure) throw new Error("Native property write failed");
+    this.currentValue = plain(value);
+    this.writes.push(plain(value));
+  }
+  get expressionEnabled() { return this.currentExpressionEnabled; }
+  set expressionEnabled(value) {
+    this.currentExpressionEnabled = value;
+    this.expressionWrites.push(value);
+  }
+}
+
+class PropertyGroup {
+  constructor(name, properties = []) { this.name = this.matchName = name; this.properties = properties; }
+  get numProperties() { return this.properties.length; }
+  property(indexOrName) {
+    return typeof indexOrName === "number"
+      ? this.properties[indexOrName - 1] || null
+      : this.properties.find((item) => item.name === indexOrName || item.matchName === indexOrName) || null;
+  }
+}
+
+class MarkerProperty {
+  constructor(times = []) { this.times = times; }
+  get numKeys() { return this.times.length; }
+  keyTime(index) { assert.ok(index >= 1 && index <= this.numKeys); return this.times[index - 1]; }
+}
+
+class AVLayer extends PropertyGroup {
+  constructor(name, properties = [], source = null) {
+    super(name, properties);
+    this.source = source;
+    this.comment = "";
+    this.enabled = true;
+    this.locked = false;
+    this.selected = false;
+    this.label = 1;
+    this.startTime = 0;
+    this.inPointOffset = 0;
+    this.marker = new MarkerProperty();
+    this.scale = new Property("Scale", [100, 100]);
+    this.sourceWrites = [];
+  }
+  get index() { return this.containingComp?.layers.indexOf(this) + 1 || 0; }
+  get inPoint() { return this.startTime + this.inPointOffset; }
+  set inPoint(value) { this.inPointOffset = value - this.startTime; }
+  replaceSource(source, fixExpressions) {
+    if (this.replaceFailure) {
+      if (typeof this.replaceFailure === "number") this.replaceFailure -= 1;
+      throw new Error("Native source replacement failed");
+    }
+    this.source = source;
+    this.sourceWrites.push({ source, fixExpressions });
+  }
+}
+
+class TextLayer extends AVLayer {
+  constructor(name, value) {
+    const sourceText = new Property("ADBE Text Document", { text: value });
+    super(name, [new PropertyGroup("ADBE Text Properties", [sourceText])]);
+    this.text = { sourceText };
+  }
+}
+
+class CompItem {
+  constructor(layers, name = "Nome livre", comment = "") {
+    this.layers = layers;
+    this.name = name;
+    this.comment = comment;
+    this.duration = 12;
+    this.frameDuration = 1 / 30;
+    this.time = 0;
+    layers.forEach((layer) => { layer.containingComp = this; });
+  }
+  get numLayers() { return this.layers.length; }
+  get selectedLayers() { return this.layers.filter((layer) => layer.selected); }
+  layer(indexOrName) {
+    const found = typeof indexOrName === "number"
+      ? this.layers[indexOrName - 1] || null
+      : this.layers.find((layer) => layer.name === indexOrName) || null;
+    if (found) found.containingComp = this;
+    return found;
+  }
+}
+
+class File {
+  constructor(filePath) { this.fsName = filePath; this.exists = true; this.encoding = ""; this.error = ""; }
+  get length() { return schemaBinary.length; }
+  open(mode) { return this.exists && mode === "r"; }
+  seek(offset) { return offset === 0; }
+  read() { assert.equal(this.fsName, schemaFilePath); assert.equal(this.encoding, "BINARY"); return schemaBinary; }
+  close() { return true; }
+}
+class FileSource { constructor(filePath) { this.file = new File(filePath); } }
+class FootageItem {
+  constructor(name) {
+    this.name = name;
+    this.mainSource = new FileSource("C:/produtos/" + name + ".png");
+    this.replacements = [];
+  }
+  replace(file) { this.mainSource = new FileSource(file.fsName); this.replacements.push(file.fsName); }
+}
+
+const identified = (layer, comment) => Object.assign(layer, { comment });
+const effect = (name, value, type = "ADBE Dropdown Control-0001") =>
+  new PropertyGroup(name, [new Property("Native value", value, type)]);
+const effectValue = (item) => item.property(1);
+
+function product(slot, { installment = false } = {}) {
+  const descriptionText = new TextLayer("DESCRITIVO", "DESCRICAO " + slot);
+  descriptionText.text.sourceText.expression = "value";
+  const descriptionLayer = identified(new AVLayer("Descricao livre " + slot, [],
+    new CompItem([new AVLayer("Decoracao interna"), descriptionText], "Descricao " + slot)), "DESCRITIVO " + slot);
+  const price = identified(new TextLayer("Valor livre", slot + "9,90"), installment ? "PRECO" : "PRECO");
+  const option = effect(installment ? "Condição" : "Unidade", slot);
+  const control = identified(new AVLayer("Controle livre", [new PropertyGroup("ADBE Effect Parade", [option])]), "CONTROLADOR DE MECANICA");
+  const marker = identified(new AVLayer("Marcadores internos"), "MARCADORES");
+  marker.marker = new MarkerProperty([1, 5, 9]);
+  const primary = identified(new AVLayer("Salto cheio"), "PULO PRECO CHEIO");
+  const alternate = identified(new AVLayer("Salto parcela"), "PULO PARCELA");
+  primary.startTime = 1;
+  primary.inPoint = 1.5;
+  alternate.startTime = 4;
+  alternate.inPoint = 4.5;
+  const mechanicalLayers = installment
+    ? [marker, alternate, identified(new TextLayer("Parcelas", "3"), "NUMERO DE PARCELAS"), control,
+      identified(new TextLayer("Valor De", "99,90"), "PRECO DE"), price,
+      identified(new TextLayer("Parcela", "19,90"), "PRECO PARCELA"), primary]
+    : [control, new AVLayer("Fundo"), price];
+  const mechanicSource = new CompItem(mechanicalLayers, "Mecanica livre " + slot, installment ? "DE X POR Y PARCELAMENTO" : "SIMPLES");
+  const mechanicLayer = identified(new AVLayer("Mecanica visual " + slot, [], mechanicSource), "MECANICA " + slot);
+  const footage = new FootageItem("Produto " + slot);
+  const imageLayer = identified(new AVLayer("Imagem livre " + slot, [], footage), "PRODUTO " + slot);
+  [descriptionLayer, mechanicLayer, imageLayer].forEach((layer, index) => { layer.scale.currentValue = [slot * 100 + index, slot * 100 + index]; });
+  return { slot, descriptionLayer, descriptionText, mechanicLayer, mechanicSource, imageLayer, footage, price, option, marker, primary, alternate,
+    layers: [descriptionLayer, mechanicLayer, imageLayer] };
+}
+
+function legal() {
+  const legalText = new TextLayer("Texto Legal", "Texto legal existente");
+  const cpf = effect("Limitado por CPF", 0, "ADBE Checkbox Control-0001");
+  const quantity = effect("Quantidade por CPF", 5, "ADBE Slider Control-0001");
+  const legalEffect = effect("Texto Legal", 2, "ADBE Slider Control-0001");
+  legalText.properties.push(new PropertyGroup("ADBE Effect Parade", [quantity, legalEffect, cpf]));
+  const validity = effect("Texto Validade", 3, "ADBE Slider Control-0001");
+  const source = new CompItem([
+    new AVLayer("Validade", [new PropertyGroup("ADBE Effect Parade", [validity])]), new AVLayer("Reserva"), legalText,
+    new AVLayer("Selo leite"), new AVLayer("Selo moderacao"),
+    new AVLayer("Eletro/Pneu", [], new CompItem(Array.from({ length: 9 }, (_, i) => new AVLayer("Opcao " + i)))),
+  ], "Texto legal livre");
+  return { layer: identified(new AVLayer("Legal externo livre", [], source), "TEXTO LEGAL"), source, legalText, cpf, quantity, legalEffect, validity };
+}
+
+function harness(products = [product(1), product(2), product(3)]) {
+  const legalEnv = legal();
+  const offerMarker = identified(new AVLayer("Marcador externo livre"), "MARCADORES");
+  offerMarker.marker = new MarkerProperty([2, 6, 10]);
+  const source = new CompItem([new AVLayer("Decoracao externa"), ...products.flatMap((item) => item.layers), legalEnv.layer, offerMarker], "Oferta");
+  const offer = new AVLayer("Oferta_01", [], source);
+  const miolo = new CompItem([offer], "Miolo");
+  const app = { project: { numItems: 1, item: () => miolo }, undoEvents: [],
+    beginUndoGroup(name) { this.undoEvents.push(["begin", name]); }, endUndoGroup() { this.undoEvents.push(["end"]); } };
+  const modules = new Map();
+  function load(relativeOrAbsolute) {
+    const filename = path.isAbsolute(relativeOrAbsolute) ? relativeOrAbsolute : path.join(domainDirectory, relativeOrAbsolute);
+    if (modules.has(filename)) return modules.get(filename).exports;
+    const module = { exports: {} };
+    modules.set(filename, module);
+    vm.runInNewContext(ts.transpileModule(readFileSync(filename, "utf8"), {
+      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+    }).outputText, { module, exports: module.exports, app, AVLayer, TextLayer, CompItem, FootageItem,
+      File, FileSource, Property, PropertyGroup, PropertyValueType: { OneD: 1 },
+      require(specifier) {
+        assert.ok(specifier.startsWith("."), "Unexpected dependency: " + specifier);
+        const base = path.resolve(path.dirname(filename), specifier);
+        const target = [base, base + ".ts", base + ".js"].find(existsSync);
+        assert.ok(target, "Missing dependency: " + specifier);
+        return load(target);
+      },
+    }, { filename });
+    if (filename === path.join(domainDirectory, "layers/config.ts")) module.exports.OFFER_LAYER_NAME_FALLBACK_ENABLED = false;
+    if (filename === path.join(domainDirectory, "mechanics/config.ts")) module.exports.MECHANIC_LAYER_NAME_FALLBACK_ENABLED = false;
+    return module.exports;
+  }
+  const fields = load("actions/updateField.ts");
+  const descriptions = load("actions/updateDescription.ts");
+  const expressions = load("actions/updateDescriptionExpression.ts");
+  const options = load("actions/updateOption.ts");
+  const images = load("actions/replaceProductImage.ts");
+  const swaps = load("actions/swapProducts.ts");
+  const legalActions = load("actions/legalControls.ts");
+  const snapshot = load("snapshot/buildOfferSnapshot.ts");
+  const discovery = load("snapshot/offerDiscovery.ts");
+  load("mechanics/schemaRuntime.ts").configureMechanicsSchemaPath(schemaFilePath);
+  return { app, source, offer, products, legal: legalEnv, offerMarker, load, ...fields, ...descriptions, ...expressions, ...options, ...images, ...swaps, ...legalActions, ...snapshot, ...discovery };
+}
+
+function reorder(env, layers) {
+  env.source.layers = layers;
+  layers.forEach((layer) => { layer.containingComp = env.source; });
+}
+
+function assertUndoClosed(env) {
+  assert.equal(env.app.undoEvents.length % 2, 0);
+  for (let index = 0; index < env.app.undoEvents.length; index += 2) {
+    assert.equal(env.app.undoEvents[index][0], "begin");
+    assert.deepEqual(env.app.undoEvents[index + 1], ["end"]);
+  }
+}
+
+function assertProductUntouched(item) {
+  assert.deepEqual(item.price.text.sourceText.writes, []);
+  assert.deepEqual(effectValue(item.option).writes, []);
+  assert.deepEqual(item.descriptionText.text.sourceText.writes, []);
+  assert.deepEqual(item.descriptionText.text.sourceText.expressionWrites, []);
+  assert.deepEqual(item.footage.replacements, []);
+  item.layers.forEach((layer) => {
+    assert.deepEqual(layer.scale.writes, []);
+    assert.deepEqual(layer.sourceWrites, []);
+  });
+  assert.equal(item.primary.inPoint, 1.5);
+  assert.equal(item.alternate.inPoint, 4.5);
+}
+
+test("three comment-numbered products remain associated after independent timeline permutations and renames", () => {
+  for (const order of [
+    [7, 2, 10, 4, 8, 0, 11, 1, 5, 9, 3, 6],
+    [11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0],
+    [3, 5, 8, 1, 9, 6, 2, 11, 4, 0, 10, 7],
+  ]) {
+    const env = harness();
+    reorder(env, order.map((index) => env.source.layers[index]));
+    env.source.layers.forEach((layer, index) => {
+      layer.name = "Visual livre " + index;
+      if (layer.comment) layer.comment = "  " + layer.comment.toLowerCase() + "\t";
+    });
+    const snapshot = env.getOffersEditorSnapshot(1);
+    assert.equal(snapshot.ok, true);
+    assert.deepEqual(plain(snapshot.selectedOffer.products.map((item) => [item.index, item.description.value, item.mechanic.fields[0].value, item.image.sourceName])), [
+      [0, "DESCRICAO 1", "19,90", "Produto 1"], [1, "DESCRICAO 2", "29,90", "Produto 2"], [2, "DESCRICAO 3", "39,90", "Produto 3"],
+    ]);
+    assert.deepEqual(plain(env.getOffersFirstProductInfo()[0].priceField), { fieldId: "preco", fieldIndex: 0, value: "19,90" });
+    assert.equal(env.updateOfferField(1, 1, "preco", "R$ 48,50", 0).ok, true);
+    assert.equal(env.updateOfferOption(1, 1, "unit", 3).ok, true);
+    assert.equal(env.updateOfferDescription(1, 1, "Nova descrição").ok, true);
+    assert.equal(env.updateOfferDescriptionExpression(1, 1, true).ok, true);
+    assert.equal(env.replaceOfferProductImage(1, 1, "C:/produtos/substituto.png").ok, true);
+    const target = env.products[1];
+    assert.deepEqual(target.price.text.sourceText.writes, [{ text: "48,50" }]);
+    assert.deepEqual(effectValue(target.option).writes, [4]);
+    assert.deepEqual(target.descriptionText.text.sourceText.writes, [{ text: "NOVA DESCRIÇÃO" }]);
+    assert.deepEqual(target.descriptionText.text.sourceText.expressionWrites, [true]);
+    assert.deepEqual(target.footage.replacements, ["C:/produtos/substituto.png"]);
+    assertProductUntouched(env.products[0]);
+    assertProductUntouched(env.products[2]);
+    assert.equal(env.legal.legalText.text.sourceText.writes.length, 0);
+    assertUndoClosed(env);
+  }
+});
+
+test("inactive lower-numbered slots do not renumber action targets or Roteiro's first active product", () => {
+  const env = harness();
+  env.products[0].descriptionLayer.enabled = false;
+  reorder(env, [...env.products[2].layers.reverse(), env.legal.layer, ...env.products[1].layers.reverse(), ...env.products[0].layers]);
+  assert.deepEqual(plain(env.getOffersEditorSnapshot(1).selectedOffer.products.map(({ index }) => index)), [1, 2]);
+  const [first] = env.getOffersFirstProductInfo();
+  assert.equal(first.productIndex, 1);
+  assert.equal(first.priceValue, "29,90");
+  assert.equal(env.updateOfferField(1, first.productIndex, first.priceField.fieldId, "67,89", first.priceField.fieldIndex).ok, true);
+  assert.equal(env.updateOfferDescription(1, 1, "Segundo").ok, true);
+  assert.equal(env.updateOfferOption(1, 1, "unit", 0).ok, true);
+  assert.equal(env.replaceOfferProductImage(1, 1, "C:/novo.png").ok, true);
+  assert.equal(env.updateOfferField(1, 0, "preco", "99,99", 0).ok, false);
+  assert.equal(env.products[1].price.text.sourceText.value.text, "67,89");
+  assertProductUntouched(env.products[0]);
+  assertProductUntouched(env.products[2]);
+  assertUndoClosed(env);
+});
+
+for (const role of ["descriptionLayer", "mechanicLayer", "imageLayer"]) {
+  for (const invalidation of ["missing", "duplicate", "wrong-type"]) {
+    test(`${role} ${invalidation}: invalid trio rejects every target mutation before native writes`, () => {
+      const first = product(1, { installment: true });
+      const env = harness([first, product(2)]);
+      const roleLayer = first[role];
+      if (invalidation === "missing") roleLayer.comment = "Sem identidade";
+      if (invalidation === "duplicate") {
+        const duplicate = identified(new AVLayer("Duplicata", [], roleLayer.source), roleLayer.comment);
+        duplicate.enabled = false;
+        reorder(env, [...env.source.layers, duplicate]);
+      }
+      if (invalidation === "wrong-type") roleLayer.source = null;
+      for (const action of [
+        () => env.updateOfferField(1, 0, "preco", "99,99", 1),
+        () => env.updateOfferOption(1, 0, "mechanicCondition", 6),
+        () => env.updateOfferInstallmentJump(1, 0, "preco-cheio"),
+        () => env.updateOfferDescription(1, 0, "Modificado"),
+        () => env.updateOfferDescriptionExpression(1, 0, true),
+        () => env.replaceOfferProductImage(1, 0, "C:/invalido.png"),
+        () => env.swapOfferProducts(1, 1, 0),
+      ]) {
+        const result = action();
+        assert.equal(result.ok, false, JSON.stringify(result));
+        assert.ok(result.errors.length > 0);
+        assertProductUntouched(first);
+        assertProductUntouched(env.products[1]);
+      }
+      const [forRoteiro] = env.getOffersFirstProductInfo();
+      assert.equal(forRoteiro.priceValue, "");
+      assert.equal(forRoteiro.priceField, undefined);
+      assert.equal(env.updateOfferField(1, 1, "preco", "24,90", 0).ok, true);
+      assert.equal(env.products[1].price.text.sourceText.value.text, "24,90");
+      assertProductUntouched(first);
+      assertUndoClosed(env);
+    });
+  }
+}
+
+test("comment-only offer lookup ignores legacy names and positions independently of mechanic fallback", () => {
+  const env = harness();
+  env.load("mechanics/config.ts").MECHANIC_LAYER_NAME_FALLBACK_ENABLED = true;
+  env.products.forEach((item) => item.layers.forEach((layer) => { layer.name = layer.comment; layer.comment = ""; }));
+  assert.deepEqual(plain(env.getOffersEditorSnapshot(1).selectedOffer.products), []);
+  assert.equal(env.updateOfferField(1, 0, "preco", "99,90", 0).ok, false);
+  env.products.forEach(assertProductUntouched);
+  assertUndoClosed(env);
+});
+
+test("locked and disabled mechanic or product layers remain located through comments", () => {
+  const env = harness();
+  env.products[0].layers.forEach((layer) => { layer.locked = true; });
+  env.products[0].mechanicLayer.enabled = false;
+  env.products[0].imageLayer.enabled = false;
+  const item = env.getOffersEditorSnapshot(1).selectedOffer.products[0];
+  assert.equal(item.index, 0);
+  assert.equal(item.description.value, "DESCRICAO 1");
+  assert.equal(item.mechanic.fields[0].value, "19,90");
+  assert.equal(item.image.enabled, false);
+  env.products.forEach(assertProductUntouched);
+});
+
+test("moved legal precomp uses its outer comment while internal controls retain their indices and effect identities", () => {
+  const env = harness();
+  const decoy = new AVLayer("TEXTO LEGAL", [], new CompItem([new TextLayer("Texto Legal", "Nao alterar")], "Legal decorativo"));
+  reorder(env, [decoy, ...env.products[2].layers, env.offerMarker, ...env.products[0].layers, ...env.products[1].layers, env.legal.layer]);
+  const selected = env.getOffersEditorSnapshot(1).selectedOffer;
+  assert.equal(selected.legalText.value, "Texto legal existente");
+  const cpf = selected.legalControls.find((item) => item.id === "limitado-por-cpf");
+  assert.equal(cpf.layerIndex, 3);
+  assert.equal(env.updateOfferLegalControl(1, "limitado-por-cpf", true).ok, true);
+  assert.equal(env.updateOfferLegalControlValue(1, "quantidade-por-cpf", "8").ok, true);
+  assert.equal(env.updateOfferLegalControl(1, "selo-leite", false).ok, true);
+  assert.equal(env.updateOfferLegalControlValue(1, "tarja-validade", "4").ok, true);
+  assert.deepEqual(effectValue(env.legal.cpf).writes, [1]);
+  assert.deepEqual(effectValue(env.legal.quantity).writes, [8]);
+  assert.deepEqual(effectValue(env.legal.validity).writes, [4]);
+  assert.equal(env.legal.source.layer(4).enabled, false);
+  assert.equal(decoy.source.layer(1).text.sourceText.value.text, "Nao alterar");
+  env.products.forEach(assertProductUntouched);
+  assertUndoClosed(env);
+});
+
+test("duplicated legal comment blocks legal writes while product editing stays independent", () => {
+  const env = harness();
+  const duplicate = identified(new AVLayer("Outro legal", [], env.legal.source), " texto legal ");
+  reorder(env, [...env.source.layers, duplicate]);
+  assert.equal(env.updateOfferLegalControl(1, "limitado-por-cpf", true).ok, false);
+  assert.deepEqual(effectValue(env.legal.cpf).writes, []);
+  assert.equal(env.updateOfferField(1, 2, "preco", "43,21", 0).ok, true);
+  assert.equal(env.products[2].price.text.sourceText.value.text, "43,21");
+  assertProductUntouched(env.products[0]);
+  assertProductUntouched(env.products[1]);
+  assertUndoClosed(env);
+});
+
+test("product swap keeps numbered role comments while exchanging all three sources, scales and names", () => {
+  const env = harness();
+  const first = env.products[0];
+  const third = env.products[2];
+  reorder(env, [third.imageLayer, first.mechanicLayer, env.legal.layer, third.descriptionLayer,
+    first.imageLayer, ...env.products[1].layers, third.mechanicLayer, first.descriptionLayer]);
+  const firstBefore = first.layers.map((layer) => ({ source: layer.source, name: layer.name, scale: layer.scale.value, comment: layer.comment }));
+  const thirdBefore = third.layers.map((layer) => ({ source: layer.source, name: layer.name, scale: layer.scale.value, comment: layer.comment }));
+  assert.equal(env.swapOfferProducts(1, 0, 2).ok, true);
+  for (let index = 0; index < 3; index += 1) {
+    for (const [layers, expected, comments] of [[first.layers, thirdBefore, firstBefore], [third.layers, firstBefore, thirdBefore]]) {
+      assert.equal(layers[index].source, expected[index].source);
+      assert.equal(layers[index].name, expected[index].name);
+      assert.deepEqual(layers[index].scale.value, expected[index].scale);
+      assert.equal(layers[index].comment, comments[index].comment);
+      assert.equal(layers[index].sourceWrites.length, 1);
+      assert.equal(layers[index].sourceWrites[0].fixExpressions, true);
+    }
+  }
+  assert.deepEqual(plain(env.getOffersEditorSnapshot(1).selectedOffer.products.map((item) => [item.index, item.description.value, item.mechanic.fields[0].value, item.image.sourceName])), [
+    [0, "DESCRICAO 3", "39,90", "Produto 3"], [1, "DESCRICAO 2", "29,90", "Produto 2"], [2, "DESCRICAO 1", "19,90", "Produto 1"],
+  ]);
+  const [firstForRoteiro] = env.getOffersFirstProductInfo();
+  assert.equal(firstForRoteiro.productIndex, 0);
+  assert.equal(firstForRoteiro.priceValue, "39,90");
+  assertProductUntouched(env.products[1]);
+  assertUndoClosed(env);
+});
+
+test("swap preflight rejects unavailable scale before replacing any component", () => {
+  const env = harness();
+  env.products[2].imageLayer.scale = null;
+  const before = env.products.flatMap((item) => item.layers.map((layer) => [layer.source, layer.name, layer.comment]));
+  assert.equal(env.swapOfferProducts(1, 0, 2).ok, false);
+  assert.deepEqual(env.products.flatMap((item) => item.layers.map((layer) => [layer.source, layer.name, layer.comment])), before);
+  env.products.forEach((item) => item.layers.forEach((layer) => {
+    assert.deepEqual(layer.sourceWrites, []);
+    if (layer.scale) assert.deepEqual(layer.scale.writes, []);
+  }));
+  assertUndoClosed(env);
+});
+
+for (const invalidation of ["missing", "duplicate"]) {
+  test(`Roteiro does not redirect an unresolved first description (${invalidation}) to slot two`, () => {
+    const env = harness();
+    if (invalidation === "missing") env.products[0].descriptionLayer.comment = "Comentario desconhecido";
+    else reorder(env, [...env.source.layers,
+      identified(new AVLayer("Outra descricao", [], env.products[0].descriptionLayer.source), "DESCRITIVO 1")]);
+    const [first] = env.getOffersFirstProductInfo();
+    assert.equal(first.priceValue, "");
+    assert.equal(first.priceField, undefined);
+    env.products.forEach(assertProductUntouched);
+  });
+}
+
+test("an invalid later slot does not block Roteiro from reading and correcting the valid first slot", () => {
+  const env = harness();
+  env.products[2].imageLayer.comment = "Sem imagem identificada";
+  const [first] = env.getOffersFirstProductInfo();
+  assert.equal(first.productIndex, 0);
+  assert.equal(first.priceValue, "19,90");
+  assert.equal(env.updateOfferField(1, first.productIndex, first.priceField.fieldId, "28,90", first.priceField.fieldIndex).ok, true);
+  assert.equal(env.products[0].price.text.sourceText.value.text, "28,90");
+  assertProductUntouched(env.products[1]);
+  assertProductUntouched(env.products[2]);
+  assertUndoClosed(env);
+});
+
+test("offer marker lookup stays in the outer composition and cannot consume internal mechanic markers", () => {
+  const env = harness([product(1, { installment: true })]);
+  const { getOfferMarkerLayer } = env.load("layers/offerStructure.ts");
+  const errors = [];
+  assert.equal(getOfferMarkerLayer(env.source, errors), env.offerMarker);
+  assert.deepEqual(errors, []);
+  assert.equal(env.updateOfferInstallmentJump(1, 0, "preco-cheio").ok, true);
+  assert.equal(env.products[0].primary.inPoint, 5);
+  assert.equal(env.products[0].alternate.inPoint, 12);
+  assert.deepEqual(env.offerMarker.marker.times, [2, 6, 10]);
+  assert.deepEqual(env.products[0].marker.marker.times, [1, 5, 9]);
+  assertUndoClosed(env);
+});
+
+test("name fallback resolves exact roles independently and product swaps preserve names that identify the slots", () => {
+  const env = harness();
+  env.load("layers/config.ts").OFFER_LAYER_NAME_FALLBACK_ENABLED = true;
+  env.products.forEach((item) => item.layers.forEach((layer) => { layer.name = layer.comment; layer.comment = ""; }));
+  const beforeNames = env.products.flatMap((item) => item.layers.map((layer) => layer.name));
+  assert.deepEqual(plain(env.getOffersEditorSnapshot(1).selectedOffer.products.map(({ index }) => index)), [0, 1, 2]);
+  assert.equal(env.swapOfferProducts(1, 0, 2).ok, true);
+  assert.deepEqual(env.products.flatMap((item) => item.layers.map((layer) => layer.name)), beforeNames);
+  assert.deepEqual(plain(env.getOffersEditorSnapshot(1).selectedOffer.products.map((item) => [item.index, item.description.value, item.mechanic.fields[0].value])), [
+    [0, "DESCRICAO 3", "39,90"], [1, "DESCRICAO 2", "29,90"], [2, "DESCRICAO 1", "19,90"],
+  ]);
+  assert.equal(env.updateOfferField(1, 0, "preco", "41,90", 0).ok, true);
+  assert.equal(env.products[2].price.text.sourceText.value.text, "41,90");
+  assert.equal(env.products[0].price.text.sourceText.value.text, "19,90");
+  assertUndoClosed(env);
+});
+
+test("recognized comments always win over conflicting fallback names across numbered roles", () => {
+  const env = harness();
+  env.load("layers/config.ts").OFFER_LAYER_NAME_FALLBACK_ENABLED = true;
+  env.products[0].mechanicLayer.name = "MECANICA 2";
+  env.products[1].mechanicLayer.comment = "";
+  env.products[1].mechanicLayer.name = "Mecanica visual sem identidade";
+  assert.equal(env.updateOfferField(1, 1, "preco", "99,90", 0).ok, false);
+  env.products.forEach(assertProductUntouched);
+  assert.equal(env.updateOfferField(1, 0, "preco", "21,90", 0).ok, true);
+  assert.equal(env.products[0].price.text.sourceText.value.text, "21,90");
+  assertProductUntouched(env.products[1]);
+  assertUndoClosed(env);
+});
+
+test("native failure on the third source swap restores earlier components without changing comments", () => {
+  const env = harness();
+  const layers = [...env.products[0].layers, ...env.products[2].layers];
+  const before = layers.map((layer) => ({ source: layer.source, name: layer.name, scale: layer.scale.value, comment: layer.comment }));
+  env.products[2].imageLayer.replaceFailure = 1;
+  assert.equal(env.swapOfferProducts(1, 0, 2).ok, false);
+  layers.forEach((layer, index) => {
+    assert.equal(layer.source, before[index].source);
+    assert.equal(layer.name, before[index].name);
+    assert.equal(layer.comment, before[index].comment);
+    assert.deepEqual(layer.scale.value, before[index].scale);
+  });
+  assertProductUntouched(env.products[1]);
+  assert.deepEqual(plain(env.getOffersEditorSnapshot(1).selectedOffer.products.map((item) => [item.index, item.description.value, item.mechanic.fields[0].value])), [
+    [0, "DESCRICAO 1", "19,90"], [1, "DESCRICAO 2", "29,90"], [2, "DESCRICAO 3", "39,90"],
+  ]);
+  assertUndoClosed(env);
+});
+
+test("animated scale on the final image component rejects swap before any replacement", () => {
+  const env = harness();
+  env.products[2].imageLayer.scale.numKeys = 1;
+  assert.equal(env.swapOfferProducts(1, 0, 2).ok, false);
+  env.products.forEach(assertProductUntouched);
+  assertUndoClosed(env);
+});
+
+test("failed swap restores the underlying scale value while preserving its enabled expression", () => {
+  const env = harness();
+  env.source.time = 2.5;
+  const first = env.products[0].descriptionLayer;
+  const third = env.products[2].descriptionLayer;
+  const scale = first.scale;
+  const originalBase = [110, 120];
+  const evaluated = [440, 550];
+  scale.currentValue = originalBase;
+  scale.expressionValue = evaluated;
+  scale.expression = "[440, 550]";
+  scale.currentExpressionEnabled = true;
+  const targetScale = third.scale.value;
+  const layers = [...env.products[0].layers, ...env.products[2].layers];
+  const states = layers.map((layer) => ({ source: layer.source, name: layer.name, comment: layer.comment, scale: layer.scale.value }));
+  env.products[2].imageLayer.replaceFailure = 1;
+  assert.equal(env.swapOfferProducts(1, 0, 2).ok, false);
+  assert.deepEqual(scale.valueAtTimeCalls, [[2.5, true]]);
+  assert.deepEqual(scale.writes[0], targetScale);
+  assert.deepEqual(third.scale.writes[0], evaluated);
+  assert.deepEqual(scale.currentValue, originalBase);
+  assert.deepEqual(scale.writes.at(-1), originalBase);
+  assert.deepEqual(scale.value, evaluated);
+  assert.equal(scale.expressionEnabled, true);
+  assert.equal(scale.expression, "[440, 550]");
+  assert.deepEqual(scale.expressionWrites, []);
+  layers.forEach((layer, index) => {
+    assert.equal(layer.source, states[index].source);
+    assert.equal(layer.name, states[index].name);
+    assert.equal(layer.comment, states[index].comment);
+    assert.deepEqual(layer.scale.value, states[index].scale);
+  });
+  assertProductUntouched(env.products[1]);
+  assertUndoClosed(env);
+});
+
+test("image precomps preserve preview discovery and product association without changing footage-only replacement", () => {
+  const env = harness();
+  const original = env.products[1].footage;
+  env.products[1].imageLayer.source = new CompItem([new AVLayer("Arquivo interno", [], original)], "Imagem em precomp");
+  const image = env.getOffersEditorSnapshot(1).selectedOffer.products[1].image;
+  assert.equal(image.sourceName, "Imagem em precomp");
+  assert.equal(image.filePath, "C:/produtos/Produto 2.png");
+  assert.equal(env.updateOfferField(1, 1, "preco", "45,90", 0).ok, true);
+  assert.equal(env.replaceOfferProductImage(1, 1, "C:/novo.png").ok, false);
+  assert.deepEqual(original.replacements, []);
+  assertProductUntouched(env.products[0]);
+  assertProductUntouched(env.products[2]);
+  assertUndoClosed(env);
+});

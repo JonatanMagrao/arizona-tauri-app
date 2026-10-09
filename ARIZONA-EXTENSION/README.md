@@ -44,21 +44,145 @@ atual e os 13 anteriores. Não existe envio automático: o usuário exporta e
 compartilha o pacote somente quando desejar. Formato, saneamento, migração e
 solução de problemas: `../docs/DIAGNOSTICOS_LOCAIS.md`.
 
+## Mecânicas de ofertas suportadas
+
+A extensão reconhece sete famílias atuais: `SIMPLES`,
+`DE X POR Y PARCELAMENTO`, `DE X POR Y | X% DESCONTO | LEVE X PAGUE Y`,
+`DESCONTO R$ CARTAO CRF`, `TODOS A COM LEVE X PAGUE Y`,
+`TODOS A COM X% DESCONTO` e `DE X POR Y MEU CRF POR Z CARTAO CRF`.
+O alias `TODOS A LEVE X PAGUE Y` pertence à mesma família Todos A Com.
+
+A identificação tenta primeiro o Comments da precomp de origem e depois seu
+nome. Duplicações com sufixo numérico continuam aceitas. As 11 famílias antigas
+foram descontinuadas e aparecem como mecânica não mapeada quando nenhuma das
+identificações corresponder a uma família atual; não há migração automática dos
+arquivos do After Effects.
+
+Consulte o [mapa das camadas atuais](../MAPA_CAMADAS_MECANICAS_CEP.md) e o
+[alcance da limpeza](../docs/REVISAO_LIMPEZA_MECANICAS_CEP.md).
+
+## Camadas dentro das ofertas
+
+O Editor, suas ações e o Roteiro associam cada produto pelos comentários das
+camadas externas, sem depender da ordem das camadas na precomp da oferta:
+
+| Conjunto | Descritivo | Mecânica | Imagem |
+|---|---|---|---|
+| 1 | `DESCRITIVO 1` | `MECANICA 1` | `PRODUTO 1` |
+| 2 | `DESCRITIVO 2` | `MECANICA 2` | `PRODUTO 2` |
+| 3 | `DESCRITIVO 3` | `MECANICA 3` | `PRODUTO 3` |
+
+O número identifica o conjunto lógico: `product.index` é esse número menos um.
+Os conjuntos ativos são apresentados nessa ordem, mesmo quando as camadas
+estão invertidas na timeline. Um descritivo único desativado torna todo o seu
+conjunto inativo; isso não renumera os demais. Um número inteiramente ausente
+não é obrigatório. Papéis ausentes, comentários duplicados ou origens inválidas
+bloqueiam a edição do conjunto afetado; outros conjuntos válidos continuam
+editáveis. Descritivo e mecânica precisam ter origem `CompItem`; imagem pode ter
+origem `FootageItem` ou `CompItem`, mas a substituição da imagem pelo painel
+continua exigindo origem direta `FootageItem`.
+
+A precomp legal externa é localizada por `TEXTO LEGAL`, em qualquer posição.
+Dentro dela, texto legal continua na camada 3 e os controles legais preservam
+suas posições e efeitos. Dentro da precomp descritiva, o texto continua sendo
+encontrado pelo nome `DESCRITIVO`.
+
+O fallback destas camadas é controlado por `OFFER_LAYER_NAME_FALLBACK_ENABLED`
+em [layers/config.ts](src/jsx/aeft/domains/ofertas/layers/config.ts), desativado
+por padrão e independente do fallback das mecânicas. Se ativado, aceita somente
+os nomes exatos iguais aos comentários quando nenhum comentário corresponder.
+A comparação ignora maiúsculas/minúsculas e espaços externos, preservando
+acentos. Comentário reconhecido de outra função ou número prevalece sobre o
+nome; comentários duplicados não liberam fallback. Não há fallback por índice,
+adjacência ou nomes anteriores. Alterar a opção exige build e recarregamento.
+
+Na troca de produtos, comentários permanecem na camada e as origens, escalas e
+nomes visuais são trocados. Nomes usados como fallback permanecem em suas
+camadas para preservar a identidade. A extensão não preenche comentários no
+`.aep` automaticamente.
+
+O comentário externo `MARCADORES` possui localizador disponível, mas nenhuma
+operação atual o consome. Não é obrigatório para os produtos e não altera os
+marcadores da timeline nem os jumps internos das mecânicas. O schema oficial
+das mecânicas abaixo continua configurando apenas suas camadas internas.
+
+## Configuração das mecânicas
+
+O [schema.json das mecânicas](src/js/assets/schema.json) é a configuração
+oficial das sete mecânicas. `copyAssets` em `cep.config.ts` copia esse arquivo
+para `dist/cep/js/assets/schema.json`, preservando o JSON como arquivo separado.
+O bootstrap informa ao host o caminho `js/assets/schema.json` dentro da extensão.
+O [teste.json na raiz](../teste.json) permanece como exemplo do formato
+aprovado; não é consumido pelo runtime nem pelos testes da extensão.
+
+Edite os valores de `layers` para mudar os comentários esperados das camadas.
+Em `effects`, `layer` referencia uma chave de `layers`, `index` é a posição do
+efeito e `name` é seu nome. Parcelamento e Meu CRF/Cartão preservam a busca pelo
+nome; o índice preenchido nesses dois controles não muda essa regra.
+Nos demais efeitos, a posição continua sendo usada e `name` documenta a função.
+As opções usam `index` como valor escrito no After e `label` como texto exibido.
+A seleção do painel continua começando em zero, com conversão interna para o
+valor configurado. Quantidade X é numérica e não possui `options`.
+
+As chaves das mecânicas, camadas e efeitos são contratos fixos. Preserve também
+a ordem das opções: suas posições controlam partes do layout. Labels e valores
+AE podem ser editados sem alterar os IDs, formatos, labels internos do Roteiro,
+regras de localização, fallback e comportamento dos jumps, que ficam no código.
+Os nomes antigos explicitamente aceitos para controladora e jumps permanecem
+como aliases de fallback.
+
+O host lê diretamente o arquivo, sem embutir os dados no bundle e sem módulo
+TypeScript gerado. Cada snapshot ou ação fixa uma única configuração validada;
+ela não muda no meio das escritas. A próxima operação lê novamente o asset,
+inclusive quando houve erro na leitura anterior. Um JSON inválido bloqueia os
+controles da mecânica e informa o erro, sem usar uma configuração antiga.
+Descrição, imagem e texto legal continuam independentes dessa configuração.
+
+O build e o leitor usam o mesmo parser e validador. São verificados UTF-8,
+sintaxe JSON, chaves duplicadas (incluindo escapes), versão, os sete contratos,
+ausência de `null`, referências, índices, opções e comentários únicos.
+Para validar somente o arquivo de origem, execute `npm run mechanics:schema`.
+Os hooks de build, desenvolvimento, watch e testes executam essa validação.
+
+Para publicar uma edição de `src/js/assets/schema.json`, rode `npm run build`;
+o build copia o JSON para o payload. Após o primeiro build com o novo leitor,
+no ambiente de desenvolvimento é possível editar diretamente
+`dist/cep/js/assets/schema.json` e atualizar as ofertas para testar sem
+recompilar ou recarregar o painel. Um build seguinte repõe o asset a partir
+do arquivo de origem; leve os ajustes aprovados de volta para a origem.
+
+Na instalação oficial, o JSON faz parte da assinatura do CEP. Alterações
+distribuídas aos clientes exigem reempacotamento e assinatura; não edite o
+payload assinado instalado. O leitor não modifica o JSON nem os arquivos `.aep`.
+
 ## Mecânica Meu CRF e Cartão CRF
 
 O Comments da precomp `DE X POR Y MEU CRF POR Z CARTAO CRF` identifica a
 mecânica implementada em `src/jsx/aeft/domains/ofertas/mechanics/meuCrfCartao.ts`.
-O editor oferece os três textos `PRECO DE`, `PRECO POR` e `PRECO POR CARTAO`.
-O dropdown nativo chamado `Unidade` é localizado nas camadas dessa precomp,
-independentemente da posição, com as opções `Cada`, `Kg`, `A cada 100g` e
-`Kg/cada`, nessa ordem. Se estiver ausente ou houver mais de um dropdown com
-esse nome, apenas esse controle fica indisponível e a leitura registra o erro.
+As camadas internas são localizadas por `Layer.comment`, sem índice fixo:
+`CONTROLADOR DE MECANICA`, `MARCADORES`, `PULO PRECO MEU CRF`,
+`PULO PRECO CARTAO CRF`, `PRECO DE`, `PRECO POR` e `PRECO POR CARTAO`.
+O comentário atual do jump do cartão no schema oficial é `PULO PRECO CARTAO CRF`.
 
-O Jump alterna entre `Preço por` (camada 2, `PULO PREÇO MEU CRF`) e
-`Preço por cartão` (camada 3, `PULO PREÇO CARTAO CRF`). Usa o segundo marker da
-camada 1, `Marcadores`, validando os índices e os nomes. A camada escolhida tem
-seu início alinhado ao marker; a outra é deslocada para o final da precomp,
-seguindo o comportamento das mecânicas anteriores.
+O fallback por nome é controlado por `MECHANIC_LAYER_NAME_FALLBACK_ENABLED` em
+`mechanics/config.ts` e fica desativado por padrão. Quando ativado, tenta os
+nomes configurados somente se nenhum comentário corresponder. Comentários ou
+nomes ambíguos não escolhem uma camada arbitrária. Os nomes aceitos, incluindo
+os aliases anteriores dos jumps, estão no
+[mapa de camadas](../MAPA_CAMADAS_MECANICAS_CEP.md).
+
+O editor mantém os três preços e seus IDs internos. O dropdown nativo chamado
+`Unidade` é procurado **somente na controladora identificada**, em qualquer
+posição dos seus efeitos, com as opções `Cada`, `Kg`, `A cada 100g` e `Kg/cada`,
+nessa ordem. Se estiver ausente ou houver mais de um dropdown válido com esse
+nome nessa camada, apenas esse controle fica indisponível e a leitura registra
+o erro.
+
+O Jump alterna entre `Preço por` e `Preço por cartão`, usando o segundo marker
+da camada identificada por `MARCADORES`. As três camadas precisam ser distintas.
+A camada escolhida tem seu início visível alinhado ao marker; a outra é
+deslocada para a duração da precomp. A migração não preenche comentários nem
+altera os arquivos `.aep` automaticamente.
 
 ## Troca de projeto
 
@@ -96,9 +220,13 @@ enquanto o ícone de atualização gira. As ações ficam bloqueadas até a cons
 terminar; falhas descartam a validação anterior e exibem a mensagem de erro.
 
 A cada entrada na aba, o painel consulta novamente as ofertas no After para
-validar os valores atuais. Essa consulta lê a mecânica do primeiro produto
-ativo de cada oferta, sem montar os dados de imagens, descrições e textos legais
-do editor. Não há consulta periódica nem validações antigas em cache.
+validar os valores atuais. Essa consulta usa o mesmo resolvedor do Editor e lê
+a mecânica do menor conjunto ativo de cada oferta, sem montar os dados de
+imagens, descrições e textos legais do editor. Uma associação inválida nesse
+primeiro conjunto, ou um número anterior com descrição duplicada ou ausente
+mas com camadas órfãs, impede usar o preço de outro produto como substituto.
+Erros em conjuntos posteriores não bloqueiam a leitura do primeiro válido.
+Não há consulta periódica nem validações antigas em cache.
 
 Os eventos locais de carregamento registram separadamente o tempo da consulta
 ao After, da localização do DOCX e da leitura/reutilização do texto. Não gravam

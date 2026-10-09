@@ -470,8 +470,7 @@ const getFieldDisplayLabel = (field: OfferTextField) =>
 const getMechanicDisplayLabel = (type: string) =>
   type
     .replace(/\bCartao\b/g, "Cartão")
-    .replace(/^Mecanica nao mapeada:/, "Mecânica não mapeada:")
-    .replace(/^Porcentagem Desconto$/, "Porcentagem de desconto");
+    .replace(/^Mecanica nao mapeada:/, "Mecânica não mapeada:");
 
 const isValueField = (field: OfferTextField) =>
   field.format === "price" ||
@@ -742,11 +741,6 @@ const OfferInstallmentJumpControl = ({
     </label>
   );
 };
-
-const getOptionControlClassName = (optionGroup: OfferOptionGroup): string =>
-  optionGroup.id === "cardKind"
-    ? "offer-extra-field offer-card-kind-field"
-    : "offer-extra-field";
 
 const ProductEditor = ({
   isRnProject,
@@ -1093,7 +1087,7 @@ const ProductEditor = ({
                 <OfferOptionControl
                   optionGroup={optionGroup}
                   key={optionGroup.id}
-                  className={getOptionControlClassName(optionGroup)}
+                  className="offer-extra-field"
                   onChange={(selectedIndex) =>
                     onOptionChange(
                       offerLayerIndex,
@@ -1209,7 +1203,7 @@ const ProductEditor = ({
                     <OfferOptionControl
                       optionGroup={optionGroup}
                       key={optionGroup.id}
-                      className={getOptionControlClassName(optionGroup)}
+                      className="offer-extra-field"
                       onChange={(selectedIndex) =>
                         onOptionChange(
                           offerLayerIndex,
@@ -1314,7 +1308,7 @@ const ProductEditor = ({
                     <OfferOptionControl
                       optionGroup={optionGroup}
                       key={optionGroup.id}
-                      className={getOptionControlClassName(optionGroup)}
+                      className="offer-extra-field"
                       onChange={(selectedIndex) =>
                         onOptionChange(
                           offerLayerIndex,

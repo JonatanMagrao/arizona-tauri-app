@@ -114,13 +114,14 @@ export const evalTS = <
   });
 };
 
-export const evalFile = (file: string) => {
+export const evalFile = (file: string, afterLoad = "") => {
+  const quotedFile = JSON.stringify(file);
   return evalES(
-    "typeof $ !== 'undefined' ? $.evalFile(\"" +
-      file +
-      '") : fl.runScript(FLfile.platformPathToURI("' +
-      file +
-      '"));',
+    "typeof $ !== 'undefined' ? $.evalFile(" +
+      quotedFile +
+      ") : fl.runScript(FLfile.platformPathToURI(" +
+      quotedFile +
+      "));" + afterLoad,
     true
   );
 };
@@ -207,12 +208,17 @@ export const initBolt = (log = true) => {
     const extRoot = csi.getSystemPath("extension");
     const jsxSrc = `${extRoot}/jsx/index.js`;
     const jsxBinSrc = `${extRoot}/jsx/index.jsxbin`;
+    const schemaPath = `${extRoot}/js/assets/schema.json`;
+    // Load and configure in one host request, before any queued offer read.
+    const configureSchema =
+      `var schemaHost = typeof $ !== 'undefined' ? $ : window; ` +
+      `schemaHost[${JSON.stringify(ns)}].configureMechanicsSchemaPath(${JSON.stringify(schemaPath)});`;
     if (fs.existsSync(jsxSrc)) {
       if (log) console.log(jsxSrc);
-      evalFile(jsxSrc);
+      evalFile(jsxSrc, configureSchema);
     } else if (fs.existsSync(jsxBinSrc)) {
       if (log) console.log(jsxBinSrc);
-      evalFile(jsxBinSrc);
+      evalFile(jsxBinSrc, configureSchema);
     }
     initializeCEP();
   }

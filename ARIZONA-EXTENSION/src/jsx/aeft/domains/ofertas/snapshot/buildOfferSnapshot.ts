@@ -1,5 +1,6 @@
 import type {
   InternalOfferDetails,
+  InternalOfferMechanic,
   InternalOfferProduct,
   OfferDetails,
   OfferEditorSnapshot,
@@ -11,14 +12,13 @@ import type {
 } from "../types";
 import {
   createOfferSummaries,
-  getLayerByIndex,
   getLayerSource,
   getOfferLayers,
   getOffersComp,
-  nameMatches,
   readProductImageInfo,
   resolveSelectedOffer,
 } from "../layers/findLayers";
+import { resolveOfferProductLayers } from "../layers/offerStructure";
 import {
   getNestedTextProperty,
   hasPropertyExpression,
@@ -32,6 +32,7 @@ import {
   readLegalControls,
 } from "../layers/legalControls";
 import { readMechanic } from "../mechanics/registry";
+import { withMechanicsSchema } from "../mechanics/schemaRuntime";
 
 const createSnapshot = (): OfferEditorSnapshot => ({
   ok: false,
@@ -87,7 +88,7 @@ export const getOffersEditorSnapshot = (
   return snapshot;
 };
 
-export const generateOfferData = (offer: Layer): InternalOfferDetails => {
+export const generateOfferData = (offer: Layer): InternalOfferDetails => withMechanicsSchema(() => {
   const errors: string[] = [];
   const products: InternalOfferProduct[] = [];
   const offerSource = getLayerSource(offer, "oferta", errors);
@@ -95,61 +96,53 @@ export const generateOfferData = (offer: Layer): InternalOfferDetails => {
   const legalTextProperty = getLegalTextProperty(legalSource, errors);
   const legalControls = readLegalControls(legalSource, errors);
 
-  if (offerSource !== null) {
-    for (let index = 1; index <= offerSource.numLayers; index += 1) {
-      const descriptionPrecomp = offerSource.layer(index);
+  const productLayers = resolveOfferProductLayers(offerSource, errors);
+  for (let index = 0; index < productLayers.length; index += 1) {
+    const layers = productLayers[index];
+    const descriptionPrecomp = layers.descriptionLayer;
+    const descriptionProperty = getNestedTextProperty(
+      descriptionPrecomp,
+      "DESCRITIVO",
+      "descricao do produto " + layers.slot,
+      errors
+    );
+    const valueLayer = layers.mechanicLayer;
+    const mechanic: InternalOfferMechanic = valueLayer === null
+      ? {
+          type: "Associação de produto inválida",
+          fields: [],
+          optionGroups: [],
+          unsupported: true,
+        }
+      : readMechanic(valueLayer, errors);
+    const imageLayer = layers.imageLayer;
+    const image = readProductImageInfo(
+      imageLayer,
+      "imagem do produto " + layers.slot,
+      errors
+    );
 
-      if (
-        !descriptionPrecomp.enabled ||
-        !nameMatches(descriptionPrecomp.name, /DESCRITIVO/)
-      ) {
-        continue;
-      }
-
-      const descriptionProperty = getNestedTextProperty(
-        descriptionPrecomp,
-        "DESCRITIVO",
-        "descricao da oferta " + products.length,
-        errors
-      );
-      const valueLayer = getLayerByIndex(offerSource, descriptionPrecomp.index + 1);
-
-      if (valueLayer === null) {
-        errors.push(
-          "Nao encontrei a mecanica depois de " + descriptionPrecomp.name + "."
-        );
-        continue;
-      }
-
-      const mechanic = readMechanic(valueLayer, errors);
-      const imageLayer = getLayerByIndex(offerSource, valueLayer.index + 1);
-      const image = readProductImageInfo(
-        imageLayer,
-        "imagem da oferta " + products.length,
-        errors
-      );
-
-      products.push({
-        index: products.length,
-        description: {
-          id: "description",
-          label: "Descricao",
-          value: readText(descriptionProperty),
-          format: "text",
-          enabled: descriptionProperty !== null,
-          multiline: true,
-          hasExpression: hasPropertyExpression(descriptionProperty),
-          expressionEnabled: isPropertyExpressionEnabled(descriptionProperty),
-        },
-        descriptionLayer: descriptionPrecomp,
-        descriptionProperty,
-        mechanic,
-        mechanicLayer: valueLayer,
-        imageLayer,
-        image,
-        unsupported: mechanic.unsupported === true,
-      });
-    }
+    products.push({
+      index: layers.slot - 1,
+      associationValid: layers.valid,
+      description: {
+        id: "description",
+        label: "Descricao",
+        value: readText(descriptionProperty),
+        format: "text",
+        enabled: layers.valid && descriptionProperty !== null,
+        multiline: true,
+        hasExpression: hasPropertyExpression(descriptionProperty),
+        expressionEnabled: isPropertyExpressionEnabled(descriptionProperty),
+      },
+      descriptionLayer: descriptionPrecomp,
+      descriptionProperty,
+      mechanic,
+      mechanicLayer: valueLayer,
+      imageLayer,
+      image,
+      unsupported: !layers.valid || mechanic.unsupported === true,
+    });
   }
 
   return {
@@ -170,7 +163,7 @@ export const generateOfferData = (offer: Layer): InternalOfferDetails => {
     legalTextProperty,
     errors,
   };
-};
+});
 
 export const toPublicOfferDetails = (
   offer: Layer,
@@ -190,7 +183,7 @@ export const toPublicOfferDetails = (
         label: field.label,
         value: field.value,
         format: field.format,
-        enabled: field.enabled,
+        enabled: product.associationValid !== false && field.enabled,
       });
     }
 
@@ -209,7 +202,7 @@ export const toPublicOfferDetails = (
         label: optionGroup.label,
         options,
         selectedIndex: optionGroup.selectedIndex,
-        enabled: optionGroup.enabled,
+        enabled: product.associationValid !== false && optionGroup.enabled,
       });
     }
 
@@ -227,7 +220,7 @@ export const toPublicOfferDetails = (
       },
       mechanic: {
         type: product.mechanic.type,
-        unsupported: product.mechanic.unsupported,
+        unsupported: product.associationValid === false || product.mechanic.unsupported,
         fields,
         optionGroups,
         installmentJump:
@@ -236,7 +229,7 @@ export const toPublicOfferDetails = (
             ? null
             : {
                 selectedTarget: product.mechanic.installmentJump.selectedTarget,
-                enabled: product.mechanic.installmentJump.enabled,
+                enabled: product.associationValid !== false && product.mechanic.installmentJump.enabled,
               },
       },
       image: product.image,

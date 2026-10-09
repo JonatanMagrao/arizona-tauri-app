@@ -1,6 +1,8 @@
 import type { OfferTextField } from "../types";
+import { isAllTakePayMechanicType } from "../../../../../shared/allTakePayMechanic";
 import { getOfferLayers, getOffersComp } from "../layers/findLayers";
 import { getFirstOfferProductForValidation } from "./firstOfferProductForValidation";
+import { withMechanicsSchema } from "../mechanics/schemaRuntime";
 
 const normalizeValidationFieldName = (value: string): string =>
   String(value)
@@ -33,7 +35,7 @@ export const getOffersFirstProductInfo = (): Array<{
   pagueValue: string;
   leveField?: { fieldId: string; fieldIndex: number; value: string };
   pagueField?: { fieldId: string; fieldIndex: number; value: string };
-}> => {
+}> => withMechanicsSchema(() => {
   const comp = getOffersComp();
   if (comp === null) return [];
 
@@ -76,12 +78,9 @@ export const getOffersFirstProductInfo = (): Array<{
         entry.mechanicType = firstProduct.mechanic.type;
 
         const fields = firstProduct.mechanic.fields;
-        const isDePorMechanic =
-          entry.mechanicType === "De Por" ||
-          entry.mechanicType === "De Por Cartao CRF" ||
-          entry.mechanicType === "De Por Meu CRF (Dual)" ||
+        const isCombinedMechanic =
           entry.mechanicType === "De X Por Y | X% Desconto | Leve X Pague Y";
-        if (entry.mechanicType === "Leve X Pague Y") {
+        if (isAllTakePayMechanicType(entry.mechanicType)) {
           for (let j = 0; j < fields.length; j += 1) {
             if (fieldNameContains(fields[j], "leve x")) {
               entry.leveValue = extractIntegerText(fields[j].value);
@@ -99,7 +98,7 @@ export const getOffersFirstProductInfo = (): Array<{
               };
             }
           }
-        } else if (isDePorMechanic) {
+        } else if (isCombinedMechanic) {
           for (let j = 0; j < fields.length; j += 1) {
             if (fields[j].label === "De" || fields[j].label === "Preco De") {
               entry.deValue = fields[j].value;
@@ -123,13 +122,12 @@ export const getOffersFirstProductInfo = (): Array<{
               };
             }
           }
-        }
-
-        if (isDePorMechanic) {
-          // Valida o roteiro contra o preco final ("Por") desta mecanica.
-        } else if (entry.mechanicType === "De Por Parcelamento Cartao Carrefour") {
+        } else if (entry.mechanicType === "De X Por Y Parcelamento") {
           for (let j = 0; j < fields.length; j += 1) {
-            if (fields[j].format === "price" && fields[j].value !== "") {
+            if (
+              (fields[j].label === "Preco" || fields[j].label === "Parcela") &&
+              fields[j].value !== ""
+            ) {
               entry.priceAcceptedValues.push(fields[j].value);
             }
 
@@ -157,18 +155,8 @@ export const getOffersFirstProductInfo = (): Array<{
             }
           }
 
-          if (entry.priceValue === "") {
-            for (let j = 0; j < fields.length; j += 1) {
-              if (fields[j].format === "price") {
-                entry.priceValue = fields[j].value;
-                entry.priceField = {
-                  fieldId: fields[j].id,
-                  fieldIndex: j,
-                  value: fields[j].value,
-                };
-                break;
-              }
-            }
+          if (entry.priceValue === "" && entry.porValue !== "") {
+            entry.priceValue = entry.porValue;
           }
         } else {
           for (let j = 0; j < fields.length; j += 1) {
@@ -205,4 +193,4 @@ export const getOffersFirstProductInfo = (): Array<{
   }
 
   return result;
-};
+});

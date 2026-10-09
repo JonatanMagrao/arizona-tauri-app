@@ -233,8 +233,7 @@ export const RoteiroPanel = ({
                       <span className="roteiro-offer__rule">
                         {info.mechanicType
                           .replace(/\bCartao\b/g, "Cartão")
-                          .replace(/^Mecanica nao mapeada:/, "Mecânica não mapeada:")
-                          .replace(/^Porcentagem Desconto$/, "Porcentagem de desconto")}
+                          .replace(/^Mecanica nao mapeada:/, "Mecânica não mapeada:")}
                       </span>
                     )}
                   </div>

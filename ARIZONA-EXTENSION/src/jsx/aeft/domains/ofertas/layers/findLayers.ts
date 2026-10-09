@@ -286,22 +286,6 @@ export const getLayerByOption = (
   return layer;
 };
 
-export const findLayerByNamePart = (
-  source: CompItem | null,
-  namePart: string
-): Layer | null => {
-  if (source === null) return null;
-
-  for (let index = 1; index <= source.numLayers; index += 1) {
-    const layer = source.layer(index);
-    if (String(layer.name).indexOf(namePart) >= 0) {
-      return layer;
-    }
-  }
-
-  return null;
-};
-
 export const findPropertyDeep = (
   group: PropertyBase | null,
   matcher: (candidate: Property) => boolean

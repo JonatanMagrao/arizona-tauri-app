@@ -4,7 +4,11 @@ import {
   openOfferSourceInViewer,
 } from "../layers/findLayers";
 import { generateOfferData } from "../snapshot/buildOfferSnapshot";
-import { createActionResult } from "./shared";
+import {
+  assertOfferProductAssociation,
+  createActionResult,
+  findOfferProductByIndex,
+} from "./shared";
 
 export const replaceOfferProductImage = (
   offerLayerIndex: number,
@@ -21,12 +25,13 @@ export const replaceOfferProductImage = (
 
   try {
     const details = generateOfferData(offer);
-    const product = details.products[productIndex];
+    const product = findOfferProductByIndex(details.products, productIndex);
     result.errors = details.errors.slice(0);
 
     if (!product) {
       throw new Error("Produto da oferta nao encontrado.");
     }
+    assertOfferProductAssociation(product);
 
     const imageLayer = product.imageLayer;
 

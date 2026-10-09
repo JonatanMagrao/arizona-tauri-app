@@ -1,0 +1,178 @@
+{
+  "version": 1,
+  "SIMPLES": {
+    "layers": {
+      "preco": "PRECO",
+      "controlador": "CONTROLADOR DE MECANICA"
+    },
+    "effects": {
+      "unit": {
+        "index": 1,
+        "name": "Unidade",
+        "layer": "controlador",
+        "options": [
+          { "index": 1, "label": "Cada" },
+          { "index": 2, "label": "Kg" },
+          { "index": 3, "label": "A cada 100g" },
+          { "index": 4, "label": "Kg/cada" }
+        ]
+      }
+    }
+  },
+  "TODOS A COM LEVE X PAGUE Y": {
+    "layers": {
+      "controlador": "CONTROLADOR DE MECANICA",
+      "leve-x": "LEVE X",
+      "pague-y": "PAGUE Y"
+    },
+    "effects": {
+      "subtype": {
+        "index": 1,
+        "name": "Subtipo",
+        "layer": "controlador",
+        "options": [
+          { "index": 1, "label": "Padrão" },
+          { "index": 2, "label": "Meu Carrefour" },
+          { "index": 3, "label": "Cartão Carrefour" }
+        ]
+      }
+    }
+  },
+  "TODOS A COM X% DESCONTO": {
+    "layers": {
+      "controlador": "CONTROLADOR DE MECANICA",
+      "por-centagem-desconto": "PORCENTAGEM DESCONTO"
+    },
+    "effects": {
+      "mechanicType": {
+        "index": 1,
+        "name": "Tipo",
+        "layer": "controlador",
+        "options": [
+          { "index": 1, "label": "desconto" },
+          { "index": 2, "label": "na 2ª unidade" },
+          { "index": 3, "label": "Direto no caixa" }
+        ]
+      },
+      "mechanicSubtype": {
+        "index": 2,
+        "name": "Subtipo",
+        "layer": "controlador",
+        "options": [
+          { "index": 1, "label": "Padrão" },
+          { "index": 2, "label": "Meu Carrefour" },
+          { "index": 3, "label": "Cartão Carrefour" }
+        ]
+      }
+    }
+  },
+  "DESCONTO R$ CARTAO CRF": {
+    "layers": {
+      "desconto-reais": "PRECO DESCONTO"
+    },
+    "effects": {}
+  },
+  "DE X POR Y PARCELAMENTO": {
+    "layers": {
+      "marcadores": "MARCADORES",
+      "pulo-preco-cheio": "PULO PRECO CHEIO",
+      "pulo-parcela": "PULO PARCELA",
+      "controlador": "CONTROLADOR DE MECANICA",
+      "preco-de": "PRECO DE",
+      "preco": "PRECO",
+      "preco-parcela": "PRECO PARCELA",
+      "numero-de-parcelas": "NUMERO DE PARCELAS"
+    },
+    "effects": {
+      "mechanicCondition": {
+        "index": 1,
+        "name": "Condição",
+        "layer": "controlador",
+        "options": [
+          { "index": 1, "label": "Cartão Carrefour" },
+          { "index": 2, "label": "Plano Controle" },
+          { "index": 3, "label": "Cartão Carrefour/Plano Controle" },
+          { "index": 4, "label": "De/Por no Cartão Carrefour" },
+          { "index": 5, "label": "De/Por no Plano Controle" },
+          { "index": 6, "label": "De/Por no Cartão Carrefour/Plano Controle" },
+          { "index": 7, "label": "De/Por no Cartão Carrefour PB" }
+        ]
+      }
+    }
+  },
+  "DE X POR Y MEU CRF POR Z CARTAO CRF": {
+    "layers": {
+      "controlador": "CONTROLADOR DE MECANICA",
+      "marcadores": "MARCADORES",
+      "pulo-preco-meu-crf": "PULO PRECO MEU CRF",
+      "pulo-preco-meu-cartao-crf": "PULO PRECO CARTAO CRF",
+      "preco-de": "PRECO DE",
+      "preco-por": "PRECO POR",
+      "preco-por-cartao": "PRECO POR CARTAO"
+    },
+    "effects": {
+      "unit": {
+        "index": 1,
+        "name": "Unidade",
+        "layer": "controlador",
+        "options": [
+          { "index": 1, "label": "Cada" },
+          { "index": 2, "label": "Kg" },
+          { "index": 3, "label": "A cada 100g" },
+          { "index": 4, "label": "Kg/cada" }
+        ]
+      }
+    }
+  },
+  "DE X POR Y | X% DESCONTO | LEVE X PAGUE Y": {
+    "layers": {
+      "marcadores": "MARCADORES",
+      "pulo-preco-cheio": "PULO PRECO CHEIO",
+      "pulo": "PULO",
+      "controlador": "CONTROLADOR DE MECANICA",
+      "preco-de": "PRECO DE",
+      "preco-por": "PRECO POR",
+      "por-centagem-desconto": "PORCENTAGEM DESCONTO"
+    },
+    "effects": {
+      "mechanicType": {
+        "index": 1,
+        "name": "Tipo",
+        "layer": "controlador",
+        "options": [
+          { "index": 1, "label": "De Por" },
+          { "index": 2, "label": "Nesta Embalagem" },
+          { "index": 3, "label": "Levando X Unidades" },
+          { "index": 4, "label": "Com o Desconto" },
+          { "index": 5, "label": "A partir de X Unidades" }
+        ]
+      },
+      "mechanicSubtype": {
+        "index": 2,
+        "name": "Subtipo",
+        "layer": "controlador",
+        "options": [
+          { "index": 1, "label": "Padrão" },
+          { "index": 2, "label": "Meu Carrefour" },
+          { "index": 3, "label": "Cartão Carrefour" }
+        ]
+      },
+      "unit": {
+        "index": 3,
+        "name": "Unidade",
+        "layer": "controlador",
+        "options": [
+          { "index": 1, "label": "Cada" },
+          { "index": 2, "label": "Kg" },
+          { "index": 3, "label": "A cada 100g" },
+          { "index": 4, "label": "Kg/cada" }
+        ]
+      },
+      "quantidade-x": {
+        "index": 4,
+        "name": "Quantidade X",
+        "layer": "controlador"
+      }
+    }
+  }
+}

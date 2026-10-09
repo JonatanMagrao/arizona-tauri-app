@@ -6,6 +6,7 @@ import type {
 } from "../types";
 import { getOfferByLayerIndex } from "../layers/findLayers";
 import { generateOfferData } from "../snapshot/buildOfferSnapshot";
+import { withMechanicsSchema } from "../mechanics/schemaRuntime";
 
 export const createActionResult = (
   message: string = ""
@@ -21,7 +22,7 @@ export const updateOfferProduct = (
   productIndex: number,
   undoName: string,
   updater: (product: InternalOfferProduct) => string
-): OfferEditorActionResult => {
+): OfferEditorActionResult => withMechanicsSchema(() => {
   const result = createActionResult();
   const offer = getOfferByLayerIndex(offerLayerIndex, result);
 
@@ -31,12 +32,13 @@ export const updateOfferProduct = (
 
   try {
     const details = generateOfferData(offer);
-    const product = details.products[productIndex];
+    const product = findOfferProductByIndex(details.products, productIndex);
     result.errors = details.errors.slice(0);
 
     if (!product) {
       throw new Error("Produto nao encontrado.");
     }
+    assertOfferProductAssociation(product);
 
     result.message = updater(product);
     result.ok = true;
@@ -50,6 +52,29 @@ export const updateOfferProduct = (
   }
 
   return result;
+});
+
+// Product indices identify numbered comment slots, not positions in the active array.
+export const findOfferProductByIndex = (
+  products: InternalOfferProduct[],
+  productIndex: number
+): InternalOfferProduct | null => {
+  for (let index = 0; index < products.length; index += 1) {
+    if (products[index].index === productIndex) return products[index];
+  }
+  return null;
+};
+
+export const assertOfferProductAssociation = (
+  product: InternalOfferProduct
+): void => {
+  if (product.associationValid === false) {
+    throw new Error(
+      "Associação de camadas inválida para o produto " +
+        (product.index + 1) +
+        ". Verifique os comentários."
+    );
+  }
 };
 
 export const findTextField = (

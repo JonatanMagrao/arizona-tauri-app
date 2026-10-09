@@ -128,6 +128,7 @@ function fixture({ reorder = false } = {}) {
   const offer = new AVLayer("Oferta_1", [], new CompItem("Oferta", [
     new AVLayer("Legal", [], legalSource),
   ]));
+  offer.source.layer(1).comment = "TEXTO LEGAL";
   const miolo = new CompItem("Miolo", [offer]);
   const undo = { opened: 0, closed: 0 };
   const app = {

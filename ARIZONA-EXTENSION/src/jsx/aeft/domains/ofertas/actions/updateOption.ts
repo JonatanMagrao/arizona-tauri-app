@@ -3,10 +3,6 @@ import type {
   OfferInstallmentJumpTarget,
 } from "../types";
 import {
-  applyCardInstallmentJump,
-  CARD_INSTALLMENT_MECHANIC_TYPE,
-} from "../mechanics/parcelamento";
-import {
   applyDeXPorYInstallmentJump,
   DE_X_POR_Y_INSTALLMENT_MECHANIC_TYPE,
 } from "../mechanics/deXPorYParcelamento";
@@ -57,11 +53,7 @@ export const updateOfferInstallmentJump = (
     productIndex,
     "Atualizar jump do parcelamento",
     (product) => {
-      if (product.mechanic.type === CARD_INSTALLMENT_MECHANIC_TYPE) {
-        applyCardInstallmentJump(product, target);
-      } else if (
-        product.mechanic.type === DE_X_POR_Y_INSTALLMENT_MECHANIC_TYPE
-      ) {
+      if (product.mechanic.type === DE_X_POR_Y_INSTALLMENT_MECHANIC_TYPE) {
         applyDeXPorYInstallmentJump(product, target);
       } else if (
         product.mechanic.type ===

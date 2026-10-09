@@ -43,11 +43,11 @@ test("prioritizes the source comment over the source name", () => {
 
 test("uses the source name when the comment is empty", () => {
   assert.deepEqual(
-    buildMechanicSourceIdentity("  \r\n", " LEVE X PAGUE Y 2 "),
+    buildMechanicSourceIdentity("  \r\n", " TODOS A COM LEVE X PAGUE Y 2 "),
     {
       comment: "",
-      sourceName: "LEVE X PAGUE Y 2",
-      candidates: ["LEVE X PAGUE Y 2"],
+      sourceName: "TODOS A COM LEVE X PAGUE Y 2",
+      candidates: ["TODOS A COM LEVE X PAGUE Y 2"],
     }
   );
 });
@@ -61,10 +61,10 @@ test("keeps an unrecognized comment first so the registry can try the source nam
 });
 
 test("does not duplicate identical comment and source name candidates", () => {
-  assert.deepEqual(buildMechanicSourceIdentity(" DE POR ", "DE POR"), {
-    comment: "DE POR",
-    sourceName: "DE POR",
-    candidates: ["DE POR"],
+  assert.deepEqual(buildMechanicSourceIdentity(" SIMPLES ", "SIMPLES"), {
+    comment: "SIMPLES",
+    sourceName: "SIMPLES",
+    candidates: ["SIMPLES"],
   });
 });
 

@@ -82,6 +82,16 @@ Tauri solicitante ── Edge Function render-queue ──> ADMIN/Supabase
    `ARIZONA-EXTENSION/`, `ADMIN/`). Rode os comandos npm na pasta certa.
 5. Trabalhando em um projeto, siga os AGENTS.md internos dele quando existirem.
 
+`ARIZONA-EXTENSION/src/js/assets/schema.json` é a configuração declarativa
+oficial das sete mecânicas do CEP. O build valida o JSON e `copyAssets` o
+distribui em `dist/cep/js/assets/schema.json`. O host lê diretamente esse asset
+e fixa uma configuração validada durante cada operação; não há módulo gerado.
+No desenvolvimento, edições do asset passam a valer na próxima leitura sem
+recompilar. O JSON integra a assinatura da distribuição oficial: alterações
+para clientes exigem reempacotamento e assinatura, sem modificar o payload
+instalado. `teste.json` na raiz preserva o exemplo e não é consumido pelo runtime.
+Veja `ARIZONA-EXTENSION/README.md`, seção Configuração das mecânicas.
+
 ## Licenciamento — leia antes de mexer
 
 Antes de alterar autenticação, licenciamento, Supabase secrets, validação da

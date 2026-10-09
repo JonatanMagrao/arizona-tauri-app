@@ -3,6 +3,7 @@ import type {
   OfferValidationFieldKey,
   OfferValidationInfo,
 } from "../types";
+import { isAllTakePayMechanicType } from "../../../../../shared/allTakePayMechanic";
 
 export interface LineSegment {
   text: string;
@@ -12,29 +13,11 @@ export interface LineSegment {
   value?: string;
 }
 
-const CARD_INSTALLMENT_MECHANIC_TYPE = "De Por Parcelamento Cartao Carrefour";
+const INSTALLMENT_MECHANIC_TYPE = "De X Por Y Parcelamento";
 
 const VALIDATED_TYPES = new Set([
   "Simples",
-  "De Por",
-  "De Por Cartao CRF",
-  "De Por Meu CRF (Dual)",
   "De X Por Y | X% Desconto | Leve X Pague Y",
-  CARD_INSTALLMENT_MECHANIC_TYPE,
-  "Porcentagem Desconto",
-  "Desconto X%",
-  "Desconto X% Meu CRF",
-  "Desconto X% Cartao CRF",
-  "Desconto X% Cartao CRF Segunda Unidade",
-  "Todos A Com X% Desconto",
-]);
-
-const PERCENT_MECHANIC_TYPES = new Set([
-  "Porcentagem Desconto",
-  "Desconto X%",
-  "Desconto X% Meu CRF",
-  "Desconto X% Cartao CRF",
-  "Desconto X% Cartao CRF Segunda Unidade",
   "Todos A Com X% Desconto",
 ]);
 
@@ -178,10 +161,10 @@ const getFieldPriceValues = (
   fieldKey: OfferValidationFieldKey
 ): number[] => {
   const field = getValidationField(info, fieldKey);
-  if (!field || field.value === "") return getAcceptedPriceValues(info);
+  if (!field || field.value === "") return [];
 
   const value = normalizeValue(field.value);
-  return Number.isFinite(value) ? [value] : getAcceptedPriceValues(info);
+  return Number.isFinite(value) ? [value] : [];
 };
 
 const matchesAnyPriceValue = (
@@ -197,16 +180,15 @@ const matchesAnyPriceValue = (
   return false;
 };
 
-const getCardInstallmentFieldKey = (
+const getInstallmentFieldKey = (
   line: string,
   contextStart: number,
   matchIndex: number,
-  priceCount: number,
   info: OfferValidationInfo
 ): OfferValidationFieldKey | undefined => {
   const before = line.slice(contextStart, matchIndex).toUpperCase();
 
-  if (/(VEZES|PARCELA|PARCELAS|JUROS)/.test(before)) {
+  if (/(VEZES|PARCELA|PARCELAS|JUROS)/.test(before) || /\b\d+\s*X\s*(?:DE\s*)?$/.test(before)) {
     return "price";
   }
 
@@ -222,14 +204,10 @@ const getCardInstallmentFieldKey = (
     return "de";
   }
 
-  if (priceCount === 1 && info.priceField) {
-    return "price";
-  }
-
   return undefined;
 };
 
-const buildCardInstallmentSegments = (
+const buildInstallmentSegments = (
   line: string,
   info: OfferValidationInfo
 ): LineSegment[] => {
@@ -255,11 +233,10 @@ const buildCardInstallmentSegments = (
       segments.push({ text: line.slice(lastIndex, priceMatch.index) });
     }
 
-    const fieldKey = getCardInstallmentFieldKey(
+    const fieldKey = getInstallmentFieldKey(
       line,
       lastIndex,
       priceMatch.index,
-      matches.length,
       info
     );
     const aeValues =
@@ -300,19 +277,19 @@ export const buildLineSegments = (
   line: string,
   info: OfferValidationInfo | undefined
 ): LineSegment[] => {
-  if (info?.mechanicType === "Leve X Pague Y") {
+  if (info && isAllTakePayMechanicType(info.mechanicType)) {
     return buildLevePagueSegments(line, info);
   }
 
-  if (info?.mechanicType === CARD_INSTALLMENT_MECHANIC_TYPE) {
-    return buildCardInstallmentSegments(line, info);
+  if (info?.mechanicType === INSTALLMENT_MECHANIC_TYPE) {
+    return buildInstallmentSegments(line, info);
   }
 
   if (!info || !VALIDATED_TYPES.has(info.mechanicType) || !info.priceValue) {
     return [{ text: line }];
   }
 
-  const isPercent = PERCENT_MECHANIC_TYPES.has(info.mechanicType);
+  const isPercent = info.mechanicType === "Todos A Com X% Desconto";
   const pattern = isPercent ? PERCENT_PATTERN : PRICE_PATTERN;
   const aeValues = getAcceptedPriceValues(info);
   const segments: LineSegment[] = [];

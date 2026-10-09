@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
+import { isAllTakePayMechanicType } from "../src/shared/allTakePayMechanic.js";
 
 const [readerSource, editorSource, discoverySource] = await Promise.all([
   readFile(new URL("../src/jsx/aeft/domains/ofertas/snapshot/firstOfferProductForValidation.ts", import.meta.url), "utf8"),
@@ -40,6 +41,9 @@ function fixture() {
     calls.images = 0;
   };
   const mocks = {
+    "../mechanics/schemaRuntime": {
+      withMechanicsSchema: (callback) => callback(),
+    },
     "../layers/findLayers": {
       getLayerSource: (layer) => layer.source || null,
       getLayerByIndex: (source, index) => source?.unavailableIndices?.includes(index)
@@ -49,6 +53,29 @@ function fixture() {
       readProductImageInfo: () => { calls.images += 1; return { filePath: "product.png" }; },
       getOffersComp: () => ({}),
       getOfferLayers: () => offers,
+    },
+    "../layers/offerStructure": {
+      // Association is covered with native AE mocks and the production resolver
+      // in offer-structure.test.mjs. This suite isolates the lightweight reader.
+      resolveOfferProductLayers: (source, errors, unresolvedSlots = []) => {
+        const result = [];
+        if (source === null) return result;
+        for (let slot = 1; slot <= 3; slot += 1) {
+          const matching = (comment) => source.layers.filter((item) => item.comment === comment &&
+            !source.unavailableIndices?.includes(item.index));
+          const descriptions = matching(`DESCRITIVO ${slot}`);
+          const mechanics = matching(`MECANICA ${slot}`);
+          const images = matching(`PRODUTO ${slot}`);
+          if (descriptions.length !== 1) {
+            if (descriptions.length || mechanics.length || images.length) unresolvedSlots.push(slot);
+            continue;
+          }
+          if (!descriptions[0].enabled) continue;
+          result.push({ slot, descriptionLayer: descriptions[0], mechanicLayer: mechanics[0] || null,
+            imageLayer: images[0] || null, valid: mechanics.length === 1 && images.length === 1 });
+        }
+        return result;
+      },
     },
     "../layers/textFields": {
       getNestedTextProperty: (layer) => {
@@ -81,11 +108,23 @@ function fixture() {
   const reader = load(readerJavaScript, mocks).getFirstOfferProductForValidation;
   const editor = load(editorJavaScript, mocks).generateOfferData;
   const discovery = load(discoveryJavaScript, {
+    "../../../../../shared/allTakePayMechanic": { isAllTakePayMechanicType },
     "../layers/findLayers": mocks["../layers/findLayers"],
+    "../mechanics/schemaRuntime": mocks["../mechanics/schemaRuntime"],
     "./firstOfferProductForValidation": { getFirstOfferProductForValidation: reader },
   }).getOffersFirstProductInfo;
   const offer = (layers) => {
     layers.forEach((layer, index) => { layer.index = index + 1; });
+    const usedSlots = new Set();
+    for (const item of layers) {
+      if (!/^DESCRITIVO(?:\s+\d+)?$/.test(item.name)) continue;
+      const explicit = item.name.match(/\s+(\d+)$/);
+      const slot = explicit ? Number(explicit[1]) : [1, 2, 3].find((candidate) => !usedSlots.has(candidate));
+      usedSlots.add(slot);
+      item.comment = `DESCRITIVO ${slot}`;
+      if (layers[item.index]) layers[item.index].comment = `MECANICA ${slot}`;
+      if (layers[item.index + 1]) layers[item.index + 1].comment = `PRODUTO ${slot}`;
+    }
     const result = {
       index: offers.length + 1,
       name: `Oferta_${offers.length + 1}`,
@@ -119,7 +158,8 @@ function assertFirstProductParity(env, offer, expectedProductCount) {
   env.resetCalls();
   const actual = env.reader(offer);
   assert.deepEqual(serialize(actual), serialize(expected));
-  assert.equal(env.calls.mechanics.length, expectedProductCount > 0 ? 1 : 0);
+  assert.equal(env.calls.mechanics.length,
+    expectedProductCount > 0 && full.products[0].associationValid !== false ? 1 : 0);
   assert.equal(env.calls.legal, 0);
   assert.equal(env.calls.description, 0);
   assert.equal(env.calls.images, 0);
@@ -142,7 +182,7 @@ test("reads the same first product as the editor while skipping all other produc
   assertFirstProductParity(env, offer, 3);
 });
 
-test("ignores disabled descriptions and follows the editor's ascending layer order", () => {
+test("ignores disabled descriptions and follows the editor's numbered slot order", () => {
   const env = fixture();
   const offer = env.offer([
     description({ enabled: false }), mechanic("0,99"), image(),
@@ -151,8 +191,8 @@ test("ignores disabled descriptions and follows the editor's ascending layer ord
     description({ name: "DESCRITIVO 2" }), mechanic("2,99"), image(),
   ]);
   const first = assertFirstProductParity(env, offer, 2);
-  assert.equal(first.index, 0);
-  assert.equal(first.mechanic.fields[0].value, "3,99");
+  assert.equal(first.index, 1);
+  assert.equal(first.mechanic.fields[0].value, "2,99");
 });
 
 test("missing description text does not hide a product accepted by the editor", () => {
@@ -171,24 +211,27 @@ test("preserves unsupported and disabled mechanic layers instead of selecting an
   assert.equal(first.mechanic.unsupported, true);
 });
 
-test("missing adjacent mechanic is skipped with the same product index as the editor", () => {
+test("missing first mechanic does not redirect validation to another slot", () => {
   const env = fixture();
   const offer = env.offer([
     description(), mechanic("1,99"), image(),
     description(), mechanic("2,99"), image(),
   ]);
-  // A missing adjacent layer follows the same null result used by getLayerByIndex.
+  // Simulate a temporarily unavailable identified mechanic.
   offer.source.unavailableIndices = [2];
-  const first = assertFirstProductParity(env, offer, 1);
+  const first = assertFirstProductParity(env, offer, 2);
   assert.equal(first.index, 0);
-  assert.equal(first.mechanic.fields[0].value, "2,99");
+  assert.equal(first.mechanic.unsupported, true);
+  assert.deepEqual(serialize(first.mechanic.fields), []);
 });
 
-test("returns null for no active product, a trailing description, or no offer source", () => {
+test("returns null for no active product or no offer source and preserves a partial active slot", () => {
   const env = fixture();
   assertFirstProductParity(env, env.offer([layer("OTHER")]), 0);
   assertFirstProductParity(env, env.offer([description({ enabled: false }), mechanic()]), 0);
-  assertFirstProductParity(env, env.offer([description()]), 0);
+  const partial = assertFirstProductParity(env, env.offer([description()]), 1);
+  assert.equal(partial.index, 0);
+  assert.equal(partial.mechanic.unsupported, true);
   assertFirstProductParity(env, { index: 1, name: "Oferta_1", source: null }, 0);
 });
 

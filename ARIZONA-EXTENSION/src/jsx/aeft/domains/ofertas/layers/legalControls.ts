@@ -15,6 +15,7 @@ import {
   readValueProperty,
 } from "./textFields";
 import { makeLayerOptionGroup } from "../mechanics/shared";
+import { findOfferStructureLayer } from "./offerStructure";
 
 interface LegalTextLayerControlConfig {
   id: string;
@@ -96,14 +97,8 @@ export const getLegalTextSource = (
 ): CompItem | null => {
   if (offerSource === null) return null;
 
-  const legalPrecompLayer = getLayerByIndex(offerSource, 1);
-  if (legalPrecompLayer === null) {
-    addError(
-      errors,
-      "Nao encontrei a precomp de texto legal na layer 1 da oferta."
-    );
-    return null;
-  }
+  const legalPrecompLayer = findOfferStructureLayer(offerSource, "legal", errors);
+  if (legalPrecompLayer === null) return null;
 
   return getLayerSource(legalPrecompLayer, "texto legal", errors);
 };

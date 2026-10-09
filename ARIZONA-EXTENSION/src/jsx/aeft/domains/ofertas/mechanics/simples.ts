@@ -1,149 +1,24 @@
 import type { InternalOfferMechanic } from "../types";
-import { ALL_TAKE_PAY_MECHANIC_TYPE } from "../../../../../shared/allTakePayMechanic";
-import {
-  addError,
-  getLayerByIndex,
-  getLayerSource,
-} from "../layers/findLayers";
-import {
-  getEffectControlValueProperty,
-  makeControllerOptionGroup,
-  makeIndexedTextField,
-  makeTextField,
-} from "./shared";
-
-const SIMPLE_CONTROLLER_LAYER_INDEX = 4;
-const SIMPLE_CONTROLLER_LAYER_NAME = "Controlador de Mecânica";
+import { readConfiguredMechanic } from "./schemaBindings";
 
 export function readSimpleMechanic(
   valueLayer: Layer,
   errors: string[]
 ): InternalOfferMechanic {
-  const source = getLayerSource(valueLayer, "mecanica simples", errors);
-  const candidateControllerLayer = getLayerByIndex(
-    source,
-    SIMPLE_CONTROLLER_LAYER_INDEX
-  );
-  let controllerLayer: Layer | null = candidateControllerLayer;
-
-  if (controllerLayer === null) {
-    addError(
-      errors,
-      "Nao encontrei a layer 4 Controlador de Mecanica na mecanica simples."
-    );
-  } else if (
-    String(controllerLayer.name).toLowerCase() !==
-    SIMPLE_CONTROLLER_LAYER_NAME.toLowerCase()
-  ) {
-    addError(
-      errors,
-      'A layer 4 deveria se chamar "' + SIMPLE_CONTROLLER_LAYER_NAME + '".'
-    );
-    controllerLayer = null;
-  }
-
-  const unitProperty = getEffectControlValueProperty(
-    controllerLayer,
-    1,
-    "Unidade",
-    "mecanica simples",
+  return readConfiguredMechanic(
+    valueLayer,
+    "SIMPLES",
     errors
   );
-
-  return {
-    type: "Simples",
-    fields: [
-      makeTextField(source, "PRECO", "Preco", "price", "preco simples", errors),
-    ],
-    optionGroups: [
-      makeControllerOptionGroup("unit", "Unidade", unitProperty, [
-        { label: "Cada" },
-        { label: "Kg" },
-        { label: "A cada 100g" },
-        { label: "Kg/cada" },
-      ]),
-    ],
-  };
-}
-
-export function readLeveXPagueYMechanic(
-  valueLayer: Layer,
-  errors: string[]
-): InternalOfferMechanic {
-  const source = getLayerSource(valueLayer, "leve x pague y", errors);
-
-  return {
-    type: "Leve X Pague Y",
-    fields: [
-      makeIndexedTextField(source, 3, "Leve X", "integer", "leve x pague y", errors),
-      makeIndexedTextField(source, 4, "Pague Y", "integer", "leve x pague y", errors),
-    ],
-    optionGroups: [],
-  };
 }
 
 export function readAllTakeXPayYMechanic(
   valueLayer: Layer,
   errors: string[]
 ): InternalOfferMechanic {
-  const source = getLayerSource(
+  return readConfiguredMechanic(
     valueLayer,
-    "todos a com leve x pague y",
+    "TODOS A COM LEVE X PAGUE Y",
     errors
   );
-  const candidateControllerLayer = getLayerByIndex(source, 3);
-  let controllerLayer: Layer | null = candidateControllerLayer;
-
-  if (controllerLayer === null) {
-    addError(
-      errors,
-      "Nao encontrei a layer 3 Controlador de Mecanica em Todos a Com Leve X Pague Y."
-    );
-  } else if (
-    String(controllerLayer.name).toLowerCase() !==
-    SIMPLE_CONTROLLER_LAYER_NAME.toLowerCase()
-  ) {
-    addError(
-      errors,
-      'A layer 3 deveria se chamar "' + SIMPLE_CONTROLLER_LAYER_NAME + '".'
-    );
-    controllerLayer = null;
-  }
-
-  const subtypeProperty = getEffectControlValueProperty(
-    controllerLayer,
-    1,
-    "Subtipo",
-    "todos a com leve x pague y",
-    errors
-  );
-
-  return {
-    type: ALL_TAKE_PAY_MECHANIC_TYPE,
-    fields: [
-      makeIndexedTextField(
-        source,
-        4,
-        "Leve X",
-        "integer",
-        "todos a com leve x pague y",
-        errors
-      ),
-      makeIndexedTextField(
-        source,
-        5,
-        "Pague Y",
-        "integer",
-        "todos a com leve x pague y",
-        errors
-      ),
-    ],
-    optionGroups: [
-      makeControllerOptionGroup("subtype", "Subtipo", subtypeProperty, [
-        { label: "Padrão" },
-        { label: "Meu Carrefour" },
-        { label: "Cartão Carrefour" },
-      ]),
-    ],
-  };
 }

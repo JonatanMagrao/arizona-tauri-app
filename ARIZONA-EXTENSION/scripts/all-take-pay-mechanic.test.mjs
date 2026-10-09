@@ -19,7 +19,7 @@ test("recognizes the new Todos A Com Leve X Pague Y name", () => {
   assert.equal(duplicatedPrecompPattern.test("TODOS A COM LEVE X PAGUE Y 2"), true);
 });
 
-test("keeps legacy AEPs compatible without accepting nearby names", () => {
+test("keeps the same-family alias without accepting nearby names", () => {
   assert.equal(isAllTakePayMechanicType("Todos A Leve X Pague Y"), true);
   assert.equal(duplicatedPrecompPattern.test("TODOS A LEVE X PAGUE Y"), true);
   assert.equal(duplicatedPrecompPattern.test("TODOS COM LEVE X PAGUE Y"), false);

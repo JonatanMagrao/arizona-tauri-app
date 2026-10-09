@@ -9,7 +9,6 @@ import type {
 } from "../types";
 import {
   addError,
-  findLayerByNamePart,
   findPropertyDeep,
   getLayerByOption,
   isNumericValueProperty,
@@ -89,19 +88,30 @@ export const makeControllerOptionGroup = (
   label: string,
   controllerProperty: Property | null,
   options: OfferOption[],
-  placement: OfferOptionGroupPlacement = "controls"
+  placement: OfferOptionGroupPlacement = "controls",
+  controllerOptionValues?: number[]
 ): InternalOptionGroup => {
   let selectedIndex = 0;
 
   if (controllerProperty !== null) {
-    selectedIndex = Math.round(Number(controllerProperty.value)) - 1;
+    const selectedValue = Math.round(Number(controllerProperty.value));
+    if (controllerOptionValues) {
+      for (let index = 0; index < controllerOptionValues.length; index += 1) {
+        if (controllerOptionValues[index] === selectedValue) {
+          selectedIndex = index;
+          break;
+        }
+      }
+    } else {
+      selectedIndex = selectedValue - 1;
+    }
 
     if (selectedIndex < 0 || selectedIndex >= options.length) {
       selectedIndex = 0;
     }
   }
 
-  return {
+  const group: InternalOptionGroup = {
     id,
     type: "controller",
     placement,
@@ -111,13 +121,20 @@ export const makeControllerOptionGroup = (
     selectedIndex,
     enabled: controllerProperty !== null,
   };
+  if (controllerOptionValues) {
+    group.controllerOptionValues = controllerOptionValues.slice(0);
+  }
+  return group;
 };
 
 export const applyOptionGroupSelection = (
   optionGroup: InternalOptionGroup,
   selectedIndex: number
 ): void => {
-  if (selectedIndex < 0 || selectedIndex >= optionGroup.options.length) {
+  if (
+    !isFinite(selectedIndex) || Math.floor(selectedIndex) !== selectedIndex ||
+    selectedIndex < 0 || selectedIndex >= optionGroup.options.length
+  ) {
     throw new Error("Opcao invalida.");
   }
 
@@ -134,7 +151,16 @@ export const applyOptionGroupSelection = (
     optionGroup.controllerProperty !== null &&
     typeof optionGroup.controllerProperty !== "undefined"
   ) {
-    optionGroup.controllerProperty.setValue(selectedIndex + 1);
+    const selectedValue = optionGroup.controllerOptionValues
+      ? optionGroup.controllerOptionValues[selectedIndex]
+      : selectedIndex + 1;
+    if (
+      typeof selectedValue !== "number" || !isFinite(selectedValue) ||
+      Math.floor(selectedValue) !== selectedValue || selectedValue < 1
+    ) {
+      throw new Error("Valor da opcao invalido.");
+    }
+    optionGroup.controllerProperty.setValue(selectedValue);
   }
 };
 
@@ -192,58 +218,6 @@ const setLayerOptionSelection = (
       layer.enabled = index === selectedIndex;
     }
   }
-};
-
-export const getInstallmentControllerProperty = (
-  source: CompItem | null,
-  errors: string[]
-): Property | null => {
-  if (source === null) return null;
-
-  const controllerLayer = findLayerByNamePart(source, "Controlador");
-  if (controllerLayer === null) {
-    addError(
-      errors,
-      "Nao encontrei a layer Controlador da mecanica de parcelamento."
-    );
-    return null;
-  }
-
-  let effects: PropertyGroup | null = null;
-
-  try {
-    effects = controllerLayer.property("ADBE Effect Parade") as PropertyGroup;
-  } catch (error) {
-    effects = null;
-  }
-
-  let property = findPropertyDeep(effects, (candidate) =>
-    candidate !== null &&
-    candidate.matchName === "Pseudo/@@yTkh8nJETS2o0/FMnF3Nlw-0001"
-  );
-
-  if (property === null) {
-    property = findPropertyDeep(effects, (candidate) => {
-      try {
-        return (
-          candidate !== null &&
-          candidate.propertyValueType === PropertyValueType.OneD &&
-          typeof candidate.value === "number"
-        );
-      } catch (error) {
-        return false;
-      }
-    });
-  }
-
-  if (property === null) {
-    addError(
-      errors,
-      "Nao encontrei o controle de opcoes da mecanica de parcelamento."
-    );
-  }
-
-  return property;
 };
 
 export const getEffectControlValueProperty = (

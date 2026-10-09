@@ -1,29 +1,40 @@
 import type { InternalOfferProduct } from "../types";
-import { getLayerByIndex, getLayerSource, nameMatches } from "../layers/findLayers";
+import { getLayerSource } from "../layers/findLayers";
+import { resolveOfferProductLayers } from "../layers/offerStructure";
 import { readMechanic } from "../mechanics/registry";
+import { withMechanicsSchema } from "../mechanics/schemaRuntime";
 
-// Match the editor's product order while reading only the fields used by Roteiro.
+// Use the same numbered slots as the editor, without reading legal text or previews.
 export const getFirstOfferProductForValidation = (
   offer: Layer
-): Pick<InternalOfferProduct, "index" | "mechanic"> | null => {
+): Pick<InternalOfferProduct, "index" | "mechanic"> | null => withMechanicsSchema(() => {
   const errors: string[] = [];
   const offerSource = getLayerSource(offer, "oferta", errors);
   if (offerSource === null) return null;
 
-  for (let index = 1; index <= offerSource.numLayers; index += 1) {
-    const descriptionPrecomp = offerSource.layer(index);
-    if (
-      !descriptionPrecomp.enabled ||
-      !nameMatches(descriptionPrecomp.name, /DESCRITIVO/)
-    ) {
-      continue;
+  const unresolvedSlots: number[] = [];
+  const products = resolveOfferProductLayers(offerSource, errors, unresolvedSlots);
+  const first = products.length > 0 ? products[0] : null;
+  let unresolvedBeforeFirst = false;
+  for (let index = 0; index < unresolvedSlots.length; index += 1) {
+    if (first === null || unresolvedSlots[index] <= first.slot) {
+      unresolvedBeforeFirst = true;
     }
-
-    const valueLayer = getLayerByIndex(offerSource, descriptionPrecomp.index + 1);
-    if (valueLayer === null) continue;
-
-    return { index: 0, mechanic: readMechanic(valueLayer, errors) };
   }
-
-  return null;
-};
+  // An ambiguous or missing slot must not redirect a Roteiro correction to
+  // another product. Keep the read empty until the offer structure is repaired.
+  if (unresolvedBeforeFirst || (first !== null && !first.valid)) {
+    return {
+      index: first === null ? 0 : first.slot - 1,
+      mechanic: {
+        type: "Associação de produto inválida",
+        fields: [],
+        optionGroups: [],
+        unsupported: true,
+      },
+    };
+  }
+  return first === null || first.mechanicLayer === null
+    ? null
+    : { index: first.slot - 1, mechanic: readMechanic(first.mechanicLayer, errors) };
+});
