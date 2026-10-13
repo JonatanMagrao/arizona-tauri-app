@@ -4,7 +4,10 @@ import type {
   OfferInstallmentJumpTarget,
 } from "../types";
 import { getLayerByIndex } from "../layers/findLayers";
-import { findLayerByIdentity } from "../layers/findLayerByIdentity";
+import {
+  findLayerByIdentity,
+  type LayerIdentityDiagnostic,
+} from "../layers/findLayerByIdentity";
 
 const INSTALLMENT_JUMP_MARKER_INDEX = 2;
 
@@ -49,12 +52,17 @@ export const readInstallmentJump = (
   definition: InstallmentJumpDefinition,
   errors?: string[]
 ): OfferInstallmentJump => {
-  const layers = resolveInstallmentJumpLayers(source, definition, false, errors);
+  const diagnostic: LayerIdentityDiagnostic = {};
+  const layers = resolveInstallmentJumpLayers(source, definition, false, errors, diagnostic);
 
   if (layers === null) {
     return {
       selectedTarget: "preco-cheio",
       enabled: false,
+      disabledReason: diagnostic.disabledReason ||
+        "Confira as camadas e o segundo marcador usados pelo jump nesta mecânica.",
+      disabledSummary: diagnostic.disabledSummary ||
+        "A estrutura necessária para o jump está indisponível.",
     };
   }
 
@@ -76,14 +84,16 @@ const resolveInstallmentJumpLayers = (
   source: CompItem | null,
   definition: InstallmentJumpDefinition,
   shouldThrow: boolean,
-  errors?: string[]
+  errors?: string[],
+  diagnostic?: LayerIdentityDiagnostic
 ): InstallmentJumpLayers | null => {
   if ("layerIdentities" in definition) {
     return resolveIdentityInstallmentJumpLayers(
       source,
       definition,
       shouldThrow,
-      errors
+      errors,
+      diagnostic
     );
   }
 
@@ -149,12 +159,25 @@ const resolveIdentityInstallmentJumpLayers = (
   source: CompItem | null,
   definition: IdentityInstallmentJumpDefinition,
   shouldThrow: boolean,
-  errors?: string[]
+  errors?: string[],
+  diagnostic?: LayerIdentityDiagnostic
 ): InstallmentJumpLayers | null => {
   const resolutionErrors: string[] = [];
+  const reasons: string[] = [];
+  const summaries: string[] = [];
+  const addSummary = (summary: string): void => {
+    for (let index = 0; index < summaries.length; index += 1) {
+      if (summaries[index] === summary) return;
+    }
+    summaries.push(summary);
+  };
 
-  const fail = (message?: string): null => {
+  const fail = (message?: string, reason?: string, summary?: string): null => {
     if (message) resolutionErrors.push(message);
+    if (reason) reasons.push(reason);
+    if (summary) addSummary(summary);
+    if (diagnostic && reasons.length > 0) diagnostic.disabledReason = reasons.join(" ");
+    if (diagnostic && summaries.length > 0) diagnostic.disabledSummary = summaries.join(" ");
     if (errors) {
       for (let index = 0; index < resolutionErrors.length; index += 1) {
         errors.push(resolutionErrors[index]);
@@ -167,19 +190,27 @@ const resolveIdentityInstallmentJumpLayers = (
   };
 
   if (source === null) {
-    return fail("Precomp de " + definition.context + " nao encontrada.");
+    return fail("Precomp de " + definition.context + " nao encontrada.",
+      "Precomp indisponível. Confira a origem da camada de mecânica.",
+      "A precomp da mecânica não foi encontrada.");
   }
 
-  const findLayer = (identity: JumpLayerIdentity): Layer | null =>
-    findLayerByIdentity(
+  const findLayer = (identity: JumpLayerIdentity): Layer | null => {
+    const layerDiagnostic: LayerIdentityDiagnostic = {};
+    const layer = findLayerByIdentity(
       source,
       {
         comment: identity.comment,
         fallbackNames: identity.fallbackNames,
         context: definition.context,
       },
-      resolutionErrors
+      resolutionErrors,
+      layerDiagnostic
     );
+    if (layerDiagnostic.disabledReason) reasons.push(layerDiagnostic.disabledReason);
+    if (layerDiagnostic.disabledSummary) addSummary(layerDiagnostic.disabledSummary);
+    return layer;
+  };
 
   const markerLayer = findLayer(definition.layerIdentities.marker);
   const fullPriceLayer = findLayer(definition.layerIdentities.fullPrice);
@@ -201,7 +232,9 @@ const resolveIdentityInstallmentJumpLayers = (
     fullPriceLayer.index === installmentPriceLayer.index
   ) {
     return fail(
-      "As layers de jump de " + definition.context + " devem ser distintas."
+      "As layers de jump de " + definition.context + " devem ser distintas.",
+      "Use camadas diferentes para o marcador e os dois destinos do jump.",
+      "Uma mesma camada corresponde a mais de uma função do jump."
     );
   }
 
@@ -213,15 +246,24 @@ const resolveIdentityInstallmentJumpLayers = (
       markerTime = markerLayer.marker.keyTime(INSTALLMENT_JUMP_MARKER_INDEX);
     }
   } catch (error) {
-    return fail("Marker de jump de " + definition.context + " invalido.");
+    return fail("Marker de jump de " + definition.context + " invalido.",
+      'Confira o segundo marcador da camada com o comentário "' +
+        definition.layerIdentities.marker.comment + '".',
+      "O marcador de jump está inválido.");
   }
 
   if (markerCount < INSTALLMENT_JUMP_MARKER_INDEX) {
-    return fail("Marker de jump de " + definition.context + " nao encontrado.");
+    return fail("Marker de jump de " + definition.context + " nao encontrado.",
+      'Adicione o segundo marcador na camada com o comentário "' +
+        definition.layerIdentities.marker.comment + '".',
+      "O segundo marcador necessário para o jump não foi encontrado.");
   }
 
   if (typeof markerTime !== "number" || !isFinite(markerTime)) {
-    return fail("Marker de jump de " + definition.context + " invalido.");
+    return fail("Marker de jump de " + definition.context + " invalido.",
+      'Confira o segundo marcador da camada com o comentário "' +
+        definition.layerIdentities.marker.comment + '".',
+      "O marcador de jump está inválido.");
   }
 
   return {

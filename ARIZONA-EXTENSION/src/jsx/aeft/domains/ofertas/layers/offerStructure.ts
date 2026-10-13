@@ -5,8 +5,11 @@ export interface OfferProductLayerSet {
   slot: number;
   descriptionLayer: Layer;
   mechanicLayer: Layer | null;
+  mechanicUnavailableLabel?: string;
   imageLayer: Layer | null;
   valid: boolean;
+  disabledReason?: string;
+  disabledSummary?: string;
 }
 
 interface RoleMatch {
@@ -19,6 +22,21 @@ const normalizeIdentity = (value: string): string =>
 
 const offerContext = (source: CompItem): string =>
   'na oferta "' + source.name + '"';
+
+const addDisabledSummary = (summaries: string[] | undefined, summary: string): void => {
+  if (!summaries) return;
+  for (let index = 0; index < summaries.length; index += 1) {
+    if (summaries[index] === summary) return;
+  }
+  summaries.push(summary);
+};
+
+const roleLayerLabel = (role: string): string => {
+  if (role.indexOf("MECANICA ") === 0) return "camada da mecânica";
+  if (role.indexOf("PRODUTO ") === 0) return "camada da imagem do produto";
+  if (role.indexOf("DESCRITIVO ") === 0) return "camada do descritivo";
+  return role === "TEXTO LEGAL" ? "camada da precomp de texto legal" : "camada de marcadores";
+};
 
 const readIdentity = (layer: Layer, byName: boolean): string => {
   try {
@@ -69,7 +87,9 @@ const findRole = (
   source: CompItem,
   role: string,
   errors: string[],
-  required: boolean
+  required: boolean,
+  disabledReasons?: string[],
+  disabledSummaries?: string[]
 ): RoleMatch => {
   let result = scanRole(source, role, false);
   let byName = false;
@@ -80,12 +100,29 @@ const findRole = (
   }
 
   if (result.count > 1) {
+    addDisabledSummary(disabledSummaries, byName
+      ? 'Mais de uma camada possui o nome "' + role + '" nesta oferta.'
+      : 'Mais de uma camada possui o comentário "' + role + '" nesta oferta.');
+    if (disabledReasons) {
+      disabledReasons.push(
+        (byName ? 'Nome "' : 'Comentário "') + role + '" repetido ' +
+          offerContext(source) + ". Mantenha-o apenas na " + roleLayerLabel(role) + "."
+      );
+    }
     addError(
       errors,
       'Mais de uma camada tem o ' + (byName ? "nome" : "comentário") +
         ' "' + role + '" ' + offerContext(source) + "."
     );
   } else if (result.count === 0 && required) {
+    addDisabledSummary(disabledSummaries,
+      'Não foi encontrada uma camada com o comentário "' + role + '" nesta oferta.');
+    if (disabledReasons) {
+      disabledReasons.push(
+        'Falta o comentário "' + role + '". Adicione-o à ' +
+          roleLayerLabel(role) + " " + offerContext(source) + "."
+      );
+    }
     addError(
       errors,
       'Não encontrei a camada com o comentário "' + role + '" ' +
@@ -121,10 +158,26 @@ const validateRoleLayer = (
   role: string,
   layer: Layer | null,
   errors: string[],
-  isImage: boolean
+  isImage: boolean,
+  disabledReasons?: string[],
+  disabledSummaries?: string[]
 ): Layer | null => {
   if (layer === null) return null;
   if (isImage ? isProductImageLayer(layer) : isPrecompLayer(layer)) return layer;
+
+  addDisabledSummary(disabledSummaries,
+    'A origem da camada com o comentário "' + role + '" não é ' + (isImage
+      ? "uma imagem ou precomp válida."
+      : "uma precomp válida."));
+
+  if (disabledReasons) {
+    disabledReasons.push(
+      'A camada com o comentário "' + role + '" ' + offerContext(source) +
+        (isImage
+          ? " precisa ter uma imagem ou precomp válida como origem."
+          : " precisa ter uma precomp válida como origem.")
+    );
+  }
 
   addError(
     errors,
@@ -160,6 +213,8 @@ export const resolveOfferProductLayers = (
   if (source === null) return products;
 
   for (let slot = 1; slot <= 3; slot += 1) {
+    const disabledReasons: string[] = [];
+    const disabledSummaries: string[] = [];
     const descriptionRole = "DESCRITIVO " + slot;
     const mechanicRole = "MECANICA " + slot;
     const imageRole = "PRODUTO " + slot;
@@ -175,8 +230,8 @@ export const resolveOfferProductLayers = (
     const descriptionLayer = descriptionMatch.layer;
     if (descriptionLayer !== null && !descriptionLayer.enabled) continue;
 
-    const mechanicMatch = findRole(source, mechanicRole, errors, false);
-    const imageMatch = findRole(source, imageRole, errors, false);
+    const mechanicMatch = findRole(source, mechanicRole, errors, false, disabledReasons, disabledSummaries);
+    const imageMatch = findRole(source, imageRole, errors, false, disabledReasons, disabledSummaries);
 
     if (descriptionLayer === null) {
       if (mechanicMatch.count > 0 || imageMatch.count > 0) {
@@ -191,33 +246,43 @@ export const resolveOfferProductLayers = (
     }
 
     if (mechanicMatch.count === 0) {
-      findRole(source, mechanicRole, errors, true);
+      findRole(source, mechanicRole, errors, true, disabledReasons, disabledSummaries);
     }
     if (imageMatch.count === 0) {
-      findRole(source, imageRole, errors, true);
+      findRole(source, imageRole, errors, true, disabledReasons, disabledSummaries);
     }
 
     const validDescription = validateRoleLayer(
-      source, descriptionRole, descriptionLayer, errors, false
+      source, descriptionRole, descriptionLayer, errors, false, disabledReasons, disabledSummaries
     );
     let mechanicLayer = validateRoleLayer(
-      source, mechanicRole, mechanicMatch.layer, errors, false
+      source, mechanicRole, mechanicMatch.layer, errors, false, disabledReasons, disabledSummaries
     );
     let imageLayer = validateRoleLayer(
-      source, imageRole, imageMatch.layer, errors, true
+      source, imageRole, imageMatch.layer, errors, true, disabledReasons, disabledSummaries
     );
+    let mechanicUnavailableLabel = mechanicLayer !== null ? undefined
+      : "Mecânica do produto " + slot + (mechanicMatch.count === 0
+        ? " não identificada"
+        : mechanicMatch.count > 1 ? " ambígua" : " sem precomp válida");
 
     if (
       (mechanicLayer !== null && mechanicLayer === descriptionLayer) ||
       (imageLayer !== null && imageLayer === descriptionLayer) ||
       (mechanicLayer !== null && imageLayer !== null && mechanicLayer === imageLayer)
     ) {
+      addDisabledSummary(disabledSummaries, "Uma camada está associada a mais de uma função do produto.");
+      disabledReasons.push(
+        'Use os comentários "' + descriptionRole + '", "' + mechanicRole +
+          '" e "' + imageRole + '" em camadas separadas ' + offerContext(source) + "."
+      );
       addError(
         errors,
         'Uma camada corresponde a mais de uma função do produto ' + slot +
           ' ' + offerContext(source) + "."
       );
       mechanicLayer = null;
+      mechanicUnavailableLabel = "Mecânica do produto " + slot + " com associação ambígua";
       imageLayer = null;
     }
 
@@ -225,8 +290,11 @@ export const resolveOfferProductLayers = (
       slot,
       descriptionLayer,
       mechanicLayer,
+      mechanicUnavailableLabel,
       imageLayer,
       valid: validDescription !== null && mechanicLayer !== null && imageLayer !== null,
+      disabledReason: disabledReasons.length > 0 ? disabledReasons.join(" ") : undefined,
+      disabledSummary: disabledSummaries.length > 0 ? disabledSummaries.join(" ") : undefined,
     });
   }
 
@@ -239,6 +307,12 @@ export const resolveOfferProductLayers = (
       if (!shareLayer(first, second)) continue;
       first.valid = false;
       second.valid = false;
+      const reason = 'Use camadas separadas para os comentários dos produtos ' +
+        first.slot + " e " + second.slot + " " + offerContext(source) + ".";
+      first.disabledReason = first.disabledReason ? first.disabledReason + " " + reason : reason;
+      second.disabledReason = second.disabledReason ? second.disabledReason + " " + reason : reason;
+      first.disabledSummary = "Uma mesma camada está associada a mais de um produto.";
+      second.disabledSummary = first.disabledSummary;
       addError(
         errors,
         'Uma camada está associada aos produtos ' + first.slot + " e " +
@@ -253,13 +327,19 @@ export const resolveOfferProductLayers = (
 export const findOfferStructureLayer = (
   source: CompItem | null,
   role: "legal" | "markers",
-  errors: string[]
+  errors: string[],
+  disabledReasons?: string[],
+  disabledSummaries?: string[]
 ): Layer | null => {
-  if (source === null) return null;
+  if (source === null) {
+    if (disabledReasons) disabledReasons.push("Confira a origem da camada da oferta.");
+    addDisabledSummary(disabledSummaries, "A precomp da oferta não foi encontrada.");
+    return null;
+  }
   const identity = role === "legal" ? "TEXTO LEGAL" : "MARCADORES";
-  const found = findRole(source, identity, errors, true).layer;
+  const found = findRole(source, identity, errors, true, disabledReasons, disabledSummaries).layer;
   return role === "legal"
-    ? validateRoleLayer(source, identity, found, errors, false)
+    ? validateRoleLayer(source, identity, found, errors, false, disabledReasons, disabledSummaries)
     : found;
 };
 

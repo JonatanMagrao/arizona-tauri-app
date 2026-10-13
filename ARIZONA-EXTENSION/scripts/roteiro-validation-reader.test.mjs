@@ -72,6 +72,7 @@ function fixture() {
           }
           if (!descriptions[0].enabled) continue;
           result.push({ slot, descriptionLayer: descriptions[0], mechanicLayer: mechanics[0] || null,
+            mechanicUnavailableLabel: mechanics.length === 0 ? `Mecânica do produto ${slot} não identificada` : undefined,
             imageLayer: images[0] || null, valid: mechanics.length === 1 && images.length === 1 });
         }
         return result;
@@ -221,6 +222,7 @@ test("missing first mechanic does not redirect validation to another slot", () =
   offer.source.unavailableIndices = [2];
   const first = assertFirstProductParity(env, offer, 2);
   assert.equal(first.index, 0);
+  assert.equal(first.mechanic.type, "Mecânica do produto 1 não identificada");
   assert.equal(first.mechanic.unsupported, true);
   assert.deepEqual(serialize(first.mechanic.fields), []);
 });

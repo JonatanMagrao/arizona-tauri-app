@@ -11,6 +11,8 @@ import { useHostTheme } from "./hooks/useHostTheme";
 import { useProjectIdentity } from "./hooks/useProjectIdentity";
 import { useProjectOpening } from "./hooks/useProjectOpening";
 import { getPublicErrorMessage } from "./utils/errors";
+import { tooltipProps } from "./utils/tooltips";
+import { TooltipLayer } from "./components/TooltipLayer";
 import {
   createDiagnosticOperationId,
   recordDiagnosticFailure,
@@ -283,7 +285,7 @@ const ProjectPanel = ({
           aria-label="Abrir outro projeto"
           aria-busy={isOpeningProject}
           disabled={!window.cep || isOpeningProject || isProjectBusy || isClearingPreviewCache}
-          title={isOpeningProject ? "Abrindo projeto..." : "Abrir outro projeto"}
+          {...tooltipProps(isOpeningProject ? "Abrindo projeto..." : "Abrir outro projeto")}
           onClick={() => void onOpenProject()}
         >
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -297,7 +299,7 @@ const ProjectPanel = ({
           aria-label="Limpar imagens temporárias"
           aria-busy={isClearingPreviewCache}
           disabled={!hasNodeAccess || isClearingPreviewCache || isOpeningProject}
-          title={previewCacheMessage}
+          {...tooltipProps(previewCacheMessage)}
           onClick={() => void handleClearPreviewCache()}
         >
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -339,6 +341,7 @@ const ProjectPanel = ({
           </div>
         )}
       </div>
+      <TooltipLayer />
     </div>
   );
 };

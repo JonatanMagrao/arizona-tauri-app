@@ -14,7 +14,10 @@ import {
   getLayerSource,
   isNumericValueProperty,
 } from "../layers/findLayers";
-import { findLayerByIdentity } from "../layers/findLayerByIdentity";
+import {
+  findLayerByIdentity,
+  type LayerIdentityDiagnostic,
+} from "../layers/findLayerByIdentity";
 import { getSourceTextProperty, readText } from "../layers/textFields";
 import {
   applyInstallmentJump,
@@ -166,7 +169,8 @@ const getNamedEffectProperty = (
   config: MechanicEffectSchema,
   dropdownRequired: boolean,
   context: string,
-  errors: string[]
+  errors: string[],
+  diagnostic: LayerIdentityDiagnostic
 ): Property | null => {
   if (controller === null) return null;
   let effects: PropertyGroup | null = null;
@@ -175,6 +179,9 @@ const getNamedEffectProperty = (
   } catch (error) {
   }
   if (effects === null) {
+    diagnostic.disabledSummary = "A camada de controle não possui efeitos disponíveis.";
+    diagnostic.disabledReason = 'Confira o efeito "' + config.name +
+      '" na camada "' + controller.name + '": ela não possui efeitos.';
     addError(errors, "A controladora de " + context + " não possui efeitos.");
     return null;
   }
@@ -187,6 +194,11 @@ const getNamedEffectProperty = (
     }
     const property = effect === null ? null : findPropertyDeep(effect, isNumericValueProperty);
     if (property === null) {
+      diagnostic.disabledSummary = effect === null
+        ? "O efeito obrigatório não foi encontrado."
+        : "O valor numérico do efeito está indisponível.";
+      diagnostic.disabledReason = 'Confira o efeito "' + config.name +
+        '" e seu valor numérico na camada "' + controller.name + '".';
       addError(errors, 'Não encontrei o valor do controle "' + config.name + '" em ' + context + ".");
     }
     return property;
@@ -201,12 +213,18 @@ const getNamedEffectProperty = (
     );
     if (property === null) continue;
     if (found !== null) {
+      diagnostic.disabledSummary = "Mais de um dropdown corresponde ao controle esperado.";
+      diagnostic.disabledReason = 'Controle duplicado. Deixe apenas um dropdown "' +
+        config.name + '" na camada "' + controller.name + '".';
       addError(errors, 'Encontrei mais de um dropdown "' + config.name + '" na controladora de ' + context + ".");
       return null;
     }
     found = property;
   }
   if (found === null) {
+    diagnostic.disabledSummary = "O dropdown esperado está ausente ou inválido.";
+    diagnostic.disabledReason = 'Adicione ou corrija o dropdown "' + config.name +
+      '" na camada "' + controller.name + '".';
     addError(errors, 'Não encontrei o dropdown "' + config.name + '" na controladora de ' + context + ".");
   }
   return found;
@@ -223,30 +241,49 @@ export const readConfiguredMechanic = (
     config = getMechanicSchema(name);
   } catch (error) {
     addError(errors, String(error));
-    return { type: definition.type, fields: [], optionGroups: [], unsupported: true };
+    return {
+      type: definition.type, fields: [], optionGroups: [], unsupported: true,
+      disabledSummary: "Não foi possível ler a configuração da mecânica.",
+      disabledReason: "Confira os detalhes do erro ao carregar a mecânica.",
+    };
   }
   const source = getLayerSource(valueLayer, definition.type, errors);
   const layerCache: { [role: string]: Layer | null } = {};
+  const layerDiagnostics: { [role: string]: LayerIdentityDiagnostic } = {};
   const findLayer = (role: string): Layer | null => {
     if (!layerCache.hasOwnProperty(role)) {
+      layerDiagnostics[role] = {};
       layerCache[role] = findLayerByIdentity(source, {
         comment: config.layers[role],
         fallbackNames: fallbackNames(role, config.layers[role]),
         context: definition.type,
-      }, errors);
+        layerLabel: role === "controlador" ? "Controlador de Mecânica" : config.layers[role],
+      }, errors, layerDiagnostics[role]);
     }
     return layerCache[role];
   };
   const properties: { [id: string]: Property | null } = {};
+  const propertyReasons: { [id: string]: string | undefined } = {};
+  const propertySummaries: { [id: string]: string | undefined } = {};
   const mechanic: InternalOfferMechanic = { type: definition.type, fields: [], optionGroups: [] };
   for (let index = 0; index < definition.effects.length; index += 1) {
     const effectDefinition = definition.effects[index];
     const effectConfig = config.effects[effectDefinition.id];
     const controller = findLayer(effectConfig.layer);
+    const diagnostic: LayerIdentityDiagnostic = {};
     const property = effectDefinition.lookup === "index"
       ? getEffectControlValueProperty(controller, effectConfig.index, effectDefinition.label, definition.type, errors)
-      : getNamedEffectProperty(controller, effectConfig, effectDefinition.lookup === "dropdown-name", definition.type, errors);
+      : getNamedEffectProperty(controller, effectConfig, effectDefinition.lookup === "dropdown-name", definition.type, errors, diagnostic);
     properties[effectDefinition.id] = property;
+    if (property === null) {
+      propertySummaries[effectDefinition.id] = controller === null
+        ? layerDiagnostics[effectConfig.layer].disabledSummary
+        : diagnostic.disabledSummary || "O controle esperado está ausente ou sem um valor numérico válido.";
+      propertyReasons[effectDefinition.id] = controller === null
+        ? layerDiagnostics[effectConfig.layer].disabledReason
+        : diagnostic.disabledReason || 'Confira o controle "' + effectDefinition.label +
+          '" na posição ' + effectConfig.index + ' dos efeitos da camada "' + controller.name + '".';
+    }
     if (effectDefinition.field) continue;
     const options: OfferOption[] = [];
     const values: number[] = [];
@@ -256,16 +293,25 @@ export const readConfiguredMechanic = (
       options.push({ label: configuredOptions[oi].label });
       values.push(configuredOptions[oi].index);
     }
-    mechanic.optionGroups.push(makeControllerOptionGroup(
+    const optionGroup = makeControllerOptionGroup(
       effectDefinition.id, effectDefinition.label, property, options,
       effectDefinition.placement || "controls", values
-    ));
+    );
+    if (!optionGroup.enabled) {
+      optionGroup.disabledReason = propertyReasons[effectDefinition.id];
+      optionGroup.disabledSummary = propertySummaries[effectDefinition.id];
+    }
+    mechanic.optionGroups.push(optionGroup);
   }
   for (let index = 0; index < definition.fields.length; index += 1) {
     const field = definition.fields[index];
     let result: InternalTextField;
     if (field.effect) {
       result = makeValueField(field.id, field.label, field.format, properties[field.effect]);
+      if (!result.enabled) {
+        result.disabledReason = propertyReasons[field.effect];
+        result.disabledSummary = propertySummaries[field.effect];
+      }
     } else {
       const layer = findLayer(field.id);
       const property = getSourceTextProperty(layer);
@@ -276,6 +322,15 @@ export const readConfiguredMechanic = (
         id: field.id, label: field.label, value: readText(property),
         format: field.format, enabled: property !== null, property, valueKind: "text",
       };
+      if (!result.enabled) {
+        result.disabledSummary = layer === null
+          ? layerDiagnostics[field.id].disabledSummary
+          : "O texto da camada está indisponível.";
+        result.disabledReason = layer === null
+          ? layerDiagnostics[field.id].disabledReason
+          : 'A camada com o comentário "' + config.layers[field.id] +
+            '" precisa ser uma camada de texto com Source Text.';
+      }
     }
     mechanic.fields.push(result);
   }

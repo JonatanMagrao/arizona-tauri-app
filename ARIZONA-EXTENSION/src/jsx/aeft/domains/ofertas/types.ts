@@ -94,6 +94,8 @@ export interface OfferDetails {
 }
 
 export interface OfferLegalControl {
+  disabledSummary?: string;
+  disabledReason?: string;
   id: string;
   label: string;
   kind?: "layer" | "checkbox" | "slider";
@@ -106,6 +108,8 @@ export interface OfferLegalControl {
 }
 
 export interface OfferProduct {
+  disabledSummary?: string;
+  disabledReason?: string;
   // Numbered offer slot minus one; inactive slots do not renumber active products.
   index: number;
   description: OfferTextField;
@@ -123,6 +127,8 @@ export interface OfferImageInfo {
 }
 
 export interface OfferMechanic {
+  disabledSummary?: string;
+  disabledReason?: string;
   type: string;
   fields: OfferTextField[];
   optionGroups: OfferOptionGroup[];
@@ -131,6 +137,8 @@ export interface OfferMechanic {
 }
 
 export interface OfferTextField {
+  disabledSummary?: string;
+  disabledReason?: string;
   id: string;
   label: string;
   value: string;
@@ -146,6 +154,8 @@ export interface OfferOption {
 }
 
 export interface OfferOptionGroup {
+  disabledSummary?: string;
+  disabledReason?: string;
   id: string;
   type: OfferOptionGroupType;
   placement?: OfferOptionGroupPlacement;
@@ -156,6 +166,8 @@ export interface OfferOptionGroup {
 }
 
 export interface OfferInstallmentJump {
+  disabledSummary?: string;
+  disabledReason?: string;
   selectedTarget: OfferInstallmentJumpTarget;
   enabled: boolean;
 }

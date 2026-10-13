@@ -299,6 +299,11 @@ test("the CPF checkbox and quantity share one settings row and keep independent 
   ), "utf8");
   const module = { exports: {} };
   const element = (type, props) => ({ type, props });
+  const tooltipModule = { exports: {} };
+  vm.runInNewContext(ts.transpileModule(
+    readFileSync(new URL("../src/js/main/utils/tooltips.ts", import.meta.url), "utf8"),
+    { compilerOptions: { module: ts.ModuleKind.CommonJS } }
+  ).outputText, { module: tooltipModule, exports: tooltipModule.exports });
   vm.runInNewContext(ts.transpileModule(
     source + "\nexport { OfferLegalSettingsDialog as SettingsForTest };",
     { compilerOptions: {
@@ -310,6 +315,7 @@ test("the CPF checkbox and quantity share one settings row and keep independent 
     module, exports: module.exports,
     window: { clearTimeout() {} },
     require(specifier) {
+      if (specifier.endsWith("/utils/tooltips")) return tooltipModule.exports;
       if (specifier === "react/jsx-runtime") return { jsx: element, jsxs: element };
       if (specifier === "react") return {
         useState: (value) => [value, () => {}],

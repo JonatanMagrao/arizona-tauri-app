@@ -410,6 +410,127 @@ test("duplicated legal comment blocks legal writes while product editing stays i
   assertUndoClosed(env);
 });
 
+for (const [roleKey, comment, location] of [
+  ["mechanicLayer", "MECANICA 2", "camada da mecânica"],
+  ["imageLayer", "PRODUTO 2", "camada da imagem do produto"],
+]) {
+  for (const invalidation of ["missing", "duplicate", "wrong-source"]) {
+    test(`offer comment hint identifies only the affected second product (${comment}, ${invalidation})`, () => {
+      const env = harness([product(1), product(2)]);
+      const layer = env.products[1][roleKey];
+      if (invalidation === "missing") layer.comment = "";
+      if (invalidation === "duplicate") {
+        reorder(env, [...env.source.layers, identified(new AVLayer("Duplicata", [], layer.source), comment)]);
+      }
+      if (invalidation === "wrong-source") layer.source = null;
+
+      const snapshot = env.getOffersEditorSnapshot(1);
+      const [first, second] = snapshot.selectedOffer.products;
+      assert.deepEqual(plain(snapshot.selectedOffer.products.map(({ index }) => index)), [0, 1]);
+      assert.equal(first.disabledReason, undefined);
+      assert.equal(first.disabledSummary, undefined);
+      assert.equal(first.description.enabled, true);
+      assert.equal(first.mechanic.fields[0].enabled, true);
+      assert.equal(first.mechanic.optionGroups[0].enabled, true);
+      assert.equal(first.mechanic.optionGroups[0].disabledReason, undefined);
+      assert.equal(first.mechanic.type, "Simples");
+      assert.equal(second.description.enabled, false);
+      assert.ok(second.disabledReason.includes('"' + comment + '"'));
+      assert.ok(second.disabledReason.includes('na oferta "Oferta"'));
+      if (invalidation === "missing") {
+        assert.ok(second.disabledReason.includes("Adicione-o à " + location));
+        assert.equal(second.disabledSummary,
+          'Não foi encontrada uma camada com o comentário "' + comment + '" nesta oferta.');
+      } else if (invalidation === "duplicate") {
+        assert.ok(second.disabledReason.includes("repetido"));
+        assert.ok(second.disabledReason.includes("Mantenha-o apenas na " + location));
+        assert.equal(second.disabledSummary,
+          'Mais de uma camada possui o comentário "' + comment + '" nesta oferta.');
+      } else {
+        assert.ok(second.disabledReason.includes("válida como origem"));
+        assert.match(second.disabledSummary, /origem da camada.*válida/);
+      }
+      assert.ok(second.disabledSummary.includes('"' + comment + '"'));
+      assert.equal(second.mechanic.type, roleKey === "mechanicLayer"
+        ? "Mecânica do produto 2" + (invalidation === "missing"
+          ? " não identificada" : invalidation === "duplicate" ? " ambígua" : " sem precomp válida")
+        : "Simples");
+      assert.equal(second.description.disabledReason, second.disabledReason);
+      assert.equal(second.mechanic.disabledReason, second.disabledReason);
+      assert.equal(second.description.disabledSummary, second.disabledSummary);
+      assert.equal(second.mechanic.disabledSummary, second.disabledSummary);
+      for (const control of [...second.mechanic.fields, ...second.mechanic.optionGroups]) {
+        assert.equal(control.enabled, false);
+        assert.equal(control.disabledReason, second.disabledReason);
+        assert.equal(control.disabledSummary, second.disabledSummary);
+      }
+      env.products.forEach(assertProductUntouched);
+      assert.deepEqual(env.app.undoEvents, []);
+    });
+  }
+}
+
+test("multiple missing product comments keep the mechanic warning and each required comment specific", () => {
+  const env = harness([product(1), product(2)]);
+  env.products[1].mechanicLayer.comment = "";
+  env.products[1].imageLayer.comment = "";
+
+  const [first, second] = env.getOffersEditorSnapshot(1).selectedOffer.products;
+  assert.equal(first.mechanic.type, "Simples");
+  assert.equal(first.disabledSummary, undefined);
+  assert.equal(second.mechanic.type, "Mecânica do produto 2 não identificada");
+  for (const comment of ["MECANICA 2", "PRODUTO 2"]) {
+    assert.ok(second.mechanic.disabledSummary.includes('"' + comment + '"'));
+    assert.ok(second.mechanic.disabledReason.includes('"' + comment + '"'));
+  }
+  assert.equal(second.description.enabled, false);
+  env.products.forEach(assertProductUntouched);
+  assert.deepEqual(env.app.undoEvents, []);
+});
+
+for (const invalidation of ["missing", "duplicate", "wrong-source"]) {
+  test(`legal comment hint explains the unavailable precomp without affecting products (${invalidation})`, () => {
+    const env = harness([product(1), product(2)]);
+    if (invalidation === "missing") env.legal.layer.comment = "";
+    if (invalidation === "duplicate") {
+      reorder(env, [...env.source.layers, identified(new AVLayer("Outro legal", [], env.legal.source), "TEXTO LEGAL")]);
+    }
+    if (invalidation === "wrong-source") env.legal.layer.source = null;
+
+    const { getLegalTextSource } = env.load("layers/legalControls.ts");
+    const oldErrors = [];
+    const errors = [];
+    const reasons = [];
+    const summaries = [];
+    assert.equal(getLegalTextSource(env.source, oldErrors), null);
+    assert.equal(getLegalTextSource(env.source, errors, reasons, summaries), null);
+    assert.deepEqual(errors, oldErrors);
+    assert.equal(reasons.length, 1);
+    assert.equal(summaries.length, 1);
+    assert.match(summaries[0], invalidation === "missing" ? /Não foi encontrada uma camada.*"TEXTO LEGAL"/
+      : invalidation === "duplicate" ? /Mais de uma camada.*comentário "TEXTO LEGAL"/ : /origem da camada.*precomp válida/);
+    assert.ok(reasons[0].includes('"TEXTO LEGAL"'));
+    assert.ok(reasons[0].includes('na oferta "Oferta"'));
+    assert.ok(reasons[0].includes(invalidation === "missing" ? "Adicione-o" : invalidation === "duplicate" ? "Mantenha-o apenas" : "precomp válida como origem"));
+
+    const selected = env.getOffersEditorSnapshot(1).selectedOffer;
+    selected.legalControls.forEach((control) => {
+      assert.equal(control.available, false);
+      assert.equal(control.disabledReason, reasons[0]);
+      assert.equal(control.disabledSummary, summaries[0]);
+    });
+    selected.products.forEach((item) => {
+      assert.equal(item.disabledReason, undefined);
+      assert.equal(item.disabledSummary, undefined);
+      assert.equal(item.description.enabled, true);
+      assert.equal(item.mechanic.fields[0].enabled, true);
+      assert.equal(item.mechanic.optionGroups[0].enabled, true);
+    });
+    env.products.forEach(assertProductUntouched);
+    assert.deepEqual(env.app.undoEvents, []);
+  });
+}
+
 test("product swap keeps numbered role comments while exchanging all three sources, scales and names", () => {
   const env = harness();
   const first = env.products[0];

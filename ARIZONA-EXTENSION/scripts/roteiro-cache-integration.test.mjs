@@ -8,6 +8,7 @@ const sourcePaths = {
   roteiro: "../src/js/main/domains/roteiro/hooks/useRoteiro.ts",
   panel: "../src/js/main/domains/roteiro/components/RoteiroPanel.tsx",
   errors: "../src/js/main/utils/errors.ts",
+  tooltips: "../src/js/main/utils/tooltips.ts",
 };
 const compiled = Object.fromEntries(await Promise.all(
   Object.entries(sourcePaths).map(async ([name, path]) => [name, ts.transpileModule(
@@ -89,6 +90,7 @@ function createHarness({ cep = true } = {}) {
       require(specifier) {
         if (specifier === "react") return react;
         if (specifier.endsWith("utils/errors")) return loadModule("errors");
+        if (specifier.endsWith("utils/tooltips")) return loadModule("tooltips");
         assert.ok(Object.hasOwn(mocks, specifier), `Unexpected import: ${specifier}`);
         return mocks[specifier];
       },
@@ -445,7 +447,7 @@ test("the panel permits cached reads on mount and forces fresh reads through eve
     assert.deepEqual(requests, [undefined], `${state}: tab mount allows the cache`);
     const findRefresh = (node) => {
       if (!node || typeof node !== "object") return null;
-      if (node.type === "button" && (state !== "loaded" || node.props.title === "Atualizar roteiro")) return node;
+      if (node.type === "button" && (state !== "loaded" || node.props["data-tooltip"] === "Atualizar roteiro")) return node;
       for (const child of [node.props?.children].flat()) {
         const found = findRefresh(child);
         if (found) return found;
@@ -544,14 +546,15 @@ test("a refresh keeps the loaded rows and filename visible with an accessible bu
   assert.equal(during.props["aria-busy"], true);
   const refresh = descendants(during, (node) => node.type === "button" && node.props.className === "roteiro-panel__refresh")[0];
   assert.ok(refresh);
-  assert.equal(refresh.props.title, "Atualizando roteiro...");
+  assert.equal(refresh.props["data-tooltip"], "Atualizando roteiro...");
+  assert.equal(refresh.props.title, undefined);
   assert.equal(refresh.props["aria-busy"], true);
   assert.equal(refresh.props.disabled, true);
 
   f.state.loading = false;
   const after = f.harness.value;
   const readyRefresh = descendants(after, (node) => node.type === "button" && node.props.className === "roteiro-panel__refresh")[0];
-  assert.equal(readyRefresh.props.title, "Atualizar roteiro");
+  assert.equal(readyRefresh.props["data-tooltip"], "Atualizar roteiro");
   assert.equal(readyRefresh.props.disabled, false);
   assert.equal(after.props["aria-busy"], false);
 });
@@ -572,7 +575,7 @@ test("all busy states disable editing controls and suppress offer-row double cli
     const buttons = descendants(tree, (node) => node.type === "button");
     assert.ok(buttons.length >= 6, "Exercise audio, refresh, open, fix, markers and render controls");
     for (const button of buttons) {
-      assert.equal(button.props.disabled, true, `${busyFlag}: ${button.props.title}`);
+      assert.equal(button.props.disabled, true, `${busyFlag}: ${button.props["data-tooltip"]}`);
     }
     const row = descendants(tree, (node) => typeof node.props?.onDoubleClick === "function")[0];
     const event = { target: { closest: () => null } };

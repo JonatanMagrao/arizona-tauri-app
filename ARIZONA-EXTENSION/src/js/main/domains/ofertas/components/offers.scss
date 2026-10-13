@@ -290,8 +290,7 @@
 }
 
 .offer-product-editor.is-unsupported {
-  --offer-accent: var(--danger);
-  border-color: var(--danger);
+  --offer-accent: #c97c7c;
 }
 
 .offer-product-editor:focus-within {
@@ -941,6 +940,17 @@
 .offer-editor-field textarea:disabled {
   color: var(--text-muted);
   opacity: 0.72;
+}
+
+// O wrapper recebe o hover mesmo quando o controle nativo está desabilitado.
+.offer-editor-field[data-tooltip] > input:disabled,
+.offer-editor-field[data-tooltip] > select:disabled,
+.offer-editor-field[data-tooltip] > textarea:disabled,
+.offer-product-copy[data-tooltip] > .offer-card-description:disabled,
+.offer-description-sync[data-tooltip] > input:disabled,
+.offer-legal-toggle[data-tooltip] input:disabled,
+.offer-legal-toggle[data-tooltip] select:disabled {
+  pointer-events: none;
 }
 
 .offers-editor-footer {

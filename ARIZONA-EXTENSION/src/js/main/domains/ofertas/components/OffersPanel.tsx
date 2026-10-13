@@ -15,6 +15,7 @@ import type { LocalImage } from "../productImages/types";
 import { useOfferShortcuts } from "../hooks/useOfferShortcuts";
 import { useOffersEditor } from "../hooks/useOffersEditor";
 import { getPublicErrorMessage } from "../../../utils/errors";
+import { tooltipProps } from "../../../utils/tooltips";
 import {
   createOfferRasterPreview,
   createOfferPsdPreview,
@@ -54,10 +55,21 @@ interface OfferFieldControlProps {
 
 interface OfferImageThumbnailProps {
   image: OfferImageInfo | null;
+  disabledSummary?: string;
+  disabledReason?: string;
   onDoubleClick: () => void;
   skuName: string;
   previewRevision: number;
 }
+
+const unavailableTooltip = (details: {
+  disabledSummary?: string;
+  disabledReason?: string;
+}, title = "Campo indisponível") => ({
+  title,
+  text: details.disabledSummary || "Este campo está indisponível.",
+  resolution: details.disabledReason,
+});
 
 interface DoubleClickActivation<T extends HTMLElement> {
   activateNextFocus: () => void;
@@ -497,6 +509,8 @@ const getFieldClassName = (field: OfferTextField, baseClassName: string) => {
 
 const OfferImageThumbnail = ({
   image,
+  disabledSummary,
+  disabledReason,
   onDoubleClick,
   previewRevision,
   skuName,
@@ -555,7 +569,11 @@ const OfferImageThumbnail = ({
           ? "offer-product-image has-preview"
           : "offer-product-image is-empty"
       }
-      title={getImageTitle(image)}
+      {...tooltipProps(
+        disabledSummary || disabledReason
+          ? unavailableTooltip({ disabledSummary, disabledReason })
+          : getImageTitle(image)
+      )}
       onDoubleClick={(event) => {
         event.stopPropagation();
         onDoubleClick();
@@ -568,7 +586,10 @@ const OfferImageThumbnail = ({
           <span>{previewStatus === "loading" ? "..." : "IMG"}</span>
         )}
       </div>
-      <span className="offer-product-sku" title={skuName}>
+      <span
+        className="offer-product-sku"
+        {...tooltipProps(disabledSummary || disabledReason ? undefined : skuName)}
+      >
         {skuName}
       </span>
     </div>
@@ -636,6 +657,7 @@ const OfferFieldControl = ({
       ]
         .filter(Boolean)
         .join(" ")}
+      {...tooltipProps(!field.enabled ? unavailableTooltip(field) : undefined)}
     >
       <span>{label}</span>
       <input
@@ -644,7 +666,7 @@ const OfferFieldControl = ({
         disabled={!field.enabled}
         inputMode={isValueField(field) ? "numeric" : "text"}
         readOnly={!activation.isEditing}
-        title="Clique duas vezes para editar"
+        {...tooltipProps(field.enabled ? "Clique duas vezes para editar" : undefined)}
         onBlur={(event) => {
           if (skipNextBlurCommitRef.current) {
             skipNextBlurCommitRef.current = false;
@@ -680,7 +702,10 @@ const OfferOptionControl = ({
   showLabel?: boolean;
   onChange: (selectedIndex: number) => void;
 }) => (
-  <label className={["offer-editor-field", className].filter(Boolean).join(" ")}>
+  <label
+    className={["offer-editor-field", className].filter(Boolean).join(" ")}
+    {...tooltipProps(!optionGroup.enabled ? unavailableTooltip(optionGroup) : undefined)}
+  >
     {showLabel ? <span>{optionGroup.label}</span> : null}
     <select
       aria-label={!showLabel ? optionGroup.label : undefined}
@@ -726,6 +751,7 @@ const OfferInstallmentJumpControl = ({
   return (
     <label
       className={["offer-editor-field", className].filter(Boolean).join(" ")}
+      {...tooltipProps(!installmentJump.enabled ? unavailableTooltip(installmentJump) : undefined)}
     >
       <span>Jump</span>
       <select
@@ -920,7 +946,7 @@ const ProductEditor = ({
         className="offer-drag-handle"
         draggable
         aria-label="Arrastar produto"
-        title="Arrastar produto"
+        {...tooltipProps("Arrastar produto")}
         onClick={(event) => event.preventDefault()}
         onDragEnd={() => {
           setIsDragOver(false);
@@ -961,7 +987,14 @@ const ProductEditor = ({
         ) : (
           <span
             className="offer-product-mechanic"
-            title={getMechanicDisplayLabel(product.mechanic.type)}
+            {...tooltipProps(
+              product.mechanic.disabledSummary || product.mechanic.disabledReason
+                ? unavailableTooltip(
+                    product.mechanic,
+                    getMechanicDisplayLabel(product.mechanic.type)
+                  )
+                : getMechanicDisplayLabel(product.mechanic.type)
+            )}
           >
             {getMechanicDisplayLabel(product.mechanic.type)}
           </span>
@@ -971,12 +1004,21 @@ const ProductEditor = ({
       <div className="offer-product-summary">
         <OfferImageThumbnail
           image={product.image}
+          disabledSummary={product.disabledSummary}
+          disabledReason={product.disabledReason}
           previewRevision={previewRevision}
           skuName={skuName}
           onDoubleClick={() => onOpenImagePicker(product.index)}
         />
 
-        <div className="offer-product-copy">
+        <div
+          className="offer-product-copy"
+          {...tooltipProps(
+            !product.description.enabled
+              ? unavailableTooltip(product.description)
+              : undefined
+          )}
+        >
           <textarea
             ref={descriptionActivation.ref}
             className={[
@@ -992,7 +1034,11 @@ const ProductEditor = ({
             spellCheck={false}
             readOnly={!descriptionActivation.isEditing}
             rows={descriptionRows}
-            title="Clique duas vezes para editar"
+            {...tooltipProps(
+              product.description.enabled
+                ? "Clique duas vezes para editar"
+                : undefined
+            )}
             onBlur={(event) => {
               if (skipNextDescriptionBlurCommitRef.current) {
                 skipNextDescriptionBlurCommitRef.current = false;
@@ -1039,11 +1085,15 @@ const ProductEditor = ({
 
           <label
             className="offer-description-sync"
-            title={
+            {...tooltipProps(
               descriptionHasExpression
                 ? "Habilitar ou desabilitar a expressão do descritivo"
-                : "O Source Text do descritivo não possui expressão"
-            }
+                : unavailableTooltip({
+                    disabledSummary: product.description.disabledSummary ||
+                      "O Source Text do descritivo não possui expressão",
+                    disabledReason: product.description.disabledReason,
+                  })
+            )}
           >
             <input
               type="checkbox"
@@ -1339,7 +1389,16 @@ const ProductEditor = ({
           )}
 
           {product.unsupported ? (
-            <p className="offer-warning">{getMechanicDisplayLabel(product.mechanic.type)}</p>
+            <p
+              className="offer-warning"
+              {...tooltipProps(unavailableTooltip(
+                product.mechanic,
+                getMechanicDisplayLabel(product.mechanic.type)
+              ))}
+            >
+              {product.mechanic.disabledSummary ||
+                getMechanicDisplayLabel(product.mechanic.type)}
+            </p>
           ) : null}
         </div>
       ) : null}
@@ -1353,7 +1412,11 @@ const OfferLegalTextPreview = ({
 }: {
   legalText: OfferTextField;
 }) => (
-  <section className="offer-legal-preview" aria-label={legalText.label}>
+  <section
+    className="offer-legal-preview"
+    aria-label={legalText.label}
+    {...tooltipProps(!legalText.enabled ? unavailableTooltip(legalText) : undefined)}
+  >
     <span>{legalText.label}</span>
     <div>{legalText.value}</div>
   </section>
@@ -1376,6 +1439,11 @@ const OfferLegalControlToggle = ({
 }) => {
   const [checked, setChecked] = useState(control.enabled);
   const isEffectSlider = control.kind === "slider";
+  const unavailableControl =
+    (valueControl.slider && !valueControl.slider.enabled && valueControl.slider) ||
+    (control.optionGroup && !control.optionGroup.enabled && control.optionGroup) ||
+    (!valueControl.available && valueControl) ||
+    (!control.available && control);
 
   useEffect(() => {
     setChecked(control.enabled);
@@ -1391,9 +1459,16 @@ const OfferLegalControlToggle = ({
       ]
         .filter(Boolean)
         .join(" ")}
-      title={"Layer " + control.layerIndex}
+      {...tooltipProps(
+        unavailableControl
+          ? unavailableTooltip(unavailableControl)
+          : "Layer " + control.layerIndex
+      )}
     >
-      <div className="offer-legal-toggle-main">
+      <div
+        className="offer-legal-toggle-main"
+        {...tooltipProps(!control.available ? unavailableTooltip(control) : undefined)}
+      >
         {isEffectSlider ? null : control.locked ? (
           <span className="offer-legal-fixed-indicator">Fixo</span>
         ) : (
@@ -1714,7 +1789,7 @@ const OfferProductImagePicker = ({
                 type="button"
                 className="offer-image-picker-item"
                 key={image.fullPath}
-                title={image.name}
+                {...tooltipProps(image.name)}
                 onClick={(event) => onSelectImage(image, event.shiftKey)}
                 onMouseEnter={() => {
                   if (image.previewStatus === "idle") {
@@ -1906,7 +1981,7 @@ export const OffersPanel = ({
               <button
                 type="button"
                 key={offer.layerIndex}
-                title={offer.name}
+                {...tooltipProps(offer.name)}
                 aria-label={offerTabFullName + " - " + offer.name}
                 className={[
                   isSelected ? "is-selected" : "",
@@ -2064,7 +2139,7 @@ export const OffersPanel = ({
                   aria-label="Atualizar ofertas"
                   aria-busy={loading}
                   disabled={loading}
-                  title="Atualizar ofertas e imagens"
+                  {...tooltipProps("Atualizar ofertas e imagens")}
                   onClick={() => void handleRefreshOffers()}
                   onMouseDown={(event) => {
                     event.preventDefault();
@@ -2077,7 +2152,7 @@ export const OffersPanel = ({
                   type="button"
                   className="offers-legal-menu-button"
                   aria-label="Opções do texto legal"
-                  title="Opções do texto legal"
+                  {...tooltipProps("Opções do texto legal")}
                   onClick={() => setIsLegalSettingsOpen(true)}
                   onMouseDown={clearDocumentSelection}
                 >

@@ -92,9 +92,17 @@ export const generateOfferData = (offer: Layer): InternalOfferDetails => withMec
   const errors: string[] = [];
   const products: InternalOfferProduct[] = [];
   const offerSource = getLayerSource(offer, "oferta", errors);
-  const legalSource = getLegalTextSource(offerSource, errors);
+  const legalDisabledReasons: string[] = [];
+  const legalDisabledSummaries: string[] = [];
+  const legalSource = getLegalTextSource(offerSource, errors, legalDisabledReasons, legalDisabledSummaries);
   const legalTextProperty = getLegalTextProperty(legalSource, errors);
   const legalControls = readLegalControls(legalSource, errors);
+  if (legalSource === null && legalDisabledReasons.length > 0) {
+    for (let index = 0; index < legalControls.length; index += 1) {
+      legalControls[index].disabledReason = legalDisabledReasons.join(" ");
+      legalControls[index].disabledSummary = legalDisabledSummaries.join(" ");
+    }
+  }
 
   const productLayers = resolveOfferProductLayers(offerSource, errors);
   for (let index = 0; index < productLayers.length; index += 1) {
@@ -109,7 +117,7 @@ export const generateOfferData = (offer: Layer): InternalOfferDetails => withMec
     const valueLayer = layers.mechanicLayer;
     const mechanic: InternalOfferMechanic = valueLayer === null
       ? {
-          type: "Associação de produto inválida",
+          type: layers.mechanicUnavailableLabel || "Mecânica do produto " + layers.slot + " indisponível",
           fields: [],
           optionGroups: [],
           unsupported: true,
@@ -125,12 +133,20 @@ export const generateOfferData = (offer: Layer): InternalOfferDetails => withMec
     products.push({
       index: layers.slot - 1,
       associationValid: layers.valid,
+      disabledReason: layers.disabledReason,
+      disabledSummary: layers.disabledSummary,
       description: {
         id: "description",
         label: "Descricao",
         value: readText(descriptionProperty),
         format: "text",
         enabled: layers.valid && descriptionProperty !== null,
+        disabledReason: layers.disabledReason || (descriptionProperty === null
+          ? 'Texto não encontrado. Confira a camada de texto "DESCRITIVO" dentro da precomp do descritivo.'
+          : undefined),
+        disabledSummary: layers.disabledSummary || (descriptionProperty === null
+          ? "O texto do descritivo não foi encontrado."
+          : undefined),
         multiline: true,
         hasExpression: hasPropertyExpression(descriptionProperty),
         expressionEnabled: isPropertyExpressionEnabled(descriptionProperty),
@@ -184,6 +200,8 @@ export const toPublicOfferDetails = (
         value: field.value,
         format: field.format,
         enabled: product.associationValid !== false && field.enabled,
+        disabledReason: product.disabledReason || field.disabledReason,
+        disabledSummary: product.disabledSummary || field.disabledSummary,
       });
     }
 
@@ -203,17 +221,23 @@ export const toPublicOfferDetails = (
         options,
         selectedIndex: optionGroup.selectedIndex,
         enabled: product.associationValid !== false && optionGroup.enabled,
+        disabledReason: product.disabledReason || optionGroup.disabledReason,
+        disabledSummary: product.disabledSummary || optionGroup.disabledSummary,
       });
     }
 
     products.push({
       index: product.index,
+      disabledReason: product.disabledReason,
+      disabledSummary: product.disabledSummary,
       description: {
         id: product.description.id,
         label: product.description.label,
         value: product.description.value,
         format: product.description.format,
         enabled: product.description.enabled,
+        disabledReason: product.description.disabledReason,
+        disabledSummary: product.description.disabledSummary,
         multiline: product.description.multiline,
         hasExpression: product.description.hasExpression,
         expressionEnabled: product.description.expressionEnabled,
@@ -221,6 +245,8 @@ export const toPublicOfferDetails = (
       mechanic: {
         type: product.mechanic.type,
         unsupported: product.associationValid === false || product.mechanic.unsupported,
+        disabledReason: product.disabledReason || product.mechanic.disabledReason,
+        disabledSummary: product.disabledSummary || product.mechanic.disabledSummary,
         fields,
         optionGroups,
         installmentJump:
@@ -230,6 +256,8 @@ export const toPublicOfferDetails = (
             : {
                 selectedTarget: product.mechanic.installmentJump.selectedTarget,
                 enabled: product.associationValid !== false && product.mechanic.installmentJump.enabled,
+                disabledReason: product.disabledReason || product.mechanic.installmentJump.disabledReason,
+                disabledSummary: product.disabledSummary || product.mechanic.installmentJump.disabledSummary,
               },
       },
       image: product.image,
@@ -258,6 +286,8 @@ export const toPublicOfferDetails = (
         options,
         selectedIndex: control.optionGroup.selectedIndex,
         enabled: control.optionGroup.enabled,
+        disabledReason: control.optionGroup.disabledReason,
+        disabledSummary: control.optionGroup.disabledSummary,
       };
     }
 
@@ -268,6 +298,8 @@ export const toPublicOfferDetails = (
       layerIndex: control.layerIndex,
       enabled: control.enabled,
       available: control.available,
+      disabledReason: control.disabledReason,
+      disabledSummary: control.disabledSummary,
       locked: control.locked,
       slider:
         control.slider === null || typeof control.slider === "undefined"
@@ -278,6 +310,8 @@ export const toPublicOfferDetails = (
               value: control.slider.value,
               format: control.slider.format,
               enabled: control.slider.enabled,
+              disabledReason: control.slider.disabledReason,
+              disabledSummary: control.slider.disabledSummary,
               multiline: control.slider.multiline,
             },
       optionGroup,

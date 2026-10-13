@@ -429,6 +429,118 @@ const invalidConfigurations = [
   ["missing required mechanic", (schema) => { delete schema[CARD]; }],
 ];
 
+test("missing controller comment explains disabled unit, mechanic selectors and quantity in the public snapshot", () => {
+  for (const [identity, fixture] of [[SIMPLE, simpleEnv], [INSTALLMENT, installmentEnv], [CARD, cardEnv], [COMBINED, combinedEnv]]) {
+    const env = fixture();
+    env.control.comment = "";
+    const h = harness();
+    mountOffer(h, env);
+    const mechanic = h.getOffersEditorSnapshot(1).selectedOffer.products[0].mechanic;
+    const controls = [...mechanic.optionGroups, ...mechanic.fields.filter(({ id }) => id === "quantidade-x")];
+    assert.ok(controls.length > 0, identity);
+    for (const control of controls) {
+      assert.equal(control.enabled, false);
+      assert.match(control.disabledReason, /Adicione o comentário "CONTROLADOR DE MECANICA"/);
+      assert.match(control.disabledReason, /Controlador de Mecânica/);
+      assert.match(control.disabledReason, /Nome livre da precomp/);
+      assert.equal(control.disabledSummary, "O comentário obrigatório não foi encontrado.");
+    }
+    assert.ok(mechanic.fields.filter(({ id }) => id !== "quantidade-x").every((field) => field.enabled && !field.disabledReason && !field.disabledSummary));
+    assert.deepEqual(env.control.property("ADBE Effect Parade").properties.flatMap((item) => effectValue(item).writes), []);
+  }
+});
+
+test("missing text and controller comments use the active schema without disabling healthy sibling fields", () => {
+  const schema = approvedSchema();
+  schema[SIMPLE].layers.preco = "PREÇO PERSONALIZADO";
+  schema[SIMPLE].layers.controlador = "CONTROLE PERSONALIZADO";
+  const env = simpleEnv();
+  const h = harness(schema);
+  mountOffer(h, env);
+  let mechanic = h.getOffersEditorSnapshot(1).selectedOffer.products[0].mechanic;
+  assert.match(mechanic.fields[0].disabledReason, /Adicione o comentário "PREÇO PERSONALIZADO"/);
+  assert.match(mechanic.optionGroups[0].disabledReason, /Adicione o comentário "CONTROLE PERSONALIZADO"/);
+  assert.equal(mechanic.fields[0].disabledSummary, "O comentário obrigatório não foi encontrado.");
+  assert.equal(mechanic.optionGroups[0].disabledSummary, "O comentário obrigatório não foi encontrado.");
+  env.price.comment = "PREÇO PERSONALIZADO";
+  env.control.comment = "CONTROLE PERSONALIZADO";
+  mechanic = h.getOffersEditorSnapshot(1).selectedOffer.products[0].mechanic;
+  assert.equal(mechanic.fields[0].enabled, true);
+  assert.equal(mechanic.fields[0].disabledReason, undefined);
+  assert.equal(mechanic.fields[0].disabledSummary, undefined);
+  assert.equal(mechanic.optionGroups[0].enabled, true);
+  assert.equal(mechanic.optionGroups[0].disabledReason, undefined);
+  assert.equal(mechanic.optionGroups[0].disabledSummary, undefined);
+});
+
+test("duplicate comments, missing effects and non-text layers do not claim that a comment is missing", () => {
+  const duplicateEnv = simpleEnv();
+  duplicateEnv.source.layers.push(controller([effect("Unidade")]));
+  const duplicate = harness().readConfiguredMechanic(duplicateEnv.valueLayer, SIMPLE, []);
+  assert.match(duplicate.optionGroups[0].disabledReason, /Comentário duplicado.*CONTROLADOR DE MECANICA/);
+  assert.match(duplicate.optionGroups[0].disabledSummary, /Mais de uma camada.*mesmo comentário/);
+  assert.doesNotMatch(duplicate.optionGroups[0].disabledReason, /Adicione/);
+  assert.equal(duplicate.fields[0].enabled, true);
+
+  const effectEnv = simpleEnv();
+  effectEnv.control.property("ADBE Effect Parade").properties = [];
+  const missingEffect = harness().readConfiguredMechanic(effectEnv.valueLayer, SIMPLE, []);
+  assert.match(missingEffect.optionGroups[0].disabledReason, /controle "Unidade".*posição 1/);
+  assert.match(missingEffect.optionGroups[0].disabledSummary, /controle esperado.*ausente.*numérico/);
+  assert.doesNotMatch(missingEffect.optionGroups[0].disabledReason, /comentário/);
+
+  const textEnv = simpleEnv();
+  textEnv.source.layers[0] = identified(new AVLayer("Não é texto"), "PRECO");
+  const missingText = harness().readConfiguredMechanic(textEnv.valueLayer, SIMPLE, []);
+  assert.match(missingText.fields[0].disabledReason, /comentário "PRECO".*Source Text/);
+  assert.match(missingText.fields[0].disabledSummary, /texto da camada está indisponível/);
+  assert.doesNotMatch(missingText.fields[0].disabledReason, /Adicione/);
+
+  const dropdownEnv = cardEnv();
+  dropdownEnv.control.property("ADBE Effect Parade").properties.push(effect("Unidade", 1));
+  const duplicateDropdown = harness().readConfiguredMechanic(dropdownEnv.valueLayer, CARD, []);
+  assert.match(duplicateDropdown.optionGroups[0].disabledReason, /Controle duplicado.*dropdown "Unidade"/);
+  assert.match(duplicateDropdown.optionGroups[0].disabledSummary, /Mais de um dropdown/);
+});
+
+test("jump tooltips identify all missing schema comments and distinguish a missing marker", () => {
+  for (const [identity, fixture, primaryRole, alternateRole] of [
+    [INSTALLMENT, installmentEnv, "pulo-preco-cheio", "pulo-parcela"],
+    [CARD, cardEnv, "pulo-preco-meu-crf", "pulo-preco-meu-cartao-crf"],
+    [COMBINED, combinedEnv, "pulo-preco-cheio", "pulo"],
+  ]) {
+    const schema = approvedSchema();
+    Object.assign(schema[identity].layers, {
+      marcadores: "MARCADOR PERSONALIZADO",
+      [primaryRole]: "PRINCIPAL PERSONALIZADO",
+      [alternateRole]: "ALTERNATIVO PERSONALIZADO",
+    });
+    const env = fixture();
+    const h = harness(schema);
+    mountOffer(h, env);
+    let jump = h.getOffersEditorSnapshot(1).selectedOffer.products[0].mechanic.installmentJump;
+    assert.equal(jump.enabled, false);
+    assert.equal(jump.disabledSummary, "O comentário obrigatório não foi encontrado.");
+    for (const comment of ["MARCADOR PERSONALIZADO", "PRINCIPAL PERSONALIZADO", "ALTERNATIVO PERSONALIZADO"]) {
+      assert.ok(jump.disabledReason.includes('Adicione o comentário "' + comment + '"'));
+    }
+    env.marker.comment = "MARCADOR PERSONALIZADO";
+    env.primary.comment = "PRINCIPAL PERSONALIZADO";
+    env.alternate.comment = "ALTERNATIVO PERSONALIZADO";
+    env.marker.marker.times = [1];
+    jump = h.getOffersEditorSnapshot(1).selectedOffer.products[0].mechanic.installmentJump;
+    assert.equal(jump.enabled, false);
+    assert.match(jump.disabledReason, /Adicione o segundo marcador.*MARCADOR PERSONALIZADO/);
+    assert.match(jump.disabledSummary, /segundo marcador.*não foi encontrado/);
+    assert.doesNotMatch(jump.disabledReason, /Adicione o comentário/);
+    env.marker.marker.times = [1, 5];
+    jump = h.getOffersEditorSnapshot(1).selectedOffer.products[0].mechanic.installmentJump;
+    assert.equal(jump.enabled, true);
+    assert.equal(jump.disabledReason, undefined);
+    assert.equal(jump.disabledSummary, undefined);
+  }
+});
+
 for (const [name, invalidate] of invalidConfigurations) {
   test(`invalid configuration ${name} fails closed before field, option or jump writes`, () => {
     const schema = approvedSchema();

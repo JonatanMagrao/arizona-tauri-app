@@ -5,6 +5,12 @@ interface LayerIdentity {
   comment: string;
   fallbackNames: string[];
   context: string;
+  layerLabel?: string;
+}
+
+export interface LayerIdentityDiagnostic {
+  disabledReason?: string;
+  disabledSummary?: string;
 }
 
 const normalizeIdentity = (value: string): string =>
@@ -13,9 +19,23 @@ const normalizeIdentity = (value: string): string =>
 export const findLayerByIdentity = (
   source: CompItem | null,
   identity: LayerIdentity,
-  errors: string[]
+  errors: string[],
+  diagnostic?: LayerIdentityDiagnostic
 ): Layer | null => {
-  if (source === null) return null;
+  const explain = (reason: string, summary: string): void => {
+    if (diagnostic) {
+      diagnostic.disabledReason = reason;
+      diagnostic.disabledSummary = summary;
+    }
+  };
+  if (source === null) {
+    explain("Precomp indisponível. Confira a origem da camada de mecânica.",
+      "A precomp da mecânica não foi encontrada.");
+    return null;
+  }
+  const location = ' na precomp "' + source.name + '".';
+  const missingCommentReason = 'Adicione o comentário "' + identity.comment +
+    '" na camada "' + (identity.layerLabel || identity.comment) + '"' + location;
 
   const expectedComment = normalizeIdentity(identity.comment);
   let found: Layer | null = null;
@@ -33,6 +53,9 @@ export const findLayerByIdentity = (
     if (comment !== expectedComment) continue;
 
     if (found !== null) {
+      explain('Comentário duplicado. Deixe "' + identity.comment +
+        '" em apenas uma camada' + location,
+        "Mais de uma camada possui o mesmo comentário obrigatório.");
       addError(
         errors,
         'Mais de uma camada tem o comentário "' + identity.comment +
@@ -46,6 +69,7 @@ export const findLayerByIdentity = (
   if (found !== null) return found;
 
   if (!MECHANIC_LAYER_NAME_FALLBACK_ENABLED) {
+    explain(missingCommentReason, "O comentário obrigatório não foi encontrado.");
     addError(
       errors,
       'Não encontrei uma camada com o comentário "' + identity.comment +
@@ -69,6 +93,9 @@ export const findLayerByIdentity = (
     if (!matchesName) continue;
 
     if (found !== null) {
+      explain('Camada ambígua. Use o comentário "' + identity.comment +
+        '" somente na camada correta' + location,
+        "Mais de uma camada corresponde ao nome esperado.");
       addError(
         errors,
         'Mais de uma camada corresponde ao nome de "' + identity.comment +
@@ -80,6 +107,7 @@ export const findLayerByIdentity = (
   }
 
   if (found === null) {
+    explain(missingCommentReason, "A camada não foi encontrada pelo comentário ou nome esperado.");
     addError(
       errors,
       'Não encontrei a camada "' + identity.comment +

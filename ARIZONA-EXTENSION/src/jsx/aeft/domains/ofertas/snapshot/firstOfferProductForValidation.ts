@@ -27,7 +27,9 @@ export const getFirstOfferProductForValidation = (
     return {
       index: first === null ? 0 : first.slot - 1,
       mechanic: {
-        type: "Associação de produto inválida",
+        type: !unresolvedBeforeFirst && first !== null && first.mechanicLayer === null
+          ? first.mechanicUnavailableLabel || "Mecânica do produto " + first.slot + " indisponível"
+          : "Associação de produto inválida",
         fields: [],
         optionGroups: [],
         unsupported: true,

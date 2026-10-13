@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { tooltipProps } from "../../../utils/tooltips";
 import { useRoteiro, type RoteiroToast } from "../hooks/useRoteiro";
 import type { RoteiroDocumentCache } from "../services/roteiroDocumentCache";
 import {
@@ -33,7 +34,7 @@ const RoteiroToastMessage = ({
         type="button"
         className="roteiro-toast__close"
         onClick={onDismiss}
-        title="Fechar"
+        {...tooltipProps("Fechar")}
         aria-label="Fechar"
       >
         ×
@@ -145,7 +146,7 @@ export const RoteiroPanel = ({
   return (
     <div className="roteiro-panel" aria-busy={loading}>
       <div className="roteiro-panel__header">
-        <span className="roteiro-panel__filename" title={fileName}>
+        <span className="roteiro-panel__filename" {...tooltipProps(fileName)}>
           {fileName}
         </span>
         <div className="roteiro-panel__actions">
@@ -154,7 +155,7 @@ export const RoteiroPanel = ({
             className="roteiro-panel__audio"
             onClick={() => void updateAudio()}
             disabled={busy}
-            title="Atualizar áudio"
+            {...tooltipProps("Atualizar áudio")}
           >
             {audioUpdating ? "..." : "Áudio"}
           </button>
@@ -165,7 +166,7 @@ export const RoteiroPanel = ({
             disabled={busy}
             aria-busy={loading}
             aria-label={loading ? "Atualizando roteiro..." : "Atualizar roteiro"}
-            title={loading ? "Atualizando roteiro..." : "Atualizar roteiro"}
+            {...tooltipProps(loading ? "Atualizando roteiro..." : "Atualizar roteiro")}
           >
             <span className="roteiro-panel__refresh-icon" aria-hidden="true">↺</span>
           </button>
@@ -199,11 +200,11 @@ export const RoteiroPanel = ({
                 ]
                   .filter(Boolean)
                   .join(" ")}
-                title={
+                {...tooltipProps(
                   info?.offerLayerIndex && onOpenOfferInOffers
                     ? "Clique duas vezes para editar esta oferta"
                     : undefined
-                }
+                )}
                 onDoubleClick={(event) => {
                   if (busy) return;
                   if (!info?.offerLayerIndex || !onOpenOfferInOffers) return;
@@ -221,7 +222,7 @@ export const RoteiroPanel = ({
                           type="button"
                           onClick={() => void openOfferPrecomp(info)}
                           disabled={busy}
-                          title="Abrir esta oferta no After Effects"
+                          {...tooltipProps("Abrir esta oferta no After Effects")}
                         >
                           {formatOfferNumber(offerIndex)}
                         </button>
@@ -265,11 +266,11 @@ export const RoteiroPanel = ({
                                   )
                                 : void openOfferPrecomp(info)
                             }
-                            title={
+                            {...tooltipProps(
                               seg.action === "fix"
                                 ? "Corrigir no After"
                                 : "Abrir esta oferta no After Effects"
-                            }
+                            )}
                           >
                             {seg.text}
                           </button>
@@ -295,7 +296,7 @@ export const RoteiroPanel = ({
         className="roteiro-marker-button"
         onClick={() => void adjustMarkers()}
         disabled={busy}
-        title="Ajustar os tempos das ofertas ao final do roteiro"
+        {...tooltipProps("Ajustar os tempos das ofertas ao final do roteiro")}
       >
         {markerAdjusting ? "..." : "Ajustar tempos"}
       </button>
@@ -305,7 +306,7 @@ export const RoteiroPanel = ({
         className="roteiro-render-button"
         onClick={() => void queueRender()}
         disabled={busy}
-        title="Adicionar MOV e MP4 à fila de render do After Effects"
+        {...tooltipProps("Adicionar MOV e MP4 à fila de render do After Effects")}
       >
         {renderQueueLoading ? "..." : "Render"}
       </button>

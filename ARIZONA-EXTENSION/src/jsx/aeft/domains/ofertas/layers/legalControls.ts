@@ -93,11 +93,11 @@ const LEGAL_TEXT_LAYER_CONTROLS: LegalTextLayerControlConfig[] = [
 
 export const getLegalTextSource = (
   offerSource: CompItem | null,
-  errors: string[]
+  errors: string[],
+  disabledReasons?: string[],
+  disabledSummaries?: string[]
 ): CompItem | null => {
-  if (offerSource === null) return null;
-
-  const legalPrecompLayer = findOfferStructureLayer(offerSource, "legal", errors);
+  const legalPrecompLayer = findOfferStructureLayer(offerSource, "legal", errors, disabledReasons, disabledSummaries);
   if (legalPrecompLayer === null) return null;
 
   return getLayerSource(legalPrecompLayer, "texto legal", errors);
