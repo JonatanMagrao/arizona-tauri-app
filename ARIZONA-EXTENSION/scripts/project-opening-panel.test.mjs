@@ -326,7 +326,7 @@ test("offers stay busy while concurrent edits finish, and stale callbacks cannot
   assert.equal(snapshots, previousSnapshots);
 });
 
-function layoutChangeFixture() {
+function sourceChangeFixture(kind = "layout") {
   const harness = createHarness();
   const host = deferred();
   const refresh = deferred();
@@ -334,12 +334,17 @@ function layoutChangeFixture() {
   const snapshotRequests = [];
   const statuses = [];
   const diagnostics = [];
+  const offerContext = {
+    projectKey: "C:/jobs/current.aep", compItemId: 10, offerLayerIndex: 4,
+    offerLayerId: 40, layerComment: "CAMADA OFERTA 4", sourceItemId: 50,
+    folderItemId: 60, folderComment: "OFERTA 04",
+  };
   const request = {
-    context: {
-      projectKey: "C:/jobs/current.aep", compItemId: 10, offerLayerIndex: 4,
-      offerLayerId: 40, layerComment: "OFERTA 4", sourceItemId: 50,
-      folderItemId: 60, folderComment: "REGUAS",
-    },
+    context: kind === "mechanic" ? {
+      offer: offerContext, productIndex: 1, mechanicLayerIndex: 3,
+      mechanicLayerId: 43, mechanicLayerComment: "MECANICA 2",
+      mechanicSourceItemId: 80, mechanicsFolderItemId: 90,
+    } : offerContext,
     targetItemId: 70,
   };
   const initialSnapshot = { selectedOfferLayerIndex: 4, selectedOffer: { layerIndex: 4, name: "Oferta_04" } };
@@ -355,6 +360,7 @@ function layoutChangeFixture() {
         return snapshotRequests.length === 1 ? Promise.resolve(initialSnapshot) : refresh.promise;
       },
       replaceOfferLayout: (nextRequest) => { requests.push(nextRequest); return host.promise; },
+      replaceOfferMechanic: (nextRequest) => { requests.push(nextRequest); return host.promise; },
     },
   });
   const onStatus = (message) => statuses.push(message);
@@ -362,69 +368,72 @@ function layoutChangeFixture() {
   return { harness, host, refresh, requests, snapshotRequests, statuses, diagnostics, request, initialSnapshot };
 }
 
-for (const ok of [true, false]) {
-  test(`layout change ${ok ? "success" : "rejection"} refreshes the same offer and stays busy through refresh`, async () => {
-    const f = layoutChangeFixture();
+for (const kind of ["layout", "mechanic"]) {
+  const actionName = kind === "mechanic" ? "replaceMechanic" : "replaceLayout";
+  for (const ok of [true, false]) {
+    test(`${kind} change ${ok ? "success" : "rejection"} refreshes the same offer and stays busy through refresh`, async () => {
+      const f = sourceChangeFixture(kind);
+      await settle();
+      const before = f.harness.value;
+      assert.equal(before.busy, false);
+
+      const action = before[actionName](f.request);
+      await before[actionName](f.request);
+      assert.deepEqual(f.requests, [f.request], "A second synchronous selection cannot send a duplicate replacement");
+      assert.equal(f.requests[0], f.request, "Forward the exact captured target and offer context");
+      assert.equal(f.harness.value.busy, true);
+      assert.deepEqual(f.snapshotRequests, [4]);
+
+      const message = ok ? "Régua da oferta alterada." : "A oferta mudou. Atualize antes de tentar novamente.";
+      f.host.resolve({ ok, message, selectedOfferLayerIndex: ok ? 4 : 0, errors: [] });
+      await settle();
+      assert.deepEqual(f.snapshotRequests, [4, 4]);
+      assert.equal(f.harness.value.busy, true, "The host result must not unlock the editor before its snapshot");
+      assert.equal(f.harness.value.snapshot, f.initialSnapshot);
+      assert.deepEqual(f.statuses, [message]);
+      assert.equal(f.diagnostics.at(-1).status, ok ? "completed" : "failed");
+      if (!ok) assert.ok(f.harness.value.actionLog.some((entry) => entry.includes(message)));
+      await f.harness.value[actionName](f.request);
+      assert.equal(f.requests.length, 1, "Replacement is also blocked during the snapshot refresh");
+
+      const refreshed = { selectedOfferLayerIndex: 4, selectedOffer: { layerIndex: 4, name: "Oferta_04", refreshed: true } };
+      f.refresh.resolve(refreshed);
+      await action;
+      assert.equal(f.harness.value.busy, false);
+      assert.equal(f.harness.value.snapshot, refreshed);
+      assert.equal(f.harness.value.snapshot.selectedOfferLayerIndex, 4);
+      f.harness.unmount();
+  });
+  }
+
+  test(`a ${kind} replacement is blocked during the initial snapshot and stale callbacks stay inert after unmount`, async () => {
+    const f = sourceChangeFixture(kind);
+    await f.harness.value[actionName](f.request);
+    assert.deepEqual(f.requests, []);
     await settle();
-    const before = f.harness.value;
-    assert.equal(before.busy, false);
-
-    const action = before.replaceLayout(f.request);
-    await before.replaceLayout(f.request);
-    assert.deepEqual(f.requests, [f.request], "A second synchronous selection cannot send a duplicate replacement");
-    assert.equal(f.requests[0], f.request, "Forward the exact captured target and offer context");
-    assert.equal(f.harness.value.busy, true);
-    assert.deepEqual(f.snapshotRequests, [4]);
-
-    const message = ok ? "Régua da oferta alterada." : "A oferta mudou. Atualize antes de tentar novamente.";
-    f.host.resolve({ ok, message, selectedOfferLayerIndex: ok ? 4 : 0, errors: [] });
-    await settle();
-    assert.deepEqual(f.snapshotRequests, [4, 4]);
-    assert.equal(f.harness.value.busy, true, "The host result must not unlock the editor before its snapshot");
-    assert.equal(f.harness.value.snapshot, f.initialSnapshot);
-    assert.deepEqual(f.statuses, [message]);
-    assert.equal(f.diagnostics.at(-1).status, ok ? "completed" : "failed");
-    if (!ok) assert.ok(f.harness.value.actionLog.some((entry) => entry.includes(message)));
-    await f.harness.value.replaceLayout(f.request);
-    assert.equal(f.requests.length, 1, "Replacement is also blocked during the snapshot refresh");
-
-    const refreshed = { selectedOfferLayerIndex: 4, selectedOffer: { layerIndex: 4, name: "Oferta_04", refreshed: true } };
-    f.refresh.resolve(refreshed);
-    await action;
-    assert.equal(f.harness.value.busy, false);
-    assert.equal(f.harness.value.snapshot, refreshed);
-    assert.equal(f.harness.value.snapshot.selectedOfferLayerIndex, 4);
+    const stale = f.harness.value;
     f.harness.unmount();
+    await stale[actionName](f.request);
+    assert.deepEqual(f.requests, []);
+    assert.deepEqual(f.snapshotRequests, [4]);
+    assert.deepEqual(f.statuses, []);
+    assert.equal(f.harness.settersAfterUnmount, 0);
+  });
+
+  test(`a delayed ${kind} result after unmount cannot refresh or update the old editor`, async () => {
+    const f = sourceChangeFixture(kind);
+    await settle();
+    const action = f.harness.value[actionName](f.request);
+    assert.equal(f.requests.length, 1);
+    f.harness.unmount();
+    f.host.resolve({ ok: true, message: "Régua da oferta alterada.", selectedOfferLayerIndex: 4, errors: [] });
+    await action;
+    assert.deepEqual(f.snapshotRequests, [4]);
+    assert.deepEqual(f.statuses, []);
+    assert.equal(f.diagnostics.length, 1, "Only the original start belongs to this mounted editor");
+    assert.equal(f.harness.settersAfterUnmount, 0);
   });
 }
-
-test("a layout replacement is blocked during the initial snapshot and stale callbacks stay inert after unmount", async () => {
-  const f = layoutChangeFixture();
-  await f.harness.value.replaceLayout(f.request);
-  assert.deepEqual(f.requests, []);
-  await settle();
-  const stale = f.harness.value;
-  f.harness.unmount();
-  await stale.replaceLayout(f.request);
-  assert.deepEqual(f.requests, []);
-  assert.deepEqual(f.snapshotRequests, [4]);
-  assert.deepEqual(f.statuses, []);
-  assert.equal(f.harness.settersAfterUnmount, 0);
-});
-
-test("a delayed layout result after unmount cannot refresh or update the old editor", async () => {
-  const f = layoutChangeFixture();
-  await settle();
-  const action = f.harness.value.replaceLayout(f.request);
-  assert.equal(f.requests.length, 1);
-  f.harness.unmount();
-  f.host.resolve({ ok: true, message: "Régua da oferta alterada.", selectedOfferLayerIndex: 4, errors: [] });
-  await action;
-  assert.deepEqual(f.snapshotRequests, [4]);
-  assert.deepEqual(f.statuses, []);
-  assert.equal(f.diagnostics.length, 1, "Only the original start belongs to this mounted editor");
-  assert.equal(f.harness.settersAfterUnmount, 0);
-});
 
 test("layout bridge services send the captured context unchanged and refuse browser-only calls", async () => {
   for (const cep of [true, false]) {
@@ -443,6 +452,34 @@ test("layout bridge services send the captured context unchanged and refuse brow
     } else {
       assert.throws(() => services.loadOfferLayoutOptions(4), /After Effects/);
       assert.throws(() => services.replaceOfferLayout(request), /After Effects/);
+      assert.deepEqual(calls, []);
+    }
+  }
+});
+
+test("mechanic bridge services preserve both product identity and captured offer context, and refuse browser-only calls", async () => {
+  for (const cep of [true, false]) {
+    const harness = createHarness({ cep });
+    const calls = [];
+    const response = { ok: true, errors: [] };
+    const services = harness.load("offersService", {
+      "../../../../lib/utils/bolt": { evalTS: (...args) => { calls.push(args); return Promise.resolve(response); } },
+    });
+    const request = {
+      context: {
+        offer: { projectKey: "current.aep", offerLayerIndex: 4, sourceItemId: 50 },
+        productIndex: 1, mechanicLayerId: 43, mechanicLayerComment: "MECANICA 2",
+      },
+      targetItemId: 80,
+    };
+    if (cep) {
+      assert.equal(await services.loadOfferMechanicOptions(4, 1), response);
+      assert.equal(await services.replaceOfferMechanic(request), response);
+      assert.deepEqual(calls, [["getOfferMechanicOptions", 4, 1], ["replaceOfferMechanic", request]]);
+      assert.equal(calls[1][1], request);
+    } else {
+      assert.throws(() => services.loadOfferMechanicOptions(4, 1), /After Effects/);
+      assert.throws(() => services.replaceOfferMechanic(request), /After Effects/);
       assert.deepEqual(calls, []);
     }
   }

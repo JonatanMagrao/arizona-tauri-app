@@ -10,6 +10,7 @@ import {
   openOfferPrecompForEditor,
   replaceOfferProductImage,
   replaceOfferLayout,
+  replaceOfferMechanic,
   selectOfferForEditor,
   swapOfferSources,
   swapOfferProducts,
@@ -29,6 +30,7 @@ import type {
   OfferEditorSnapshot,
   OfferInstallmentJumpTarget,
   OfferLayoutChangeRequest,
+  OfferMechanicChangeRequest,
 } from "../types";
 
 interface UseOffersEditorOptions {
@@ -404,6 +406,17 @@ export const useOffersEditor = ({
     [loading, runOfferAction]
   );
 
+  const replaceMechanic = useCallback(
+    (request: OfferMechanicChangeRequest) => {
+      if (loading || pendingActionCountRef.current > 0) return Promise.resolve();
+
+      return runOfferAction("trocar_mecanica", "Trocar mecânica do produto", () =>
+        replaceOfferMechanic(request)
+      );
+    },
+    [loading, runOfferAction]
+  );
+
   const replaceProductImage = useCallback(
     (
       offerLayerIndex: number,
@@ -538,6 +551,7 @@ export const useOffersEditor = ({
     replaceProductImage,
     swapOffers,
     replaceLayout,
+    replaceMechanic,
     swapProducts,
     undo,
   };

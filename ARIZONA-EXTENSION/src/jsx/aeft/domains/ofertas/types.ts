@@ -100,6 +100,31 @@ export interface OfferLayoutChangeRequest {
   targetItemId: number;
 }
 
+export interface OfferMechanicContext {
+  offer: OfferLayoutContext;
+  productIndex: number;
+  mechanicLayerIndex: number;
+  mechanicLayerId: number;
+  mechanicLayerComment: string;
+  mechanicSourceItemId: number;
+  mechanicsFolderItemId: number;
+}
+
+export interface OfferMechanicMenuData {
+  ok: boolean;
+  message: string;
+  context: OfferMechanicContext | null;
+  options: OfferLayoutOption[];
+  disabledSummary?: string;
+  disabledReason?: string;
+  errors: string[];
+}
+
+export interface OfferMechanicChangeRequest {
+  context: OfferMechanicContext;
+  targetItemId: number;
+}
+
 export interface OfferEditorSnapshot {
   ok: boolean;
   message: string;

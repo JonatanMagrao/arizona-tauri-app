@@ -5,6 +5,8 @@ import type {
   OfferInstallmentJumpTarget,
   OfferLayoutChangeRequest,
   OfferLayoutMenuData,
+  OfferMechanicChangeRequest,
+  OfferMechanicMenuData,
 } from "../types";
 
 const assertCep = () => {
@@ -32,6 +34,18 @@ export const replaceOfferLayout = (request: OfferLayoutChangeRequest) => {
   assertCep();
 
   return evalTS("replaceOfferLayout", request) as Promise<OfferEditorActionResult>;
+};
+
+export const loadOfferMechanicOptions = (offerLayerIndex: number, productIndex: number) => {
+  assertCep();
+
+  return evalTS("getOfferMechanicOptions", offerLayerIndex, productIndex) as Promise<OfferMechanicMenuData>;
+};
+
+export const replaceOfferMechanic = (request: OfferMechanicChangeRequest) => {
+  assertCep();
+
+  return evalTS("replaceOfferMechanic", request) as Promise<OfferEditorActionResult>;
 };
 
 export const selectOfferForEditor = (offerLayerIndex: number) => {

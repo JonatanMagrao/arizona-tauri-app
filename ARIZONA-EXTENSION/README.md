@@ -129,6 +129,31 @@ tem undo e revalida a oferta, a pasta e a origem antes da troca. O catálogo e a
 resolução ficam em `domains/ofertas/offers/`; a mutação fica em `actions/`,
 separada da troca de conteúdo entre duas ofertas já existente.
 
+## Troca de mecânicas do produto
+
+O nome da mecânica no card abre o seletor das sete mecânicas. As opções internas
+de variação, quando existentes, continuam abaixo dele. A busca usa a mesma
+pasta da oferta identificada por `OFERTA 01`, `OFERTA 02` etc. Dentro dela,
+a subpasta direta das mecânicas precisa do comentário `MECANICAS`. As precomps
+podem estar em qualquer nível de subpastas dessa pasta; os nomes e comentários
+das subpastas intermediárias não são usados.
+
+A identificação usa o comentário do item no painel Projeto:
+
+- **Simples:** `SIMPLES 1`, `SIMPLES 2` etc., de acordo com o número do produto.
+- **Demais mecânicas:** uma precomp por comentário: `TODOS A COM X% DESCONTO`,
+  `DESCONTO R$ CARTAO CRF`, `DE X POR Y PARCELAMENTO`,
+  `DE X POR Y MEU CRF POR Z CARTAO CRF`,
+  `DE X POR Y | X% DESCONTO | LEVE X PAGUE Y` e `TODOS A COM LEVE X PAGUE Y`.
+
+A troca substitui somente o source da camada com comentário `MECANICA 1`,
+`MECANICA 2` etc. na régua atual, preservando nome, comentários, transformações
+e timing. Não copia valores nem cria precomps. Ausências e duplicidades deixam
+a opção indisponível com tooltip informando o comentário e o local da correção.
+A operação revalida as referências, recusa ciclos entre precomps e possui undo.
+O catálogo em `domains/ofertas/offers/` concentra a política de cópias por
+produto; atualmente apenas Simples usa essa política.
+
 ## Configuração das mecânicas
 
 O [schema.json das mecânicas](src/js/assets/schema.json) é a configuração

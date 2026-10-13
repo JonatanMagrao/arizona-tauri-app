@@ -12,6 +12,7 @@ const LAYOUTS = [
 export interface ResolvedOfferLayouts {
   menu: OfferLayoutMenuData;
   offer: AVLayer | null;
+  folder: FolderItem | null;
   targets: CompItem[];
 }
 
@@ -39,6 +40,7 @@ const readLayerId = (layer: Layer): number => {
 const createResolution = (): ResolvedOfferLayouts => ({
   menu: { ok: false, message: "", context: null, options: [], errors: [] },
   offer: null,
+  folder: null,
   targets: [],
 });
 
@@ -161,6 +163,7 @@ export const resolveOfferLayouts = (offerLayerIndex: number): ResolvedOfferLayou
       resolution.menu.options.push(option);
     }
     resolution.offer = offer;
+    resolution.folder = folder;
     resolution.menu.ok = true;
     resolution.menu.message = "Réguas da oferta carregadas.";
     return resolution;
@@ -169,6 +172,7 @@ export const resolveOfferLayouts = (offerLayerIndex: number): ResolvedOfferLayou
     resolution.menu.options = [];
     resolution.targets = [];
     resolution.offer = null;
+    resolution.folder = null;
     resolution.menu.errors.push(String(error));
     return unavailable(resolution, "Não foi possível ler as réguas desta oferta.",
       "Atualize a lista e confira a camada da oferta e sua pasta no projeto.");

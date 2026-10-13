@@ -12,6 +12,9 @@ export type {
   OfferLayoutOption,
   OfferLegalControl,
   OfferMechanic,
+  OfferMechanicChangeRequest,
+  OfferMechanicContext,
+  OfferMechanicMenuData,
   OfferOption,
   OfferOptionGroup,
   OfferProduct,
@@ -23,6 +26,8 @@ export { getOffersEditorSnapshot } from "./snapshot/buildOfferSnapshot";
 export { getOffersFirstProductInfo } from "./snapshot/offerDiscovery";
 export { getOfferLayoutOptions } from "./offers/offerLayouts";
 export { replaceOfferLayout } from "./actions/replaceOfferLayout";
+export { getOfferMechanicOptions } from "./offers/offerMechanics";
+export { replaceOfferMechanic } from "./actions/replaceOfferMechanic";
 
 export {
   openOfferPrecompForEditor,

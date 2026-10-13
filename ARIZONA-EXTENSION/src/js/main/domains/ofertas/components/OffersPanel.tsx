@@ -26,6 +26,7 @@ import type {
   OfferImageInfo,
   OfferInstallmentJumpTarget,
   OfferLegalControl,
+  OfferMechanicChangeRequest,
   OfferOptionGroup,
   OfferProduct,
   OfferTextField,
@@ -34,6 +35,7 @@ import { normalizeOfferPrice } from "../utils/price";
 import { isEditableOfferTextControl } from "../utils/keyboard";
 import { isRnAfterProject } from "../utils/projectRegion";
 import { OfferLayoutMenu } from "./OfferLayoutMenu";
+import { OfferMechanicMenu } from "./OfferMechanicMenu";
 import "./offers.scss";
 
 interface OffersPanelProps {
@@ -84,9 +86,16 @@ interface DoubleClickActivation<T extends HTMLElement> {
 
 interface ProductEditorProps {
   isRnProject: boolean;
+  projectName: string;
   offerLayerIndex: number;
   product: OfferProduct;
   previewRevision: number;
+  busy: boolean;
+  resetKey: unknown;
+  menuBlocked: boolean;
+  onBeforeMechanicChange?: () => Promise<boolean>;
+  onMechanicChange: (request: OfferMechanicChangeRequest) => Promise<void>;
+  onStatus: (message: string) => void;
   onDescriptionChange: (
     offerLayerIndex: number,
     productIndex: number,
@@ -771,9 +780,16 @@ const OfferInstallmentJumpControl = ({
 
 const ProductEditor = ({
   isRnProject,
+  projectName,
   offerLayerIndex,
   product,
   previewRevision,
+  busy,
+  resetKey,
+  menuBlocked,
+  onBeforeMechanicChange,
+  onMechanicChange,
+  onStatus,
   onDescriptionChange,
   onDescriptionExpressionChange,
   onFieldChange,
@@ -971,6 +987,26 @@ const ProductEditor = ({
       />
 
       <header className="offer-product-header">
+        <OfferMechanicMenu
+          key={projectName + ":" + offerLayerIndex + ":" + product.index}
+          offerLayerIndex={offerLayerIndex}
+          productIndex={product.index}
+          label={getMechanicDisplayLabel(product.mechanic.type)}
+          tooltip={
+            product.mechanic.disabledSummary || product.mechanic.disabledReason
+              ? unavailableTooltip(
+                  product.mechanic,
+                  getMechanicDisplayLabel(product.mechanic.type)
+                )
+              : undefined
+          }
+          busy={busy}
+          resetKey={resetKey}
+          blocked={menuBlocked}
+          onBeforeChange={onBeforeMechanicChange}
+          onChange={onMechanicChange}
+          onStatus={onStatus}
+        />
         {headerOptionGroup ? (
           <OfferOptionControl
             optionGroup={headerOptionGroup}
@@ -985,21 +1021,7 @@ const ProductEditor = ({
               )
             }
           />
-        ) : (
-          <span
-            className="offer-product-mechanic"
-            {...tooltipProps(
-              product.mechanic.disabledSummary || product.mechanic.disabledReason
-                ? unavailableTooltip(
-                    product.mechanic,
-                    getMechanicDisplayLabel(product.mechanic.type)
-                  )
-                : getMechanicDisplayLabel(product.mechanic.type)
-            )}
-          >
-            {getMechanicDisplayLabel(product.mechanic.type)}
-          </span>
-        )}
+        ) : null}
       </header>
 
       <div className="offer-product-summary">
@@ -1867,6 +1889,7 @@ export const OffersPanel = ({
     updateLegalControlOption,
     replaceProductImage,
     replaceLayout,
+    replaceMechanic,
     swapOffers,
     swapProducts,
     undo,
@@ -2177,9 +2200,16 @@ export const OffersPanel = ({
               {selectedOffer.products.map((product) => (
                 <ProductEditor
                   isRnProject={isRnProject}
+                  projectName={projectName}
                   offerLayerIndex={selectedOffer.layerIndex}
                   product={product}
                   previewRevision={previewRevision}
+                  busy={busy}
+                  resetKey={snapshot}
+                  menuBlocked={isLegalSettingsOpen || imagePickerTarget !== null}
+                  onBeforeMechanicChange={onBeforeOfferNavigation}
+                  onMechanicChange={replaceMechanic}
+                  onStatus={onStatus}
                   draggedProduct={draggedProduct}
                   key={product.index}
                   onDescriptionChange={updateDescription}

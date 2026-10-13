@@ -1,0 +1,31 @@
+.offer-mechanic-trigger-wrap {
+  width: 100%;
+  min-width: 0;
+}
+
+.offer-mechanic-trigger {
+  width: 100%;
+  min-width: 0;
+  min-height: 20px;
+  height: auto;
+  justify-content: space-between;
+  padding: 3px 6px;
+  border-left: 2px solid var(--offer-accent, #ff6400);
+  background: rgba(245, 247, 250, 0.86);
+  font-size: 0.58rem;
+  font-weight: 900;
+  line-height: 1.2;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: normal;
+}
+
+.offer-mechanic-trigger-label {
+  min-width: 0;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+.offer-mechanic-trigger > span[aria-hidden] {
+  flex: 0 0 auto;
+}
