@@ -6,6 +6,10 @@ export type {
   OfferImageInfo,
   OfferInstallmentJump,
   OfferInstallmentJumpTarget,
+  OfferLayoutChangeRequest,
+  OfferLayoutContext,
+  OfferLayoutMenuData,
+  OfferLayoutOption,
   OfferLegalControl,
   OfferMechanic,
   OfferOption,
@@ -17,6 +21,8 @@ export type {
 
 export { getOffersEditorSnapshot } from "./snapshot/buildOfferSnapshot";
 export { getOffersFirstProductInfo } from "./snapshot/offerDiscovery";
+export { getOfferLayoutOptions } from "./offers/offerLayouts";
+export { replaceOfferLayout } from "./actions/replaceOfferLayout";
 
 export {
   openOfferPrecompForEditor,

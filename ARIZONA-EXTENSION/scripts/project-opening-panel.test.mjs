@@ -8,6 +8,7 @@ const paths = {
   opening: "../src/js/main/hooks/useProjectOpening.ts",
   identity: "../src/js/main/hooks/useProjectIdentity.ts",
   offers: "../src/js/main/domains/ofertas/hooks/useOffersEditor.ts",
+  offersService: "../src/js/main/domains/ofertas/services/ofertas.ts",
   errors: "../src/js/main/utils/errors.ts",
 };
 const compiled = Object.fromEntries(await Promise.all(
@@ -37,6 +38,8 @@ function createHarness({ cep = true } = {}) {
   let cursor = 0;
   let nextTimer = 0;
   let dirty = false;
+  let mounted = false;
+  let settersAfterUnmount = 0;
   let factory;
   let output;
   let pendingEffects = [];
@@ -48,6 +51,7 @@ function createHarness({ cep = true } = {}) {
       if (!slots[index]) {
         slots[index] = { value: typeof initial === "function" ? initial() : initial };
         slots[index].set = (next) => {
+          if (!mounted) settersAfterUnmount += 1;
           const value = typeof next === "function" ? next(slots[index].value) : next;
           if (!Object.is(value, slots[index].value)) dirty = true;
           slots[index].value = value;
@@ -115,15 +119,16 @@ function createHarness({ cep = true } = {}) {
   return {
     load,
     alerts,
-    mount: (hook) => { factory = hook; return render(); },
+    mount: (hook) => { mounted = true; factory = hook; return render(); },
     get value() { return render(); },
+    get settersAfterUnmount() { return settersAfterUnmount; },
     get timerCount() { return timers.size; },
     runTimers() {
       const pending = [...timers.values()];
       timers.clear();
       pending.forEach((callback) => callback());
     },
-    unmount: () => slots.forEach((slot) => slot.cleanup?.()),
+    unmount: () => { slots.forEach((slot) => slot.cleanup?.()); mounted = false; },
   };
 }
 
@@ -319,4 +324,126 @@ test("offers stay busy while concurrent edits finish, and stale callbacks cannot
   assert.equal(await stale.undo(), false);
   assert.equal(actions, 2);
   assert.equal(snapshots, previousSnapshots);
+});
+
+function layoutChangeFixture() {
+  const harness = createHarness();
+  const host = deferred();
+  const refresh = deferred();
+  const requests = [];
+  const snapshotRequests = [];
+  const statuses = [];
+  const diagnostics = [];
+  const request = {
+    context: {
+      projectKey: "C:/jobs/current.aep", compItemId: 10, offerLayerIndex: 4,
+      offerLayerId: 40, layerComment: "OFERTA 4", sourceItemId: 50,
+      folderItemId: 60, folderComment: "REGUAS",
+    },
+    targetItemId: 70,
+  };
+  const initialSnapshot = { selectedOfferLayerIndex: 4, selectedOffer: { layerIndex: 4, name: "Oferta_04" } };
+  const { useOffersEditor } = harness.load("offers", {
+    "../../../services/localDiagnostics": {
+      createDiagnosticOperationId: () => "layout-operation",
+      recordLocalDiagnostic: (event) => diagnostics.push(event),
+      recordDiagnosticFailure: (...args) => diagnostics.push(args),
+    },
+    "../services/ofertas": {
+      loadOffersEditorSnapshot: (index) => {
+        snapshotRequests.push(index);
+        return snapshotRequests.length === 1 ? Promise.resolve(initialSnapshot) : refresh.promise;
+      },
+      replaceOfferLayout: (nextRequest) => { requests.push(nextRequest); return host.promise; },
+    },
+  });
+  const onStatus = (message) => statuses.push(message);
+  harness.mount(() => useOffersEditor({ initialOfferLayerIndex: 4, onStatus }));
+  return { harness, host, refresh, requests, snapshotRequests, statuses, diagnostics, request, initialSnapshot };
+}
+
+for (const ok of [true, false]) {
+  test(`layout change ${ok ? "success" : "rejection"} refreshes the same offer and stays busy through refresh`, async () => {
+    const f = layoutChangeFixture();
+    await settle();
+    const before = f.harness.value;
+    assert.equal(before.busy, false);
+
+    const action = before.replaceLayout(f.request);
+    await before.replaceLayout(f.request);
+    assert.deepEqual(f.requests, [f.request], "A second synchronous selection cannot send a duplicate replacement");
+    assert.equal(f.requests[0], f.request, "Forward the exact captured target and offer context");
+    assert.equal(f.harness.value.busy, true);
+    assert.deepEqual(f.snapshotRequests, [4]);
+
+    const message = ok ? "Régua da oferta alterada." : "A oferta mudou. Atualize antes de tentar novamente.";
+    f.host.resolve({ ok, message, selectedOfferLayerIndex: ok ? 4 : 0, errors: [] });
+    await settle();
+    assert.deepEqual(f.snapshotRequests, [4, 4]);
+    assert.equal(f.harness.value.busy, true, "The host result must not unlock the editor before its snapshot");
+    assert.equal(f.harness.value.snapshot, f.initialSnapshot);
+    assert.deepEqual(f.statuses, [message]);
+    assert.equal(f.diagnostics.at(-1).status, ok ? "completed" : "failed");
+    if (!ok) assert.ok(f.harness.value.actionLog.some((entry) => entry.includes(message)));
+    await f.harness.value.replaceLayout(f.request);
+    assert.equal(f.requests.length, 1, "Replacement is also blocked during the snapshot refresh");
+
+    const refreshed = { selectedOfferLayerIndex: 4, selectedOffer: { layerIndex: 4, name: "Oferta_04", refreshed: true } };
+    f.refresh.resolve(refreshed);
+    await action;
+    assert.equal(f.harness.value.busy, false);
+    assert.equal(f.harness.value.snapshot, refreshed);
+    assert.equal(f.harness.value.snapshot.selectedOfferLayerIndex, 4);
+    f.harness.unmount();
+  });
+}
+
+test("a layout replacement is blocked during the initial snapshot and stale callbacks stay inert after unmount", async () => {
+  const f = layoutChangeFixture();
+  await f.harness.value.replaceLayout(f.request);
+  assert.deepEqual(f.requests, []);
+  await settle();
+  const stale = f.harness.value;
+  f.harness.unmount();
+  await stale.replaceLayout(f.request);
+  assert.deepEqual(f.requests, []);
+  assert.deepEqual(f.snapshotRequests, [4]);
+  assert.deepEqual(f.statuses, []);
+  assert.equal(f.harness.settersAfterUnmount, 0);
+});
+
+test("a delayed layout result after unmount cannot refresh or update the old editor", async () => {
+  const f = layoutChangeFixture();
+  await settle();
+  const action = f.harness.value.replaceLayout(f.request);
+  assert.equal(f.requests.length, 1);
+  f.harness.unmount();
+  f.host.resolve({ ok: true, message: "Régua da oferta alterada.", selectedOfferLayerIndex: 4, errors: [] });
+  await action;
+  assert.deepEqual(f.snapshotRequests, [4]);
+  assert.deepEqual(f.statuses, []);
+  assert.equal(f.diagnostics.length, 1, "Only the original start belongs to this mounted editor");
+  assert.equal(f.harness.settersAfterUnmount, 0);
+});
+
+test("layout bridge services send the captured context unchanged and refuse browser-only calls", async () => {
+  for (const cep of [true, false]) {
+    const harness = createHarness({ cep });
+    const calls = [];
+    const response = { ok: true, errors: [] };
+    const services = harness.load("offersService", {
+      "../../../../lib/utils/bolt": { evalTS: (...args) => { calls.push(args); return Promise.resolve(response); } },
+    });
+    const request = { context: { projectKey: "current.aep", offerLayerIndex: 4, sourceItemId: 50 }, targetItemId: 70 };
+    if (cep) {
+      assert.equal(await services.loadOfferLayoutOptions(4), response);
+      assert.equal(await services.replaceOfferLayout(request), response);
+      assert.deepEqual(calls, [["getOfferLayoutOptions", 4], ["replaceOfferLayout", request]]);
+      assert.equal(calls[1][1], request);
+    } else {
+      assert.throws(() => services.loadOfferLayoutOptions(4), /After Effects/);
+      assert.throws(() => services.replaceOfferLayout(request), /After Effects/);
+      assert.deepEqual(calls, []);
+    }
+  }
 });

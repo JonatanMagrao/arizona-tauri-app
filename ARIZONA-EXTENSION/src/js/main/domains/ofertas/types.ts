@@ -10,6 +10,42 @@ export interface OfferEditorActionResult {
   errors: string[];
 }
 
+export interface OfferLayoutContext {
+  projectKey: string;
+  compItemId: number;
+  offerLayerIndex: number;
+  offerLayerId: number;
+  layerComment: string;
+  sourceItemId: number;
+  folderItemId: number;
+  folderComment: string;
+}
+
+export interface OfferLayoutOption {
+  comment: string;
+  label: string;
+  itemId: number | null;
+  current: boolean;
+  enabled: boolean;
+  disabledSummary?: string;
+  disabledReason?: string;
+}
+
+export interface OfferLayoutMenuData {
+  ok: boolean;
+  message: string;
+  context: OfferLayoutContext | null;
+  options: OfferLayoutOption[];
+  disabledSummary?: string;
+  disabledReason?: string;
+  errors: string[];
+}
+
+export interface OfferLayoutChangeRequest {
+  context: OfferLayoutContext;
+  targetItemId: number;
+}
+
 export interface OfferEditorSnapshot {
   ok: boolean;
   message: string;

@@ -33,6 +33,7 @@ import type {
 import { normalizeOfferPrice } from "../utils/price";
 import { isEditableOfferTextControl } from "../utils/keyboard";
 import { isRnAfterProject } from "../utils/projectRegion";
+import { OfferLayoutMenu } from "./OfferLayoutMenu";
 import "./offers.scss";
 
 interface OffersPanelProps {
@@ -1865,6 +1866,7 @@ export const OffersPanel = ({
     updateLegalControlValue,
     updateLegalControlOption,
     replaceProductImage,
+    replaceLayout,
     swapOffers,
     swapProducts,
     undo,
@@ -2148,6 +2150,16 @@ export const OffersPanel = ({
                 >
                   {loading ? "..." : "↺"}
                 </button>
+                <OfferLayoutMenu
+                  key={projectName + ":" + selectedOffer.layerIndex}
+                  offerLayerIndex={selectedOffer.layerIndex}
+                  busy={busy}
+                  resetKey={snapshot}
+                  blocked={isLegalSettingsOpen || imagePickerTarget !== null}
+                  onStatus={onStatus}
+                  onBeforeChange={onBeforeOfferNavigation}
+                  onChange={replaceLayout}
+                />
                 <button
                   type="button"
                   className="offers-legal-menu-button"

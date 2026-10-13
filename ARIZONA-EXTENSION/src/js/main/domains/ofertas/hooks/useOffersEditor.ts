@@ -9,6 +9,7 @@ import {
   loadOffersEditorSnapshot,
   openOfferPrecompForEditor,
   replaceOfferProductImage,
+  replaceOfferLayout,
   selectOfferForEditor,
   swapOfferSources,
   swapOfferProducts,
@@ -27,6 +28,7 @@ import type {
   OfferEditorActionResult,
   OfferEditorSnapshot,
   OfferInstallmentJumpTarget,
+  OfferLayoutChangeRequest,
 } from "../types";
 
 interface UseOffersEditorOptions {
@@ -391,6 +393,17 @@ export const useOffersEditor = ({
     [runOfferAction]
   );
 
+  const replaceLayout = useCallback(
+    (request: OfferLayoutChangeRequest) => {
+      if (loading || pendingActionCountRef.current > 0) return Promise.resolve();
+
+      return runOfferAction("trocar_regua", "Trocar régua da oferta", () =>
+        replaceOfferLayout(request)
+      );
+    },
+    [loading, runOfferAction]
+  );
+
   const replaceProductImage = useCallback(
     (
       offerLayerIndex: number,
@@ -524,6 +537,7 @@ export const useOffersEditor = ({
     updateLegalControlOption,
     replaceProductImage,
     swapOffers,
+    replaceLayout,
     swapProducts,
     undo,
   };

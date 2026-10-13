@@ -106,6 +106,29 @@ operação atual o consome. Não é obrigatório para os produtos e não altera 
 marcadores da timeline nem os jumps internos das mecânicas. O schema oficial
 das mecânicas abaixo continua configurando apenas suas camadas internas.
 
+## Troca de réguas da oferta
+
+O botão **Régua**, ao lado das opções do texto legal, lista as precomps da
+pasta da oferta selecionada. A camada em `Miolo` precisa do comentário
+`CAMADA OFERTA 1`, `CAMADA OFERTA 2` etc.; a pasta correspondente no painel
+Project precisa do comentário `OFERTA 01`, `OFERTA 02` etc., com zero à
+esquerda para números de um dígito. O comentário `OFERTA 1` não substitui
+`OFERTA 01`.
+
+As réguas são identificadas pelos comentários dos itens `CompItem` diretamente
+dentro dessa pasta: `OFERTA REGUA 2 PRODUTOS`, `OFERTA REGUA 2 PRODUTOS ELETRO`,
+`OFERTA REGUA 3 PRODUTOS` e `OFERTA SIMPLES`. Nomes dos itens e réguas em outras
+pastas não substituem esses comentários. Ausências e duplicidades são
+informadas no seletor, sem escolher um item arbitrariamente. O tooltip da
+mensagem ou da opção indisponível indica o comentário esperado e onde
+preenchê-lo no After Effects.
+
+A seleção troca somente o source da camada em `Miolo`, sem copiar conteúdo
+entre precomps, ajustar transformações ou mudar a posição na timeline. A ação
+tem undo e revalida a oferta, a pasta e a origem antes da troca. O catálogo e a
+resolução ficam em `domains/ofertas/offers/`; a mutação fica em `actions/`,
+separada da troca de conteúdo entre duas ofertas já existente.
+
 ## Configuração das mecânicas
 
 O [schema.json das mecânicas](src/js/assets/schema.json) é a configuração
