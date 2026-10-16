@@ -2,13 +2,13 @@ import { type MechanicsSchema, validateMechanicsSchema } from "./schemaValidatio
 
 // Shared by the CLI and ExtendScript. Parse strict JSON here rather than using
 // JSON2's eval-based parser, so duplicate decoded keys and trailing commas fail.
-function readStrictSchemaJson(source: string): unknown {
+export function readStrictSchemaJson(source: string, label = "mecânicas"): unknown {
   let position = 0;
 
 
   function fail(reason: string): never {
     throw new Error(
-      "JSON de mecânicas inválido no caractere " + (position + 1) + ": " + reason
+      "JSON de " + label + " inválido no caractere " + (position + 1) + ": " + reason
     );
   }
 
@@ -190,12 +190,12 @@ export const parseMechanicsSchemaJson = (text: string): MechanicsSchema => {
   return validateMechanicsSchema(readStrictSchemaJson(source));
 };
 
-export const decodeMechanicsSchemaUtf8 = (binary: string): string => {
+export const decodeMechanicsSchemaUtf8 = (binary: string, label = "schema de mecânicas"): string => {
   if (typeof binary !== "string") throw new Error("A leitura do schema não retornou bytes UTF-8.");
   const result: string[] = [];
   let position = 0;
   const fail = (offset: number): never => {
-    throw new Error("UTF-8 inválido no byte " + (offset + 1) + " do schema de mecânicas.");
+    throw new Error("UTF-8 inválido no byte " + (offset + 1) + " do " + label + ".");
   };
 
   while (position < binary.length) {

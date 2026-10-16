@@ -1,23 +1,23 @@
 import type { OfferLayoutOption, OfferMechanicMenuData } from "../types";
 import type { MechanicSchemaId } from "../mechanics/schemaValidation";
 import { resolveOfferLayouts } from "./offerLayouts";
+import { isTemplateOfferLayerComment, isTemplateProjectItemComment, resolveTemplateIdentity } from "../../project/resolveTemplateIdentity";
+import { expandTemplateIdentity, getTemplateIdentities, withTemplateIdentities } from "../../template/templateIdentities";
 
 interface MechanicCatalogEntry {
   family: MechanicSchemaId;
   label: string;
-  perProduct: boolean;
 }
 
-// Selection policy belongs here: only Simples currently has one copy per product.
-// Changing another family to perProduct keeps discovery and mutation in sync.
+// Identity patterns, including product slots, come from the validated map.
 const MECHANIC_CATALOG: MechanicCatalogEntry[] = [
-  { family: "SIMPLES", label: "Simples", perProduct: true },
-  { family: "TODOS A COM X% DESCONTO", label: "Todos a com X% desconto", perProduct: false },
-  { family: "DESCONTO R$ CARTAO CRF", label: "Desconto R$ Cartão CRF", perProduct: false },
-  { family: "DE X POR Y PARCELAMENTO", label: "De X por Y parcelamento", perProduct: false },
-  { family: "DE X POR Y MEU CRF POR Z CARTAO CRF", label: "De X por Y Meu CRF por Z Cartão CRF", perProduct: false },
-  { family: "DE X POR Y | X% DESCONTO | LEVE X PAGUE Y", label: "De X por Y | X% desconto | Leve X pague Y", perProduct: false },
-  { family: "TODOS A COM LEVE X PAGUE Y", label: "Todos a com Leve X pague Y", perProduct: false },
+  { family: "SIMPLES", label: "Simples" },
+  { family: "TODOS A COM X% DESCONTO", label: "Todos a com X% desconto" },
+  { family: "DESCONTO R$ CARTAO CRF", label: "Desconto R$ Cartão CRF" },
+  { family: "DE X POR Y PARCELAMENTO", label: "De X por Y parcelamento" },
+  { family: "DE X POR Y MEU CRF POR Z CARTAO CRF", label: "De X por Y Meu CRF por Z Cartão CRF" },
+  { family: "DE X POR Y | X% DESCONTO | LEVE X PAGUE Y", label: "De X por Y | X% desconto | Leve X pague Y" },
+  { family: "TODOS A COM LEVE X PAGUE Y", label: "Todos a com Leve X pague Y" },
 ];
 
 export interface ResolvedOfferMechanics {
@@ -25,9 +25,6 @@ export interface ResolvedOfferMechanics {
   mechanicLayer: AVLayer | null;
   targets: CompItem[];
 }
-
-const normalizeComment = (comment: string): string =>
-  String(comment || "").replace(/^\s+|\s+$/g, "").toUpperCase();
 
 const readLayerId = (layer: Layer): number => {
   try {
@@ -87,7 +84,7 @@ const wouldCreateCycle = (target: CompItem, layoutId: number, mioloId: number): 
   return false;
 };
 
-export const resolveOfferMechanics = (offerLayerIndex: number, productIndex: number): ResolvedOfferMechanics => {
+export const resolveOfferMechanics = (offerLayerIndex: number, productIndex: number): ResolvedOfferMechanics => withTemplateIdentities(() => {
   const resolution = createResolution();
   if (typeof productIndex !== "number" || !isFinite(productIndex) || productIndex < 0 || Math.floor(productIndex) !== productIndex) {
     return unavailable(resolution, "O produto não foi identificado.", "Selecione novamente a oferta e o produto.");
@@ -101,18 +98,24 @@ export const resolveOfferMechanics = (offerLayerIndex: number, productIndex: num
   }
 
   try {
+    const config = getTemplateIdentities();
     const layout = offerResolution.offer.source as CompItem;
-    const layerComment = "MECANICA " + (productIndex + 1);
-    const layers: Layer[] = [];
+    const layerIdentity = expandTemplateIdentity(config.offerLayers.mechanic, productIndex + 1);
+    const layerComment = layerIdentity.comment;
+    const candidates: Layer[] = [];
     for (let index = 1; index <= layout.numLayers; index += 1) {
-      const layer = layout.layer(index);
-      if (normalizeComment(layer.comment) === layerComment) layers.push(layer);
+      candidates.push(layout.layer(index));
     }
+    const layers = resolveTemplateIdentity(candidates, layerIdentity, config.fallback.offerLayers, isTemplateOfferLayerComment).matches;
     if (layers.length !== 1) {
-      return unavailable(resolution, layers.length === 0
+      return unavailable(resolution, config.fallback.offerLayers
+        ? (layers.length === 0 ? 'Nenhuma camada' : 'Mais de uma camada') + ' na régua "' + layout.name + '" corresponde a "' + layerComment + '" por comentário ou nome.'
+        : layers.length === 0
         ? 'Nenhuma camada na régua "' + layout.name + '" tem o comentário "' + layerComment + '".'
         : 'Mais de uma camada na régua "' + layout.name + '" tem o comentário "' + layerComment + '".',
-      layers.length === 0
+      config.fallback.offerLayers
+        ? 'Na timeline da régua "' + layout.name + '", confira o comentário ou nome "' + layerComment + '" e elimine identidades duplicadas.'
+        : layers.length === 0
         ? 'Na timeline da régua "' + layout.name + '", adicione o comentário "' + layerComment + '" à camada da mecânica deste produto.'
         : 'Na timeline da régua "' + layout.name + '", mantenha o comentário "' + layerComment + '" apenas na camada da mecânica deste produto.');
     }
@@ -122,21 +125,26 @@ export const resolveOfferMechanics = (offerLayerIndex: number, productIndex: num
         "Confira a origem da camada da mecânica deste produto.");
     }
     const offerFolder = offerResolution.folder;
-    const mechanicsFolders: FolderItem[] = [];
+    const mechanicsFolderComment = config.projectItems.mechanicsFolder.comment;
+    const folderCandidates: FolderItem[] = [];
     for (let index = 1; index <= offerFolder.numItems; index += 1) {
       const item = offerFolder.item(index);
-      if (item instanceof FolderItem && item.parentFolder === offerFolder && normalizeComment(item.comment) === "MECANICAS") {
-        mechanicsFolders.push(item);
-      }
+      if (item instanceof FolderItem && item.parentFolder === offerFolder) folderCandidates.push(item);
     }
+    const mechanicsFolders = resolveTemplateIdentity(folderCandidates, config.projectItems.mechanicsFolder,
+      config.fallback.projectItems, isTemplateProjectItemComment).matches;
     const folderLocation = 'diretamente na pasta com o comentário "' + offerMenu.context.folderComment + '"';
     if (mechanicsFolders.length !== 1) {
-      return unavailable(resolution, mechanicsFolders.length === 0
-        ? 'Nenhuma pasta ' + folderLocation + ' tem o comentário "MECANICAS".'
-        : 'Mais de uma pasta ' + folderLocation + ' tem o comentário "MECANICAS".',
-      mechanicsFolders.length === 0
-        ? 'No painel Projeto, adicione o comentário "MECANICAS" à pasta de mecânicas ' + folderLocation + "."
-        : 'No painel Projeto, mantenha uma única pasta com o comentário "MECANICAS" ' + folderLocation + ".");
+      return unavailable(resolution, config.fallback.projectItems
+        ? (mechanicsFolders.length === 0 ? 'Nenhuma pasta' : 'Mais de uma pasta') + ' de mecânicas foi identificada ' + folderLocation + ' por comentário ou nome.'
+        : mechanicsFolders.length === 0
+        ? 'Nenhuma pasta ' + folderLocation + ' tem o comentário "' + mechanicsFolderComment + '".'
+        : 'Mais de uma pasta ' + folderLocation + ' tem o comentário "' + mechanicsFolderComment + '".',
+      config.fallback.projectItems
+        ? 'No painel Projeto, confira o comentário ou nome "' + mechanicsFolderComment + '" ' + folderLocation + ' e elimine identidades duplicadas.'
+        : mechanicsFolders.length === 0
+        ? 'No painel Projeto, adicione o comentário "' + mechanicsFolderComment + '" à pasta de mecânicas ' + folderLocation + "."
+        : 'No painel Projeto, mantenha uma única pasta com o comentário "' + mechanicsFolderComment + '" ' + folderLocation + ".");
     }
     const mechanicsFolder = mechanicsFolders[0];
     const comps = collectMechanicComps(mechanicsFolder);
@@ -152,14 +160,11 @@ export const resolveOfferMechanics = (offerLayerIndex: number, productIndex: num
     };
     for (let catalogIndex = 0; catalogIndex < MECHANIC_CATALOG.length; catalogIndex += 1) {
       const definition = MECHANIC_CATALOG[catalogIndex];
-      const comment = definition.family + (definition.perProduct ? " " + (productIndex + 1) : "");
-      const matches: CompItem[] = [];
+      const identity = expandTemplateIdentity(config.mechanics[definition.family], productIndex + 1);
+      const comment = identity.comment;
+      const matches = resolveTemplateIdentity(comps, identity, config.fallback.projectItems, isTemplateProjectItemComment).matches;
       let current = false;
-      for (let index = 0; index < comps.length; index += 1) {
-        if (normalizeComment(comps[index].comment) !== comment) continue;
-        matches.push(comps[index]);
-        if (comps[index].id === source.id) current = true;
-      }
+      for (let index = 0; index < matches.length; index += 1) if (matches[index].id === source.id) current = true;
       const option: OfferLayoutOption = {
         comment, label: definition.label, itemId: null, current, enabled: false,
       };
@@ -167,9 +172,11 @@ export const resolveOfferMechanics = (offerLayerIndex: number, productIndex: num
         option.disabledSummary = matches.length === 0
           ? 'Esta mecânica não foi encontrada na oferta "' + offerMenu.context.folderComment + '".'
           : 'Há mais de uma precomp desta mecânica na oferta "' + offerMenu.context.folderComment + '".';
-        option.disabledReason = matches.length === 0
-          ? 'No painel Projeto, adicione o comentário "' + comment + '" à precomp na pasta de comentário "MECANICAS" ou em suas subpastas.'
-          : 'Na pasta de comentário "MECANICAS" e suas subpastas, mantenha o comentário "' + comment + '" em apenas uma precomp.';
+        option.disabledReason = config.fallback.projectItems
+          ? 'No painel Projeto, confira o comentário ou nome "' + comment + '" na pasta "' + mechanicsFolderComment + '" e suas subpastas e elimine identidades duplicadas.'
+          : matches.length === 0
+          ? 'No painel Projeto, adicione o comentário "' + comment + '" à precomp na pasta de comentário "' + mechanicsFolderComment + '" ou em suas subpastas.'
+          : 'Na pasta de comentário "' + mechanicsFolderComment + '" e suas subpastas, mantenha o comentário "' + comment + '" em apenas uma precomp.';
       } else if (wouldCreateCycle(matches[0], layout.id, offerMenu.context.compItemId)) {
         option.disabledSummary = "Esta mecânica referencia a própria oferta ou o Miolo.";
         option.disabledReason = "Use uma mecânica que não contenha a oferta ou o Miolo, inclusive em precomps internas.";
@@ -193,7 +200,7 @@ export const resolveOfferMechanics = (offerLayerIndex: number, productIndex: num
     return unavailable(resolution, "Não foi possível ler as mecânicas deste produto.",
       "Atualize a lista e confira os comentários da camada e das pastas da oferta.");
   }
-};
+});
 
 export const getOfferMechanicOptions = (offerLayerIndex: number, productIndex: number): OfferMechanicMenuData =>
   resolveOfferMechanics(offerLayerIndex, productIndex).menu;

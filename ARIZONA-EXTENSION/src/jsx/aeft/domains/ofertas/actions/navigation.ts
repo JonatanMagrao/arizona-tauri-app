@@ -1,32 +1,29 @@
 import type { OfferEditorActionResult } from "../types";
 import {
-  getLayerByIndex,
+  getOfferByLayerIndex,
   getOffersComp,
-  nameMatches,
   selectOffer,
 } from "../layers/findLayers";
 import { createActionResult } from "./shared";
+import { withTemplateIdentities } from "../../template/templateIdentities";
 
 const AE_UNDO_COMMAND_ID = 16;
 const AE_UNDO_SCHEDULE_DELAY_MS = 10;
 
 export const selectOfferForEditor = (
   offerLayerIndex: number
-): OfferEditorActionResult => {
+): OfferEditorActionResult => withTemplateIdentities(() => {
   const result = createActionResult();
-  const comp = getOffersComp(true);
+  const comp = getOffersComp(true, result.errors);
 
   if (comp === null) {
-    result.message = 'Precomp "Miolo" nao encontrada.';
+    result.message = result.errors.length > 0 ? result.errors[0] : 'Precomp "Miolo" nao encontrada.';
     return result;
   }
 
-  const offer = getLayerByIndex(comp, offerLayerIndex);
+  const offer = getOfferByLayerIndex(offerLayerIndex, result);
 
-  if (offer === null || !nameMatches(offer.name, /Oferta_/)) {
-    result.message = "Oferta nao encontrada.";
-    return result;
-  }
+  if (offer === null) return result;
 
   app.beginUndoGroup("Selecionar oferta");
 
@@ -44,25 +41,22 @@ export const selectOfferForEditor = (
   }
 
   return result;
-};
+});
 
 export const openOfferPrecompForEditor = (
   offerLayerIndex: number
-): OfferEditorActionResult => {
+): OfferEditorActionResult => withTemplateIdentities(() => {
   const result = createActionResult();
-  const comp = getOffersComp(true);
+  const comp = getOffersComp(true, result.errors);
 
   if (comp === null) {
-    result.message = 'Precomp "Miolo" nao encontrada.';
+    result.message = result.errors.length > 0 ? result.errors[0] : 'Precomp "Miolo" nao encontrada.';
     return result;
   }
 
-  const offer = getLayerByIndex(comp, offerLayerIndex);
+  const offer = getOfferByLayerIndex(offerLayerIndex, result);
 
-  if (offer === null || !nameMatches(offer.name, /Oferta_/)) {
-    result.message = "Oferta nao encontrada.";
-    return result;
-  }
+  if (offer === null) return result;
 
   app.beginUndoGroup("Abrir precomp da oferta");
 
@@ -86,7 +80,7 @@ export const openOfferPrecompForEditor = (
   }
 
   return result;
-};
+});
 
 export const undoOffersEditorAction = (): OfferEditorActionResult => {
   const result = createActionResult();

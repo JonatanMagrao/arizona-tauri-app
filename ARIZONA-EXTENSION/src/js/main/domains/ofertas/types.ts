@@ -157,6 +157,20 @@ export interface OfferTextField {
 
 export interface OfferOption {
   label: string;
+  id?: string;
+}
+
+export interface OfferLegalOptionsContext {
+  projectKey: string;
+  offersCompId: number;
+  offerLayerId: number;
+  offerLayerIndex: number;
+  offerSourceId: number;
+  legalLayerId: number;
+  legalSourceId: number;
+  bannerLayerId: number;
+  bannerSourceId: number;
+  revision: string;
 }
 
 export interface OfferOptionGroup {
@@ -169,6 +183,7 @@ export interface OfferOptionGroup {
   options: OfferOption[];
   selectedIndex: number;
   enabled: boolean;
+  context?: OfferLegalOptionsContext;
 }
 
 export interface OfferInstallmentJump {

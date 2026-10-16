@@ -11,6 +11,7 @@ export { helloArrayStr, helloError, helloNum, helloObj, helloStr, helloVoid };
 export { getProjectProductsDirectory } from "./domains/ofertas/projectProductPaths";
 export { getProjectIdentity } from "./domains/project/projectIdentity";
 export { configureMechanicsSchemaPath } from "./domains/ofertas/mechanics/schemaRuntime";
+export { configureTemplateIdentitiesPath } from "./domains/template/templateIdentities";
 export { openProject } from "./domains/project/openProject";
 export type { OpenProjectResult } from "./domains/project/openProject";
 export { getProjectRoteiroInfo } from "./domains/roteiro/roteiroPath";

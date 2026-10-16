@@ -21,7 +21,7 @@ const layoutData = (offerLayerIndex = 4) => ({
   errors: [],
   context: {
     projectKey: "C:/jobs/current.aep", compItemId: 10, offerLayerIndex,
-    offerLayerId: 40 + offerLayerIndex, layerComment: "CAMADA OFERTA " + offerLayerIndex,
+    offerLayerId: 40 + offerLayerIndex, layerComment: "CAMADA OFERTA " + String(offerLayerIndex).padStart(2, "0"),
     sourceItemId: 50, folderItemId: 60, folderComment: "OFERTA 04",
   },
   options: [

@@ -26,6 +26,7 @@ import type {
   OfferImageInfo,
   OfferInstallmentJumpTarget,
   OfferLegalControl,
+  OfferLegalOptionsContext,
   OfferMechanicChangeRequest,
   OfferOptionGroup,
   OfferProduct,
@@ -144,12 +145,14 @@ interface OfferLegalSettingsProps {
   onControlChange: (
     offerLayerIndex: number,
     controlId: string,
-    enabled: boolean
+    enabled: boolean,
+    expectedContext?: OfferLegalOptionsContext
   ) => void;
   onControlOptionChange: (
     offerLayerIndex: number,
     controlId: string,
-    selectedIndex: number
+    selectedIndex: number,
+    expectedContext?: OfferLegalOptionsContext
   ) => void;
   onControlValueChange: (
     offerLayerIndex: number,
@@ -404,7 +407,7 @@ const getImageTitle = (image: OfferImageInfo | null) => {
   return details.join("\n");
 };
 
-const getHeaderOptionGroup = (product: OfferProduct) =>
+const getMechanicControllerGroup = (product: OfferProduct) =>
   product.mechanic.optionGroups.find(
     (optionGroup) => optionGroup.placement === "header"
   );
@@ -763,7 +766,7 @@ const OfferInstallmentJumpControl = ({
       className={["offer-editor-field", className].filter(Boolean).join(" ")}
       {...tooltipProps(!installmentJump.enabled ? unavailableTooltip(installmentJump) : undefined)}
     >
-      <span>Jump</span>
+      <span>Pulo</span>
       <select
         value={installmentJump.selectedTarget}
         disabled={!installmentJump.enabled}
@@ -801,13 +804,13 @@ const ProductEditor = ({
   onProductDragStart,
   onSwapProducts,
 }: ProductEditorProps) => {
-  const headerOptionGroup = getHeaderOptionGroup(product);
+  const mechanicControllerGroup = getMechanicControllerGroup(product);
   const controlOptionGroups = getControlOptionGroups(product);
   const hideFullPriceFromField =
     product.mechanic.type.toLowerCase() === "de x por y parcelamento" &&
-    headerOptionGroup?.id === "mechanicCondition" &&
-    headerOptionGroup.selectedIndex >= 0 &&
-    headerOptionGroup.selectedIndex <= 2;
+    mechanicControllerGroup?.id === "mechanicCondition" &&
+    mechanicControllerGroup.selectedIndex >= 0 &&
+    mechanicControllerGroup.selectedIndex <= 2;
   const isSharedMechanic =
     product.mechanic.type.toLowerCase() ===
     "de x por y | x% desconto | leve x pague y";
@@ -821,9 +824,9 @@ const ProductEditor = ({
   const hideSharedMechanicQuantity =
     isSharedMechanic &&
     (usesRnCardPriceLayout ||
-      (headerOptionGroup?.id === "mechanicType" &&
-        headerOptionGroup.selectedIndex !== 2 &&
-        headerOptionGroup.selectedIndex !== 4));
+      (mechanicControllerGroup?.id === "mechanicType" &&
+        mechanicControllerGroup.selectedIndex !== 2 &&
+        mechanicControllerGroup.selectedIndex !== 4));
   const priceFields = getPriceFields(product).filter(
     ({ field }) =>
       (!hideFullPriceFromField || field.id !== "preco-de") &&
@@ -883,7 +886,10 @@ const ProductEditor = ({
     controlOptionGroups.length > 0 ||
     hasInstallmentJump;
   const hasControls =
-    priceFields.length > 0 || hasExtraControls || product.unsupported;
+    priceFields.length > 0 ||
+    hasExtraControls ||
+    mechanicControllerGroup !== undefined ||
+    product.unsupported;
   const useSimpleControlsLayout =
     product.mechanic.type.toLowerCase() === "simples" &&
     priceFields.length === 1 &&
@@ -1007,21 +1013,6 @@ const ProductEditor = ({
           onChange={onMechanicChange}
           onStatus={onStatus}
         />
-        {headerOptionGroup ? (
-          <OfferOptionControl
-            optionGroup={headerOptionGroup}
-            className="offer-product-mechanic-selector"
-            showLabel={false}
-            onChange={(selectedIndex) =>
-              onOptionChange(
-                offerLayerIndex,
-                product.index,
-                headerOptionGroup.id,
-                selectedIndex
-              )
-            }
-          />
-        ) : null}
       </header>
 
       <div className="offer-product-summary">
@@ -1411,6 +1402,21 @@ const ProductEditor = ({
             </>
           )}
 
+          {mechanicControllerGroup ? (
+            <OfferOptionControl
+              optionGroup={mechanicControllerGroup}
+              className="offer-extra-field"
+              onChange={(selectedIndex) =>
+                onOptionChange(
+                  offerLayerIndex,
+                  product.index,
+                  mechanicControllerGroup.id,
+                  selectedIndex
+                )
+              }
+            />
+          ) : null}
+
           {product.unsupported ? (
             <p
               className="offer-warning"
@@ -1460,17 +1466,13 @@ const OfferLegalControlToggle = ({
   onControlOptionChange: OfferLegalSettingsProps["onControlOptionChange"];
   onControlValueChange: OfferLegalSettingsProps["onControlValueChange"];
 }) => {
-  const [checked, setChecked] = useState(control.enabled);
   const isEffectSlider = control.kind === "slider";
+  const expectedContext = control.optionGroup?.context;
   const unavailableControl =
     (valueControl.slider && !valueControl.slider.enabled && valueControl.slider) ||
     (control.optionGroup && !control.optionGroup.enabled && control.optionGroup) ||
     (!valueControl.available && valueControl) ||
     (!control.available && control);
-
-  useEffect(() => {
-    setChecked(control.enabled);
-  }, [control.enabled, control.id]);
 
   return (
     <div
@@ -1498,13 +1500,16 @@ const OfferLegalControlToggle = ({
           <input
             type="checkbox"
             aria-label={control.label}
-            checked={checked}
+            checked={control.enabled}
             disabled={!control.available}
             onChange={(event) => {
               const nextChecked = event.currentTarget.checked;
 
-              setChecked(nextChecked);
-              onControlChange(offerLayerIndex, control.id, nextChecked);
+              if (expectedContext) {
+                onControlChange(offerLayerIndex, control.id, nextChecked, expectedContext);
+              } else {
+                onControlChange(offerLayerIndex, control.id, nextChecked);
+              }
             }}
           />
         )}
@@ -1529,13 +1534,14 @@ const OfferLegalControlToggle = ({
               : ""
           }
           disabled={!control.optionGroup.enabled}
-          onChange={(event) =>
-            onControlOptionChange(
-              offerLayerIndex,
-              control.id,
-              Number(event.currentTarget.value)
-            )
-          }
+          onChange={(event) => {
+            const selectedIndex = Number(event.currentTarget.value);
+            if (expectedContext) {
+              onControlOptionChange(offerLayerIndex, control.id, selectedIndex, expectedContext);
+            } else {
+              onControlOptionChange(offerLayerIndex, control.id, selectedIndex);
+            }
+          }}
         >
           {control.optionGroup.selectedIndex < 0 ? (
             <option value="" disabled>
@@ -1543,7 +1549,7 @@ const OfferLegalControlToggle = ({
             </option>
           ) : null}
           {control.optionGroup.options.map((option, index) => (
-            <option value={index} key={option.label + index}>
+            <option value={index} key={option.id || option.label + index}>
               {option.label}
             </option>
           ))}

@@ -5,6 +5,7 @@ import type {
   OfferInstallmentJumpTarget,
   OfferLayoutChangeRequest,
   OfferLayoutMenuData,
+  OfferLegalOptionsContext,
   OfferMechanicChangeRequest,
   OfferMechanicMenuData,
 } from "../types";
@@ -210,10 +211,14 @@ export const updateOfferLegalText = (
 export const updateOfferLegalControl = (
   offerLayerIndex: number,
   controlId: string,
-  enabled: boolean
+  enabled: boolean,
+  expectedContext?: OfferLegalOptionsContext
 ) => {
   assertCep();
 
+  if (expectedContext) {
+    return evalTS("updateOfferLegalControl", offerLayerIndex, controlId, enabled, expectedContext) as Promise<OfferEditorActionResult>;
+  }
   return evalTS(
     "updateOfferLegalControl",
     offerLayerIndex,
@@ -240,10 +245,14 @@ export const updateOfferLegalControlValue = (
 export const updateOfferLegalControlOption = (
   offerLayerIndex: number,
   controlId: string,
-  selectedIndex: number
+  selectedIndex: number,
+  expectedContext?: OfferLegalOptionsContext
 ) => {
   assertCep();
 
+  if (expectedContext) {
+    return evalTS("updateOfferLegalControlOption", offerLayerIndex, controlId, selectedIndex, expectedContext) as Promise<OfferEditorActionResult>;
+  }
   return evalTS(
     "updateOfferLegalControlOption",
     offerLayerIndex,

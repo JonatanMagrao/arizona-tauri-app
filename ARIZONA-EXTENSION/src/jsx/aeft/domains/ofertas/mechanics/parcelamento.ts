@@ -24,6 +24,7 @@ interface LegacyInstallmentJumpDefinition {
 interface JumpLayerIdentity {
   comment: string;
   fallbackNames: string[];
+  recognizedComments?: string[];
 }
 
 interface IdentityInstallmentJumpDefinition {
@@ -202,6 +203,7 @@ const resolveIdentityInstallmentJumpLayers = (
       {
         comment: identity.comment,
         fallbackNames: identity.fallbackNames,
+        recognizedComments: identity.recognizedComments,
         context: definition.context,
       },
       resolutionErrors,

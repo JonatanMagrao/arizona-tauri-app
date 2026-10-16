@@ -209,10 +209,12 @@ export const initBolt = (log = true) => {
     const jsxSrc = `${extRoot}/jsx/index.js`;
     const jsxBinSrc = `${extRoot}/jsx/index.jsxbin`;
     const schemaPath = `${extRoot}/js/assets/schema.json`;
+    const identitiesPath = `${extRoot}/js/assets/template-identities.json`;
     // Load and configure in one host request, before any queued offer read.
     const configureSchema =
       `var schemaHost = typeof $ !== 'undefined' ? $ : window; ` +
-      `schemaHost[${JSON.stringify(ns)}].configureMechanicsSchemaPath(${JSON.stringify(schemaPath)});`;
+      `schemaHost[${JSON.stringify(ns)}].configureMechanicsSchemaPath(${JSON.stringify(schemaPath)});` +
+      `schemaHost[${JSON.stringify(ns)}].configureTemplateIdentitiesPath(${JSON.stringify(identitiesPath)});`;
     if (fs.existsSync(jsxSrc)) {
       if (log) console.log(jsxSrc);
       evalFile(jsxSrc, configureSchema);

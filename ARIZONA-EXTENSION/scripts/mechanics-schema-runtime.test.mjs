@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import ts from "typescript";
+import { createTemplateTestAssets } from "./template-test-assets.mjs";
 
 const domainDirectory = fileURLToPath(new URL("../src/jsx/aeft/domains/ofertas/", import.meta.url));
 const approved = () => JSON.parse(readFileSync(new URL("../src/js/assets/schema.json", import.meta.url), "utf8"));
@@ -124,6 +125,7 @@ function installmentProduct(slot = 1) {
 }
 
 function harness({ configured = true, products = [simpleProduct()] } = {}) {
+  const templateAssets = createTemplateTestAssets({ mechanicLayers: false, offerLayers: false });
   const file = { bytes: Buffer.from(JSON.stringify(approved()), "utf8"), exists: true, readable: true, seekable: true,
     reads: 0, opens: 0, closes: 0, seeks: [], encodingChanges: [], readError: "", readException: null };
   class File {
@@ -153,7 +155,7 @@ function harness({ configured = true, products = [simpleProduct()] } = {}) {
     new AVLayer("Validade"), new AVLayer("Reserva"), legalText, new AVLayer("Leite"), new AVLayer("Moderacao"), new AVLayer("Eletro"),
   ])), "TEXTO LEGAL");
   const source = new CompItem([...products.flatMap((product) => product.layers), legal], "Oferta");
-  const offer = new AVLayer("Oferta_01", [], source);
+  const offer = identified(new AVLayer("Oferta_01", [], source), "CAMADA OFERTA 01");
   const miolo = new CompItem([offer], "Miolo");
   const app = { project: { numItems: 1, item: () => miolo }, undoEvents: [],
     beginUndoGroup(name) { this.undoEvents.push(["begin", name]); }, endUndoGroup() { this.undoEvents.push(["end"]); } };
@@ -165,7 +167,7 @@ function harness({ configured = true, products = [simpleProduct()] } = {}) {
     modules.set(filename, module);
     vm.runInNewContext(ts.transpileModule(readFileSync(filename, "utf8"), {
       compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES5 },
-    }).outputText, { module, exports: module.exports, app, AVLayer, TextLayer, CompItem, FootageItem, FileSource, Property, PropertyGroup, File,
+    }).outputText, { module, exports: module.exports, app, AVLayer, TextLayer, CompItem, FootageItem, FileSource, Property, PropertyGroup, File: templateAssets.wrapFile(File),
       PropertyValueType: { OneD: 1 }, JSON: undefined,
       require(specifier) {
         assert.ok(specifier.startsWith("."), "Unexpected dependency: " + specifier);
@@ -175,13 +177,14 @@ function harness({ configured = true, products = [simpleProduct()] } = {}) {
         return load(target);
       },
     }, { filename });
-    if (filename === path.join(domainDirectory, "mechanics/config.ts")) module.exports.MECHANIC_LAYER_NAME_FALLBACK_ENABLED = false;
-    if (filename === path.join(domainDirectory, "layers/config.ts")) module.exports.OFFER_LAYER_NAME_FALLBACK_ENABLED = false;
+    if (filename === path.resolve(domainDirectory, "../template/templateIdentities.ts")) {
+      module.exports.configureTemplateIdentitiesPath(templateAssets.filePath);
+    }
     return module.exports;
   }
   const runtime = load("mechanics/schemaRuntime.ts");
   if (configured) runtime.configureMechanicsSchemaPath(schemaFilePath);
-  return { app, file, products, source, offer, legalText, cpf, load, ...runtime,
+  return { app, file, templateAssets, products, source, offer, legalText, cpf, load, ...runtime,
     ...load("mechanics/schemaJson.ts"), ...load("mechanics/registry.ts"),
     ...load("actions/updateField.ts"), ...load("actions/updateOption.ts"),
     ...load("actions/updateDescription.ts"), ...load("actions/replaceProductImage.ts"), ...load("actions/legalControls.ts"),
@@ -281,6 +284,28 @@ test("a field action pins its schema even when a native write edits the JSON bef
   assert.deepEqual(env.alternativePrice.text.sourceText.writes, []);
   assert.equal(h.getOffersEditorSnapshot(1).selectedOffer.products[0].mechanic.fields[0].value, "29,90");
   assert.equal(h.file.reads, 2);
+  assertUndoClosed(h);
+});
+
+test("a field action pins the identities map through nested reads and sees fallback toggles next operation", () => {
+  const h = harness();
+  const env = h.products[0];
+  h.templateAssets.map.fallback.mechanicLayers = true;
+  env.price.name = "PRECO";
+  env.price.comment = "";
+  let nestedField;
+  env.price.text.sourceText.onWrite = () => {
+    h.templateAssets.map.fallback.mechanicLayers = false;
+    nestedField = h.getOffersEditorSnapshot(1).selectedOffer.products[0].mechanic.fields[0];
+  };
+  assert.equal(h.updateOfferField(1, 0, "preco", "41,90", 0).ok, true);
+  assert.equal(nestedField.enabled, true);
+  assert.equal(nestedField.value, "41,90");
+  assert.equal(h.templateAssets.state.reads, 1);
+  assert.equal(h.getOffersEditorSnapshot(1).selectedOffer.products[0].mechanic.fields[0].enabled, false);
+  assert.equal(h.templateAssets.state.reads, 2);
+  assert.equal(h.updateOfferField(1, 0, "preco", "99,90", 0).ok, false);
+  assert.deepEqual(env.price.text.sourceText.writes, [{ text: "41,90" }]);
   assertUndoClosed(h);
 });
 

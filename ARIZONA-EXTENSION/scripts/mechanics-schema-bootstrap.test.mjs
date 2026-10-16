@@ -9,6 +9,7 @@ const compiled = ts.transpileModule(
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } },
 ).outputText;
 const schemaSuffix = "/js/assets/schema.json";
+const identitiesSuffix = "/js/assets/template-identities.json";
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
 // Run the production bootstrap and evalTS bridge against a serial host queue.
@@ -19,6 +20,7 @@ function harness({ cep = true, extensionRoot = "C:/Arizona CEP", script = "index
   const alerts = [];
   const loadPath = `${extensionRoot}/jsx/${script}`;
   let configuredPath;
+  let configuredIdentitiesPath;
   let initializeCount = 0;
   const host = {
     evalFile(filePath) {
@@ -30,9 +32,13 @@ function harness({ cep = true, extensionRoot = "C:/Arizona CEP", script = "index
           events.push(["configure", schemaPath]);
           return { ok: true };
         },
+        configureTemplateIdentitiesPath(identitiesPath) {
+          configuredIdentitiesPath = identitiesPath;
+          events.push(["configure-identities", identitiesPath]);
+        },
         getOffersEditorSnapshot() {
-          events.push(["snapshot", configuredPath]);
-          return { ok: true, schemaPath: configuredPath };
+          events.push(["snapshot", configuredPath, configuredIdentitiesPath]);
+          return { ok: true, schemaPath: configuredPath, identitiesPath: configuredIdentitiesPath };
         },
       };
     },
@@ -98,9 +104,10 @@ for (const script of ["index.js", "index.jsxbin"]) {
     assert.deepEqual(context.events, [
       ["load", `${extensionRoot}/jsx/${script}`],
       ["configure", extensionRoot + schemaSuffix],
-      ["snapshot", extensionRoot + schemaSuffix],
+      ["configure-identities", extensionRoot + identitiesSuffix],
+      ["snapshot", extensionRoot + schemaSuffix, extensionRoot + identitiesSuffix],
     ]);
-    assert.deepEqual(plain(await snapshot), { ok: true, schemaPath: extensionRoot + schemaSuffix });
+    assert.deepEqual(plain(await snapshot), { ok: true, schemaPath: extensionRoot + schemaSuffix, identitiesPath: extensionRoot + identitiesSuffix });
     assert.deepEqual(context.alerts, []);
     assert.equal(context.initializeCount, 1);
   });

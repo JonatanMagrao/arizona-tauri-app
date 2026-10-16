@@ -55,6 +55,7 @@ function validationSnapshot(mechanicType, fields) {
   const module = { exports: {} };
   const mocks = {
     ...sharedMocks,
+    "../../template/templateIdentities": { withTemplateIdentities: (callback) => callback() },
     "../mechanics/schemaRuntime": {
       withMechanicsSchema: (callback) => callback(),
     },

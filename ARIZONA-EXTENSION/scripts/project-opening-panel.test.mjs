@@ -150,6 +150,81 @@ const hostResult = (patch = {}) => ({
   status: "opened", projectChanged: true, message: "Projeto aberto.", errors: [], ...patch,
 });
 
+const legalOptionsContext = () => ({
+  projectKey: "C:/jobs/current.aep", offersCompId: 10, offerLayerId: 44, offerLayerIndex: 4,
+  offerSourceId: 50, legalLayerId: 51, legalSourceId: 60, bannerLayerId: 61, bannerSourceId: 70,
+  revision: "captured-list-before-native-edit",
+});
+
+test("legal-control services preserve captured context and keep legacy calls without extra arguments", async () => {
+  const h = createHarness();
+  const calls = [];
+  const bridge = { evalTS: (...args) => { calls.push(args); return Promise.resolve({ ok: true }); } };
+  const service = h.load("offersService", { "../../../../lib/utils/bolt": bridge });
+  const context = legalOptionsContext();
+  await service.updateOfferLegalControlOption(4, "tarja-eletro-pneu", 2, context);
+  await service.updateOfferLegalControl(4, "tarja-eletro-pneu", true, context);
+  await service.updateOfferLegalControl(4, "limitado-por-cpf", false);
+  await service.updateOfferLegalControlOption(4, "legacy-menu", 0);
+  assert.deepEqual(calls, [
+    ["updateOfferLegalControlOption", 4, "tarja-eletro-pneu", 2, context],
+    ["updateOfferLegalControl", 4, "tarja-eletro-pneu", true, context],
+    ["updateOfferLegalControl", 4, "limitado-por-cpf", false],
+    ["updateOfferLegalControlOption", 4, "legacy-menu", 0],
+  ]);
+  assert.equal(calls[0][4], context);
+  const preview = createHarness({ cep: false }).load("offersService", { "../../../../lib/utils/bolt": bridge });
+  assert.throws(() => preview.updateOfferLegalControlOption(4, "tarja-eletro-pneu", 0, context), /After Effects/);
+  assert.throws(() => preview.updateOfferLegalControl(4, "tarja-eletro-pneu", true, context), /After Effects/);
+  assert.equal(calls.length, 4);
+});
+
+for (const kind of ["checkbox", "option"]) {
+  test(`a stale legal ${kind} response refreshes its own offer while retaining the captured request context`, async () => {
+    const h = createHarness();
+    const host = deferred();
+    const refresh = deferred();
+    const calls = [];
+    const snapshotCalls = [];
+    const statuses = [];
+    const method = kind === "checkbox" ? "updateLegalControl" : "updateLegalControlOption";
+    const endpoint = kind === "checkbox" ? "updateOfferLegalControl" : "updateOfferLegalControlOption";
+    const selectedValue = kind === "checkbox" ? true : 2;
+    const context = legalOptionsContext();
+    const initial = { selectedOfferLayerIndex: 4, selectedOffer: { legalControls: [{ id: "tarja-eletro-pneu", enabled: false }] } };
+    const { useOffersEditor } = h.load("offers", {
+      "../../../services/localDiagnostics": { createDiagnosticOperationId: () => "legal-action", recordLocalDiagnostic() {}, recordDiagnosticFailure() {} },
+      "../services/ofertas": {
+        loadOffersEditorSnapshot: (index) => {
+          snapshotCalls.push(index);
+          return snapshotCalls.length === 1 ? Promise.resolve(initial) : refresh.promise;
+        },
+        [endpoint]: (...args) => { calls.push(args); return host.promise; },
+      },
+    });
+    const onStatus = (message) => statuses.push(message);
+    h.mount(() => useOffersEditor({ initialOfferLayerIndex: 4, onStatus }));
+    await settle();
+    const action = h.value[method](4, "tarja-eletro-pneu", selectedValue, context);
+    assert.deepEqual(calls, [[4, "tarja-eletro-pneu", selectedValue, context]]);
+    assert.equal(calls[0][3], context);
+    const message = "A lista mudou no After Effects. Atualize antes de escolher novamente.";
+    host.resolve({ ok: false, message, errors: [], selectedOfferLayerIndex: 0 });
+    await settle();
+    assert.deepEqual(snapshotCalls, [4, 4]);
+    assert.equal(h.value.busy, true);
+    assert.equal(h.value.snapshot, initial);
+    assert.deepEqual(statuses, [message]);
+    const updated = { selectedOfferLayerIndex: 4, selectedOffer: { legalControls: [{ id: "tarja-eletro-pneu", enabled: false,
+      optionGroup: { selectedIndex: 1, options: [{ label: "Texto novo" }, { label: "Pneu" }], context: { ...context, revision: "new-list" } } }] } };
+    refresh.resolve(updated);
+    await action;
+    assert.equal(h.value.busy, false);
+    assert.equal(h.value.snapshot, updated);
+    h.unmount();
+  });
+}
+
 test("opening ignores repeated clicks and remains busy until the new panel identity is loaded", async () => {
   const f = openingFixture();
   const operation = f.harness.value.openProject();
@@ -336,7 +411,7 @@ function sourceChangeFixture(kind = "layout") {
   const diagnostics = [];
   const offerContext = {
     projectKey: "C:/jobs/current.aep", compItemId: 10, offerLayerIndex: 4,
-    offerLayerId: 40, layerComment: "CAMADA OFERTA 4", sourceItemId: 50,
+    offerLayerId: 40, layerComment: "CAMADA OFERTA 04", sourceItemId: 50,
     folderItemId: 60, folderComment: "OFERTA 04",
   };
   const request = {

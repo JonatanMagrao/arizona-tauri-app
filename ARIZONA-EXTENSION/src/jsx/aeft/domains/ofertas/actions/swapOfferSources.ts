@@ -1,32 +1,30 @@
 import type { OfferEditorActionResult } from "../types";
 import {
-  getLayerByIndex,
+  getOfferByLayerIndex,
   getOffersComp,
-  nameMatches,
   selectOffer,
 } from "../layers/findLayers";
 import { createActionResult } from "./shared";
+import { withTemplateIdentities } from "../../template/templateIdentities";
 
 export const swapOfferSources = (
   sourceOfferLayerIndex: number,
   targetOfferLayerIndex: number
-): OfferEditorActionResult => {
+): OfferEditorActionResult => withTemplateIdentities(() => {
   const result = createActionResult();
-  const comp = getOffersComp(true);
+  const comp = getOffersComp(true, result.errors);
 
   if (comp === null) {
-    result.message = 'Precomp "Miolo" nao encontrada.';
+    result.message = result.errors.length > 0 ? result.errors[0] : 'Precomp "Miolo" nao encontrada.';
     return result;
   }
 
-  const sourceOffer = getLayerByIndex(comp, sourceOfferLayerIndex);
-  const targetOffer = getLayerByIndex(comp, targetOfferLayerIndex);
+  const sourceOffer = getOfferByLayerIndex(sourceOfferLayerIndex, result);
+  const targetOffer = getOfferByLayerIndex(targetOfferLayerIndex, result);
 
   if (
     sourceOffer === null ||
-    targetOffer === null ||
-    !nameMatches(sourceOffer.name, /Oferta_/) ||
-    !nameMatches(targetOffer.name, /Oferta_/)
+    targetOffer === null
   ) {
     result.message = "Oferta de origem ou destino nao encontrada.";
     return result;
@@ -112,4 +110,4 @@ export const swapOfferSources = (
   }
 
   return result;
-};
+});

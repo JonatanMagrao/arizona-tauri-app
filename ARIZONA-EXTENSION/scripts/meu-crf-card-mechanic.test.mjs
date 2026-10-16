@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import ts from "typescript";
+import { createTemplateTestAssets } from "./template-test-assets.mjs";
 
 const mechanicsDirectory = fileURLToPath(new URL(
   "../src/jsx/aeft/domains/ofertas/mechanics/",
@@ -106,8 +107,11 @@ class CompItem {
 }
 
 const modules = new Map();
+const assetsByCache = new WeakMap();
 function loadModule(filename, moduleCache = modules, nameFallback = false) {
   if (moduleCache.has(filename)) return moduleCache.get(filename).exports;
+  if (!assetsByCache.has(moduleCache)) assetsByCache.set(moduleCache, createTemplateTestAssets({ mechanicLayers: nameFallback }));
+  const templateAssets = assetsByCache.get(moduleCache);
   const module = { exports: {} };
   moduleCache.set(filename, module);
   const javaScript = ts.transpileModule(readFileSync(filename, "utf8"), {
@@ -121,7 +125,7 @@ function loadModule(filename, moduleCache = modules, nameFallback = false) {
     CompItem,
     Property,
     PropertyGroup,
-    File,
+    File: templateAssets.wrapFile(File),
     PropertyValueType: { OneD: 1 },
     require(specifier) {
       assert.ok(specifier.startsWith("."), `Unexpected external dependency: ${specifier}`);
@@ -131,8 +135,8 @@ function loadModule(filename, moduleCache = modules, nameFallback = false) {
       return loadModule(target, moduleCache, nameFallback);
     },
   }, { filename });
-  if (filename === path.join(mechanicsDirectory, "config.ts") && typeof nameFallback === "boolean") {
-    module.exports.MECHANIC_LAYER_NAME_FALLBACK_ENABLED = nameFallback;
+  if (filename === path.resolve(mechanicsDirectory, "../../template/templateIdentities.ts")) {
+    module.exports.configureTemplateIdentitiesPath(templateAssets.filePath);
   }
   if (filename === path.join(mechanicsDirectory, "schemaRuntime.ts")) {
     module.exports.configureMechanicsSchemaPath(schemaFilePath);

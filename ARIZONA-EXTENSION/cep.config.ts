@@ -58,7 +58,7 @@ const config: CEP_Config = {
     jsxBin: "replace",
   },
   installModules: [],
-  copyAssets: ["js/assets/schema.json"],
+  copyAssets: ["js/assets/schema.json", "js/assets/template-identities.json"],
   copyZipAssets: [],
 };
 export default config;

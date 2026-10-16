@@ -28,7 +28,7 @@ const mechanicData = (offerLayerIndex = 4, productIndex = 1) => ({
   context: {
     offer: {
       projectKey: "C:/jobs/current.aep", compItemId: 10, offerLayerIndex,
-      offerLayerId: 40 + offerLayerIndex, layerComment: "CAMADA OFERTA " + offerLayerIndex,
+      offerLayerId: 40 + offerLayerIndex, layerComment: "CAMADA OFERTA " + String(offerLayerIndex).padStart(2, "0"),
       sourceItemId: 50, folderItemId: 60, folderComment: "OFERTA 04",
     },
     productIndex, mechanicLayerIndex: 3, mechanicLayerId: 43,
@@ -201,11 +201,11 @@ const shallowNodes = (node) => {
   return node && typeof node === "object" ? [node, ...shallowNodes(node.props?.children)] : [];
 };
 
-for (const [type, variantId] of [
-  ["De X Por Y Parcelamento", "mechanicCondition"],
-  ["De X Por Y | X% Desconto | Leve X Pague Y", "mechanicType"],
+for (const [type, variantId, variantLabel] of [
+  ["De X Por Y Parcelamento", "mechanicCondition", "Controlador de Mecânica"],
+  ["De X Por Y | X% Desconto | Leve X Pague Y", "mechanicType", "Tipo"],
 ]) {
-  test(`source mechanic menu preserves the existing ${variantId} selector and its own update target`, () => {
+  test(`product header keeps only the source menu and moves ${variantId} below prices with its own update target`, () => {
     const module = { exports: {} };
     const tooltipModule = { exports: {} };
     const allTakePayModule = { exports: {} };
@@ -234,10 +234,11 @@ for (const [type, variantId] of [
     const changes = [];
     const before = async () => true;
     const replace = async (request) => changes.push(["source", request]);
-    const group = { id: variantId, label: "Variação", type: "controller", placement: "header",
+    const group = { id: variantId, label: variantLabel, type: "controller", placement: "header",
       enabled: true, selectedIndex: 0, options: [{ label: "Uma opção" }, { label: "Outra opção" }] };
+    const price = { id: "preco-por", label: "Preço", format: "price", value: "10,00", enabled: true };
     const product = { index: 1, description: { value: "PRODUTO", enabled: true, label: "Descrição" }, image: null,
-      mechanic: { type, fields: [], optionGroups: [group] } };
+      mechanic: { type, fields: [price], optionGroups: [group] } };
     const tree = module.exports.ProductEditorForTest({
       product, isRnProject: false, projectName: "current.aep", offerLayerIndex: 4,
       previewRevision: 0, busy: false, resetKey: "current-snapshot", menuBlocked: false,
@@ -247,14 +248,25 @@ for (const [type, variantId] of [
     });
     const header = shallowNodes(tree).find((node) => node.type === "header");
     const sourceMenu = shallowNodes(header).find((node) => node.type === MechanicMenu);
-    const variantControl = shallowNodes(header).find((node) => node.props?.optionGroup === group);
-    assert.ok(sourceMenu, "The product header exposes the separate source menu");
-    assert.ok(variantControl, "Changing the source must not remove the existing mechanic variant selector");
+    assert.ok(sourceMenu, "The product header exposes the source menu");
+    assert.deepEqual(shallowNodes(header).filter((node) => node !== header), [sourceMenu],
+      "Only the mechanic source menu belongs in the header");
+    const controls = shallowNodes(tree).find((node) => node.props?.className === "offer-product-controls");
+    const controlNodes = shallowNodes(controls);
+    const variantControl = controlNodes.find((node) => node.props?.optionGroup === group);
+    const priceControl = controlNodes.find((node) => node.props?.field === price);
+    assert.ok(variantControl, "The mechanic variant remains editable in the settings area");
+    assert.ok(priceControl && controlNodes.indexOf(priceControl) < controlNodes.indexOf(variantControl),
+      "The variant setting follows the price fields");
+    assert.equal(shallowNodes(tree).filter((node) => node.props?.optionGroup === group).length, 1);
     assert.equal(sourceMenu.props.offerLayerIndex, 4);
     assert.equal(sourceMenu.props.productIndex, 1);
     assert.equal(sourceMenu.props.onBeforeChange, before);
     assert.equal(sourceMenu.props.onChange, replace);
-    const select = shallowNodes(variantControl.type(variantControl.props)).find((node) => node.type === "select");
+    const variantNodes = shallowNodes(variantControl.type(variantControl.props));
+    assert.ok(variantNodes.some((node) => node.type === "span" && node.props.children === group.label),
+      "The setting keeps a visible label alongside the other controls");
+    const select = variantNodes.find((node) => node.type === "select");
     assert.equal(select.props.disabled, false);
     assert.equal(select.props.value, 0);
     select.props.onChange({ target: { value: "1" } });

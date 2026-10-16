@@ -10,6 +10,8 @@ const domainDirectory = fileURLToPath(new URL("../src/jsx/aeft/domains/ofertas/"
 const plain = (value) => JSON.parse(JSON.stringify(value));
 const schemaFilePath = "C:/extension/js/assets/schema.json";
 const schemaBinary = readFileSync(new URL("../src/js/assets/schema.json", import.meta.url)).toString("latin1");
+const identitiesFilePath = "C:/extension/js/assets/template-identities.json";
+const approvedIdentities = JSON.parse(readFileSync(new URL("../src/js/assets/template-identities.json", import.meta.url), "utf8"));
 
 // Mock only native AE objects. Production discovery, association, readers,
 // public actions and serialization run together in these regression tests.
@@ -189,11 +191,28 @@ function legal() {
 }
 
 function harness(products = [product(1), product(2), product(3)]) {
+  const identities = plain(approvedIdentities);
+  identities.fallback.offerLayers = false;
+  identities.fallback.mechanicLayers = false;
+  const identityFile = { text: null, reads: 0, afterRead: null };
+  class AssetFile extends File {
+    get bytes() { return Buffer.from(identityFile.text ?? JSON.stringify(identities), "utf8").toString("latin1"); }
+    get length() { return this.fsName === identitiesFilePath ? this.bytes.length : super.length; }
+    read() {
+      if (this.fsName !== identitiesFilePath) return super.read();
+      assert.equal(this.encoding, "BINARY");
+      identityFile.reads += 1;
+      const bytes = this.bytes;
+      if (identityFile.afterRead) identityFile.afterRead();
+      return bytes;
+    }
+  }
   const legalEnv = legal();
   const offerMarker = identified(new AVLayer("Marcador externo livre"), "MARCADORES");
   offerMarker.marker = new MarkerProperty([2, 6, 10]);
   const source = new CompItem([new AVLayer("Decoracao externa"), ...products.flatMap((item) => item.layers), legalEnv.layer, offerMarker], "Oferta");
   const offer = new AVLayer("Oferta_01", [], source);
+  offer.comment = "CAMADA OFERTA 01";
   const miolo = new CompItem([offer], "Miolo");
   const app = { project: { numItems: 1, item: () => miolo }, undoEvents: [],
     beginUndoGroup(name) { this.undoEvents.push(["begin", name]); }, endUndoGroup() { this.undoEvents.push(["end"]); } };
@@ -206,7 +225,7 @@ function harness(products = [product(1), product(2), product(3)]) {
     vm.runInNewContext(ts.transpileModule(readFileSync(filename, "utf8"), {
       compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
     }).outputText, { module, exports: module.exports, app, AVLayer, TextLayer, CompItem, FootageItem,
-      File, FileSource, Property, PropertyGroup, PropertyValueType: { OneD: 1 },
+      File: AssetFile, FileSource, Property, PropertyGroup, PropertyValueType: { OneD: 1 },
       require(specifier) {
         assert.ok(specifier.startsWith("."), "Unexpected dependency: " + specifier);
         const base = path.resolve(path.dirname(filename), specifier);
@@ -215,8 +234,6 @@ function harness(products = [product(1), product(2), product(3)]) {
         return load(target);
       },
     }, { filename });
-    if (filename === path.join(domainDirectory, "layers/config.ts")) module.exports.OFFER_LAYER_NAME_FALLBACK_ENABLED = false;
-    if (filename === path.join(domainDirectory, "mechanics/config.ts")) module.exports.MECHANIC_LAYER_NAME_FALLBACK_ENABLED = false;
     return module.exports;
   }
   const fields = load("actions/updateField.ts");
@@ -229,7 +246,8 @@ function harness(products = [product(1), product(2), product(3)]) {
   const snapshot = load("snapshot/buildOfferSnapshot.ts");
   const discovery = load("snapshot/offerDiscovery.ts");
   load("mechanics/schemaRuntime.ts").configureMechanicsSchemaPath(schemaFilePath);
-  return { app, source, offer, products, legal: legalEnv, offerMarker, load, ...fields, ...descriptions, ...expressions, ...options, ...images, ...swaps, ...legalActions, ...snapshot, ...discovery };
+  load("../template/templateIdentities.ts").configureTemplateIdentitiesPath(identitiesFilePath);
+  return { app, source, offer, products, legal: legalEnv, offerMarker, load, identities, identityFile, ...fields, ...descriptions, ...expressions, ...options, ...images, ...swaps, ...legalActions, ...snapshot, ...discovery };
 }
 
 function reorder(env, layers) {
@@ -355,7 +373,7 @@ for (const role of ["descriptionLayer", "mechanicLayer", "imageLayer"]) {
 
 test("comment-only offer lookup ignores legacy names and positions independently of mechanic fallback", () => {
   const env = harness();
-  env.load("mechanics/config.ts").MECHANIC_LAYER_NAME_FALLBACK_ENABLED = true;
+  env.identities.fallback.mechanicLayers = true;
   env.products.forEach((item) => item.layers.forEach((layer) => { layer.name = layer.comment; layer.comment = ""; }));
   assert.deepEqual(plain(env.getOffersEditorSnapshot(1).selectedOffer.products), []);
   assert.equal(env.updateOfferField(1, 0, "preco", "99,90", 0).ok, false);
@@ -615,7 +633,7 @@ test("offer marker lookup stays in the outer composition and cannot consume inte
 
 test("name fallback resolves exact roles independently and product swaps preserve names that identify the slots", () => {
   const env = harness();
-  env.load("layers/config.ts").OFFER_LAYER_NAME_FALLBACK_ENABLED = true;
+  env.identities.fallback.offerLayers = true;
   env.products.forEach((item) => item.layers.forEach((layer) => { layer.name = layer.comment; layer.comment = ""; }));
   const beforeNames = env.products.flatMap((item) => item.layers.map((layer) => layer.name));
   assert.deepEqual(plain(env.getOffersEditorSnapshot(1).selectedOffer.products.map(({ index }) => index)), [0, 1, 2]);
@@ -632,7 +650,7 @@ test("name fallback resolves exact roles independently and product swaps preserv
 
 test("recognized comments always win over conflicting fallback names across numbered roles", () => {
   const env = harness();
-  env.load("layers/config.ts").OFFER_LAYER_NAME_FALLBACK_ENABLED = true;
+  env.identities.fallback.offerLayers = true;
   env.products[0].mechanicLayer.name = "MECANICA 2";
   env.products[1].mechanicLayer.comment = "";
   env.products[1].mechanicLayer.name = "Mecanica visual sem identidade";
@@ -642,6 +660,74 @@ test("recognized comments always win over conflicting fallback names across numb
   assert.equal(env.products[0].price.text.sourceText.value.text, "21,90");
   assertProductUntouched(env.products[1]);
   assertUndoClosed(env);
+});
+
+test("the distributed map controls external aliases and legal CPF lookup on the next operation", () => {
+  const env = harness([product(1)]);
+  env.identities.offerLayers.description.names.push("DESCRIPTION {n}");
+  env.products[0].descriptionLayer.comment = "";
+  env.products[0].descriptionLayer.name = "DESCRIPTION 1";
+  env.legal.layer.comment = "";
+  env.legal.layer.name = "TEXTO LEGAL_03";
+  assert.equal(env.updateOfferDescription(1, 0, "NEW").ok, false);
+  assert.equal(env.updateOfferLegalControl(1, "cpf", true).ok, false);
+  env.identities.fallback.offerLayers = true;
+  assert.equal(env.updateOfferDescription(1, 0, "NEW").ok, true);
+  assert.equal(env.products[0].descriptionText.text.sourceText.value.text, "NEW");
+  const snapshot = env.getOffersEditorSnapshot(1);
+  const cpf = snapshot.selectedOffer.legalControls.find((item) => item.id.includes("cpf"));
+  assert.ok(cpf, "the legal controls include CPF");
+  assert.equal(env.updateOfferLegalControl(1, cpf.id, true).ok, true);
+  assert.equal(effectValue(env.legal.cpf).value, 1);
+  assertUndoClosed(env);
+});
+
+test("one map is pinned throughout product swaps and later operations reload its flags", () => {
+  const env = harness();
+  env.identities.fallback.offerLayers = true;
+  env.products.forEach((item) => item.layers.forEach((layer) => { layer.name = layer.comment; layer.comment = ""; }));
+  const beforeNames = env.products.flatMap((item) => item.layers.map((layer) => layer.name));
+  env.identityFile.afterRead = () => {
+    env.identities.fallback.offerLayers = false;
+    env.identityFile.afterRead = null;
+  };
+  assert.equal(env.swapOfferProducts(1, 0, 2).ok, true);
+  assert.equal(env.identityFile.reads, 1);
+  assert.deepEqual(env.products.flatMap((item) => item.layers.map((layer) => layer.name)), beforeNames);
+  assert.equal(env.getOffersEditorSnapshot(1).selectedOffer.products.length, 0);
+  assert.equal(env.identityFile.reads, 2);
+  assertUndoClosed(env);
+});
+
+test("an invalid map blocks edits before undo or property writes and recovers on the next operation", () => {
+  const env = harness();
+  env.identityFile.text = '{"version": 1, "version": 1}';
+  const snapshot = env.getOffersEditorSnapshot(1);
+  assert.equal(snapshot.ok, false);
+  assert.match(snapshot.message, /identidades|template-identities/);
+  assert.equal(env.updateOfferField(1, 0, "preco", "99,90", 0).ok, false);
+  assert.equal(env.swapOfferProducts(1, 0, 1).ok, false);
+  assert.equal(env.updateOfferLegalText(1, "CHANGED").ok, false);
+  env.products.forEach(assertProductUntouched);
+  assert.deepEqual(env.legal.legalText.text.sourceText.writes, []);
+  assert.deepEqual(env.app.undoEvents, []);
+  env.identityFile.text = null;
+  assert.equal(env.updateOfferField(1, 0, "preco", "21,90", 0).ok, true);
+});
+
+test("duplicate external aliases and duplicate comments never pick an arbitrary product", () => {
+  for (const duplicateComment of [false, true]) {
+    const env = harness([product(1)]);
+    env.identities.fallback.offerLayers = true;
+    const original = env.products[0].mechanicLayer;
+    original.name = "MECANICA 1";
+    if (!duplicateComment) original.comment = "";
+    const decoy = new AVLayer("MECANICA 1", [], original.source);
+    decoy.comment = duplicateComment ? original.comment : "";
+    reorder(env, [...env.source.layers, decoy]);
+    assert.equal(env.updateOfferField(1, 0, "preco", "99,90", 0).ok, false);
+    env.products.forEach(assertProductUntouched);
+  }
 });
 
 test("native failure on the third source swap restores earlier components without changing comments", () => {

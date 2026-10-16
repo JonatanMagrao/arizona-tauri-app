@@ -1,5 +1,6 @@
 import { decodeMechanicsSchemaUtf8, parseMechanicsSchemaJson } from "./schemaJson";
 import type { MechanicsSchema } from "./schemaValidation";
+import { withTemplateIdentities } from "../../template/templateIdentities";
 
 let configuredPath = "";
 let scopeDepth = 0;
@@ -94,7 +95,7 @@ export const getMechanicsSchema = (): MechanicsSchema => {
 // Scope the read lazily: operations that never access a mechanic do not depend
 // on this file. The first access pins a validated result (or failure) until the
 // outer operation finishes. The next operation always reads the file again.
-export const withMechanicsSchema = <T>(callback: () => T): T => {
+export const withMechanicsSchema = <T>(callback: () => T): T => withTemplateIdentities(() => {
   const outermost = scopeDepth === 0;
   if (outermost) clearScope();
   scopeDepth += 1;
@@ -104,4 +105,4 @@ export const withMechanicsSchema = <T>(callback: () => T): T => {
     scopeDepth -= 1;
     if (outermost) clearScope();
   }
-};
+});

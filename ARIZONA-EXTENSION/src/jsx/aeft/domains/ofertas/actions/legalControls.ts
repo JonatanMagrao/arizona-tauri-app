@@ -1,4 +1,6 @@
-import type { OfferEditorActionResult } from "../types";
+import { withMechanicsSchema } from "../mechanics/schemaRuntime";
+import type { OfferEditorActionResult, OfferLegalOptionsContext } from "../types";
+import { assertBannerContext, BANNER_CONTROL_ID, resolveBannerOptions } from "../layers/bannerOptions";
 import {
   getLayerByIndex,
   getLayerSource,
@@ -18,7 +20,7 @@ import { createActionResult } from "./shared";
 export const updateOfferLegalText = (
   offerLayerIndex: number,
   value: string
-): OfferEditorActionResult => {
+): OfferEditorActionResult => withMechanicsSchema(() => {
   const result = createActionResult();
   const offer = getOfferByLayerIndex(offerLayerIndex, result);
 
@@ -46,17 +48,20 @@ export const updateOfferLegalText = (
   }
 
   return result;
-};
+});
 
 export const updateOfferLegalControl = (
   offerLayerIndex: number,
   controlId: string,
-  enabled: boolean
-): OfferEditorActionResult => {
+  enabled: boolean,
+  expectedContext?: OfferLegalOptionsContext
+): OfferEditorActionResult => withMechanicsSchema(() => {
   const result = createActionResult();
   const offer = getOfferByLayerIndex(offerLayerIndex, result);
 
   if (offer === null) return result;
+
+  if (controlId === BANNER_CONTROL_ID) return updateBanner(offer, null, enabled, expectedContext);
 
   app.beginUndoGroup("Atualizar configuracao do texto legal");
 
@@ -110,13 +115,13 @@ export const updateOfferLegalControl = (
   }
 
   return result;
-};
+});
 
 export const updateOfferLegalControlValue = (
   offerLayerIndex: number,
   controlId: string,
   value: string
-): OfferEditorActionResult => {
+): OfferEditorActionResult => withMechanicsSchema(() => {
   const result = createActionResult();
   const offer = getOfferByLayerIndex(offerLayerIndex, result);
 
@@ -148,17 +153,20 @@ export const updateOfferLegalControlValue = (
   }
 
   return result;
-};
+});
 
 export const updateOfferLegalControlOption = (
   offerLayerIndex: number,
   controlId: string,
-  selectedIndex: number
-): OfferEditorActionResult => {
+  selectedIndex: number,
+  expectedContext?: OfferLegalOptionsContext
+): OfferEditorActionResult => withMechanicsSchema(() => {
   const result = createActionResult();
   const offer = getOfferByLayerIndex(offerLayerIndex, result);
 
   if (offer === null) return result;
+
+  if (controlId === BANNER_CONTROL_ID) return updateBanner(offer, selectedIndex, null, expectedContext);
 
   app.beginUndoGroup("Atualizar menu da oferta");
 
@@ -185,5 +193,71 @@ export const updateOfferLegalControlOption = (
     app.endUndoGroup();
   }
 
+  return result;
+});
+
+// Banner selection is a transaction over the current source comp. An index is
+// accepted only with the exact snapshot revision that produced that menu.
+const updateBanner = (
+  offer: Layer,
+  selectedIndex: number | null,
+  enabled: boolean | null,
+  expectedContext?: OfferLegalOptionsContext
+): OfferEditorActionResult => {
+  const result = createActionResult();
+  let undoOpened = false;
+  const changedLayers: Layer[] = [];
+  const previous: boolean[] = [];
+  try {
+    const offerSource = getLayerSource(offer, "oferta", result.errors);
+    const legalSource = getLegalTextSource(offerSource, result.errors);
+    if (legalSource === null) throw new Error("Texto legal indisponivel para Eletro/Pneu.");
+    const resolved = resolveBannerOptions(legalSource, offer);
+    assertBannerContext(resolved.context, expectedContext);
+    if (offer.locked === true || resolved.layer.locked === true) throw new Error("A camada da oferta ou da tarja esta bloqueada.");
+    if (selectedIndex !== null) {
+      if (typeof selectedIndex !== "number" || !isFinite(selectedIndex) || Math.floor(selectedIndex) !== selectedIndex ||
+        selectedIndex < 0 || selectedIndex >= resolved.candidates.length) throw new Error("Opcao Eletro/Pneu invalida.");
+      for (let index = 0; index < resolved.candidates.length; index += 1) {
+        const layer = resolved.candidates[index];
+        if (layer.locked === true) throw new Error("Ha texto bloqueado na tarja Eletro/Pneu.");
+        changedLayers.push(layer);
+        previous.push(layer.enabled);
+      }
+    } else {
+      if (typeof enabled !== "boolean") throw new Error("Visibilidade Eletro/Pneu invalida.");
+      changedLayers.push(resolved.layer);
+      previous.push(resolved.layer.enabled);
+    }
+    let needsChange = false;
+    for (let index = 0; index < changedLayers.length; index += 1) {
+      if (previous[index] !== (selectedIndex === null ? enabled : index === selectedIndex)) needsChange = true;
+    }
+    if (needsChange) {
+      app.beginUndoGroup("Atualizar Eletro/Pneu");
+      undoOpened = true;
+      for (let index = 0; index < changedLayers.length; index += 1) {
+        const next = selectedIndex === null ? enabled === true : index === selectedIndex;
+        if (changedLayers[index].enabled !== next) changedLayers[index].enabled = next;
+      }
+    }
+    result.ok = true;
+    result.selectedOfferLayerIndex = offer.index;
+    result.message = "Eletro/Pneu atualizado.";
+  } catch (error) {
+    result.message = String(error) || "Erro ao atualizar Eletro/Pneu.";
+    result.errors.push(result.message);
+    if (undoOpened) {
+      for (let index = 0; index < changedLayers.length; index += 1) {
+        try {
+          if (changedLayers[index].enabled !== previous[index]) changedLayers[index].enabled = previous[index];
+        } catch (rollbackError) {
+          result.errors.push("Nao foi possivel restaurar a visibilidade da camada " + changedLayers[index].name + ": " + String(rollbackError));
+        }
+      }
+    }
+  } finally {
+    if (undoOpened) app.endUndoGroup();
+  }
   return result;
 };

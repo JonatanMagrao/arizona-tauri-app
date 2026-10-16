@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import ts from "typescript";
+import { createTemplateTestAssets } from "./template-test-assets.mjs";
 
 const domainDirectory = fileURLToPath(new URL(
   "../src/jsx/aeft/domains/ofertas/", import.meta.url
@@ -43,9 +44,12 @@ class PropertyGroup {
   }
 }
 
+let nextNativeId = 1;
 class AVLayer extends PropertyGroup {
   constructor(name, properties = [], source = null) {
     super(name, properties);
+    this.id = nextNativeId++;
+    this.comment = "";
     this.source = source;
     this.enabled = true;
     this.selected = false;
@@ -68,6 +72,7 @@ class TextLayer extends AVLayer {
 class CompItem {
   constructor(name, layers) {
     this.name = name;
+    this.id = nextNativeId++;
     this.layers = layers;
     layers.forEach((layer, index) => { layer.index = index + 1; });
   }
@@ -76,6 +81,7 @@ class CompItem {
 }
 
 const compiled = new Map();
+const templateAssets = createTemplateTestAssets();
 function loadModule(filename, app, modules = new Map()) {
   if (modules.has(filename)) return modules.get(filename).exports;
   const module = { exports: {} };
@@ -88,6 +94,7 @@ function loadModule(filename, app, modules = new Map()) {
   vm.runInNewContext(compiled.get(filename), {
     module, exports: module.exports, app, AVLayer, TextLayer, CompItem,
     Property, PropertyGroup, PropertyValueType: { OneD: 1 }, Error,
+    File: templateAssets.wrapFile(),
     require(specifier) {
       assert.ok(specifier.startsWith("."), `Unexpected dependency: ${specifier}`);
       const base = path.resolve(path.dirname(filename), specifier);
@@ -96,6 +103,9 @@ function loadModule(filename, app, modules = new Map()) {
       return loadModule(target, app, modules);
     },
   }, { filename });
+  if (filename === path.resolve(domainDirectory, "../template/templateIdentities.ts")) {
+    module.exports.configureTemplateIdentitiesPath(templateAssets.filePath);
+  }
   return module.exports;
 }
 
@@ -116,23 +126,26 @@ function fixture({ reorder = false } = {}) {
     : [effects.legal, effects.checkbox, effects.quantity, effects.unit, effects.unrelated];
   const legalLayer = new TextLayer("Texto Legal", "Texto existente", effectOrder);
   const validity = slider("Texto Validade", 3);
-  const optionLayers = Array.from({ length: 9 }, (_, index) => new AVLayer(`Opcao ${index + 1}`));
+  const optionLayers = Array.from({ length: 9 }, (_, index) => new TextLayer(`Opcao ${index + 1}`, "Texto"));
+  optionLayers[0].comment = "ELETRO";
+  optionLayers[1].comment = "PNEU";
   const legalSource = new CompItem("Texto Legal", [
     new AVLayer("Validade", [new PropertyGroup("ADBE Effect Parade", [validity])]),
     new AVLayer("Reserva"),
     legalLayer,
     new AVLayer("Selo leite"),
     new AVLayer("Selo moderacao"),
-    new AVLayer("Eletro/Pneu", [], new CompItem("Opcoes", optionLayers)),
+    new AVLayer("TARJA_ELETRO_PNEU", [], new CompItem("TARJA_ELETRO_PNEU", optionLayers)),
   ]);
   const offer = new AVLayer("Oferta_1", [], new CompItem("Oferta", [
     new AVLayer("Legal", [], legalSource),
   ]));
   offer.source.layer(1).comment = "TEXTO LEGAL";
+  offer.comment = "CAMADA OFERTA 01";
   const miolo = new CompItem("Miolo", [offer]);
   const undo = { opened: 0, closed: 0 };
   const app = {
-    project: { numItems: 1, item: () => miolo },
+    project: { numItems: 1, item: () => miolo, file: { fsName: "C:/projeto.aep", name: "projeto.aep" } },
     beginUndoGroup() { undo.opened += 1; },
     endUndoGroup() { undo.closed += 1; },
   };
@@ -245,8 +258,9 @@ test("existing visibility, locked legal text, sliders and Eletro/Pneu options re
   assert.equal(env.effects.legal.property(1).value, 6);
   assert.equal(env.actions.updateOfferLegalControlValue(1, "tarja-validade", "4").ok, true);
   assert.equal(env.validity.property(1).value, 4);
-  assert.equal(env.actions.updateOfferLegalControlOption(1, "tarja-eletro-pneu", 2).ok, true);
-  assert.deepEqual(env.optionLayers.slice(3).map((layer) => layer.enabled), [false, false, true, false, false, false]);
+  const context = env.snapshot.getOffersEditorSnapshot(1).selectedOffer.legalControls.find((control) => control.id === "tarja-eletro-pneu").optionGroup.context;
+  assert.equal(env.actions.updateOfferLegalControlOption(1, "tarja-eletro-pneu", 2, context).ok, true);
+  assert.deepEqual(env.optionLayers.map((layer) => layer.enabled), [false, false, true, false, false, false, false, false, false]);
   assert.deepEqual(env.effects.checkbox.property(1).writes, []);
   assert.deepEqual(env.effects.quantity.property(1).writes, []);
   assertUndoClosed(env, 6);

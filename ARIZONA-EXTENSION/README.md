@@ -1,4 +1,4 @@
-﻿# Arizona Extension (CEP — After Effects)
+# Arizona Extension (CEP — After Effects)
 
 Painel CEP do Arizona para After Effects: edição de ofertas e roteiro, com
 botão de render local.
@@ -58,7 +58,7 @@ foram descontinuadas e aparecem como mecânica não mapeada quando nenhuma das
 identificações corresponder a uma família atual; não há migração automática dos
 arquivos do After Effects.
 
-Consulte o [mapa das camadas atuais](../MAPA_CAMADAS_MECANICAS_CEP.md) e o
+Consulte o [mapa de nomes do template](src/js/assets/template-identities.json) e o
 [alcance da limpeza](../docs/REVISAO_LIMPEZA_MECANICAS_CEP.md).
 
 ## Camadas dentro das ofertas
@@ -83,18 +83,20 @@ origem `FootageItem` ou `CompItem`, mas a substituição da imagem pelo painel
 continua exigindo origem direta `FootageItem`.
 
 A precomp legal externa é localizada por `TEXTO LEGAL`, em qualquer posição.
-Dentro dela, texto legal continua na camada 3 e os controles legais preservam
-suas posições e efeitos. Dentro da precomp descritiva, o texto continua sendo
+Dentro dela, texto legal continua na camada 3 e os demais controles legais
+preservam suas posições e efeitos. A tarja Eletro/Pneu tem resolução própria,
+descrita abaixo. Dentro da precomp descritiva, o texto continua sendo
 encontrado pelo nome `DESCRITIVO`.
 
-O fallback destas camadas é controlado por `OFFER_LAYER_NAME_FALLBACK_ENABLED`
-em [layers/config.ts](src/jsx/aeft/domains/ofertas/layers/config.ts), desativado
+O fallback destas camadas é controlado por `fallback.offerLayers` no
+[template-identities.json](src/js/assets/template-identities.json), ativado
 por padrão e independente do fallback das mecânicas. Se ativado, aceita somente
-os nomes exatos iguais aos comentários quando nenhum comentário corresponder.
+os nomes e aliases declarados no mapa quando nenhum comentário corresponder.
 A comparação ignora maiúsculas/minúsculas e espaços externos, preservando
 acentos. Comentário reconhecido de outra função ou número prevalece sobre o
 nome; comentários duplicados não liberam fallback. Não há fallback por índice,
-adjacência ou nomes anteriores. Alterar a opção exige build e recarregamento.
+adjacência ou nomes anteriores não declarados. O asset é relido na próxima
+operação; a edição do arquivo de origem exige build para atualizar a distribuição.
 
 Na troca de produtos, comentários permanecem na camada e as origens, escalas e
 nomes visuais são trocados. Nomes usados como fallback permanecem em suas
@@ -106,19 +108,48 @@ operação atual o consome. Não é obrigatório para os produtos e não altera 
 marcadores da timeline nem os jumps internos das mecânicas. O schema oficial
 das mecânicas abaixo continua configurando apenas suas camadas internas.
 
+## Tarja Eletro/Pneu
+
+O menu é reconstruído a partir da precomp `TARJA_ELETRO_PNEU` da oferta
+selecionada, incluindo ofertas importadas. Não existe uma lista global de textos
+nem um intervalo fixo de índices. Os comentários `ELETRO` e `PNEU` identificam
+os dois textos fixos; camadas de texto sem comentário são opções adicionais.
+O dropdown usa o nome atual de cada camada, na ordem da timeline, de cima para
+baixo. Adições, remoções e renomeações aparecem na próxima leitura do snapshot.
+
+`CONTROL` e `TARJA` identificam a infraestrutura e ficam fora do menu, assim
+como imagens e outras camadas sem texto. `CARTAO CONTROL` mantém os vínculos
+das imagens; selecionar uma opção altera somente a visibilidade dos textos
+elegíveis. O checkbox Eletro/Pneu controla a camada externa e preserva a opção
+interna escolhida. A extensão não reorganiza nem recolore o projeto em runtime.
+
+O mapa `banners.eletroPneu` em `template-identities.json` reúne os nomes da
+precomp, os quatro comentários e os aliases das camadas fixas. O nome da
+precomp identifica sua estrutura dentro da oferta; `fallback.offerLayers`
+controla os aliases de camadas quando faltam comentários. Os textos dinâmicos
+não precisam ser cadastrados no JSON. Identidades fixas ausentes ou duplicadas
+bloqueiam o menu sem escolher uma camada arbitrariamente.
+
+A seleção e o checkbox carregam um contexto do projeto, oferta, precomp e
+lista apresentada. Se essa estrutura mudar antes do clique, a ação é recusada
+e solicita atualização, sem usar o índice antigo em uma nova lista. Falhas na
+escrita restauram as visibilidades anteriores dentro do grupo de undo.
+
 ## Troca de réguas da oferta
 
 O botão **Régua**, ao lado das opções do texto legal, lista as precomps da
-pasta da oferta selecionada. A camada em `Miolo` precisa do comentário
-`CAMADA OFERTA 1`, `CAMADA OFERTA 2` etc.; a pasta correspondente no painel
-Project precisa do comentário `OFERTA 01`, `OFERTA 02` etc., com zero à
+pasta da oferta selecionada. A camada em `Miolo` é identificada pelo comentário
+`CAMADA OFERTA 01`, `CAMADA OFERTA 02` etc.; a pasta correspondente no painel
+Project usa o comentário `OFERTA 01`, `OFERTA 02` etc., com zero à
 esquerda para números de um dígito. O comentário `OFERTA 1` não substitui
 `OFERTA 01`.
 
 As réguas são identificadas pelos comentários dos itens `CompItem` diretamente
 dentro dessa pasta: `OFERTA REGUA 2 PRODUTOS`, `OFERTA REGUA 2 PRODUTOS ELETRO`,
-`OFERTA REGUA 3 PRODUTOS` e `OFERTA SIMPLES`. Nomes dos itens e réguas em outras
-pastas não substituem esses comentários. Ausências e duplicidades são
+`OFERTA REGUA 3 PRODUTOS` e `OFERTA SIMPLES`. Na ausência de correspondência
+por comentário, as flags do mapa permitem nomes como `Oferta_01`, `OFERTA 01`
+e os nomes declarados das réguas. A busca continua limitada à pasta da oferta.
+Ausências e duplicidades são
 informadas no seletor, sem escolher um item arbitrariamente. O tooltip da
 mensagem ou da opção indisponível indica o comentário esperado e onde
 preenchê-lo no After Effects.
@@ -131,20 +162,28 @@ separada da troca de conteúdo entre duas ofertas já existente.
 
 ## Troca de mecânicas do produto
 
-O nome da mecânica no card abre o seletor das sete mecânicas. As opções internas
-de variação, quando existentes, continuam abaixo dele. A busca usa a mesma
+O nome da mecânica no card abre o seletor das sete mecânicas, único seletor no
+cabeçalho. As opções internas de variação, quando existentes, ficam na área de
+configurações abaixo dos preços. A busca usa a mesma
 pasta da oferta identificada por `OFERTA 01`, `OFERTA 02` etc. Dentro dela,
-a subpasta direta das mecânicas precisa do comentário `MECANICAS`. As precomps
+a subpasta direta das mecânicas é identificada por `MECANICAS`. As precomps
 podem estar em qualquer nível de subpastas dessa pasta; os nomes e comentários
 das subpastas intermediárias não são usados.
 
-A identificação usa o comentário do item no painel Projeto:
+A identificação prioriza o comentário do item no painel Projeto:
 
 - **Simples:** `SIMPLES 1`, `SIMPLES 2` etc., de acordo com o número do produto.
 - **Demais mecânicas:** uma precomp por comentário: `TODOS A COM X% DESCONTO`,
   `DESCONTO R$ CARTAO CRF`, `DE X POR Y PARCELAMENTO`,
   `DE X POR Y MEU CRF POR Z CARTAO CRF`,
   `DE X POR Y | X% DESCONTO | LEVE X PAGUE Y` e `TODOS A COM LEVE X PAGUE Y`.
+
+Com `fallback.projectItems` ativo, o mapa permite `_MECANICAS` e os aliases
+de precomps explicitamente declarados quando não há correspondência por
+comentário. `SIMPLES {n}` é expandido para o número do produto; os sufixos das
+outras famílias são aliases do item, não números de produto. Duplicidades de
+comentário ou nome continuam bloqueando a opção. Subpastas intermediárias
+continuam sem participar da identificação.
 
 A troca substitui somente o source da camada com comentário `MECANICA 1`,
 `MECANICA 2` etc. na régua atual, preservando nome, comentários, transformações
@@ -177,7 +216,7 @@ a ordem das opções: suas posições controlam partes do layout. Labels e valor
 AE podem ser editados sem alterar os IDs, formatos, labels internos do Roteiro,
 regras de localização, fallback e comportamento dos jumps, que ficam no código.
 Os nomes antigos explicitamente aceitos para controladora e jumps permanecem
-como aliases de fallback.
+como aliases de fallback em `template-identities.json`.
 
 O host lê diretamente o arquivo, sem embutir os dados no bundle e sem módulo
 TypeScript gerado. Cada snapshot ou ação fixa uma única configuração validada;
@@ -203,6 +242,51 @@ Na instalação oficial, o JSON faz parte da assinatura do CEP. Alterações
 distribuídas aos clientes exigem reempacotamento e assinatura; não edite o
 payload assinado instalado. O leitor não modifica o JSON nem os arquivos `.aep`.
 
+## Mapa de nomes e fallback
+
+[`src/js/assets/template-identities.json`](src/js/assets/template-identities.json)
+é o mapa distribuído de nomes de camadas, pastas e precomps. `copyAssets` o
+copia para `dist/cep/js/assets/template-identities.json`; o bootstrap configura
+seu caminho no host junto ao `schema.json`. Não há cópia embutida no bundle.
+
+As três flags booleanas vêm ativadas:
+
+- `fallback.offerLayers`: camadas externas dos produtos, texto legal, aliases
+  das tarjas e camada da oferta usada na listagem, navegação, ações e seletores.
+- `fallback.mechanicLayers`: camadas internas das sete mecânicas, incluindo
+  controladoras e jumps.
+- `fallback.projectItems`: pastas, precomps dos seletores e reconhecimento da
+  família da precomp de origem por nome.
+
+`false` exige correspondência por comentário nessa categoria. Comentários
+reconhecidos têm prioridade; duplicidades não liberam fallback. Um comentário
+que identifica outra função não pode ser substituído pelo nome da camada.
+Nomes ambíguos, tipos incorretos e alvos fora da pasta esperada são recusados.
+
+`offerLayers`, `projectItems` e `layouts` associam `comment` e `names`.
+`{n}` representa o número sem zero inicial e `{nn}` com pelo menos dois dígitos.
+`mechanics` é indexado pelas sete chaves oficiais do schema: `comment`/`names`
+servem ao seletor, `sourceNames` reconhece a família (admitindo sufixo de
+duplicação), e `layers` declara aliases pelas chaves das camadas internas.
+Os comentários dessas camadas continuam exclusivamente em `schema.json`.
+`named` reúne os nomes já usados diretamente: `Miolo` e o texto `DESCRITIVO`.
+
+O mapa contém aliases seguros observados no template, como `_MECANICAS`,
+`TEXTO LEGAL_01` até `TEXTO LEGAL_06` e `POR CENTAGEM DESCONTO`. Nomes de imagens
+e nomes antigos da origem de uma camada de mecânica não identificam com
+segurança a posição do produto; nesses casos, preserve o comentário ou use
+um nome explicitamente mapeado. Não há inferência pela posição na timeline.
+
+Cada operação fixa uma única versão validada do mapa até terminar suas
+leituras e escritas; a próxima operação relê o asset. Arquivo ausente ou
+inválido bloqueia a resolução, sem reaproveitar versão antiga. O build e o
+host verificam versão, booleanos, chaves, aliases duplicados, colisões,
+placeholders, JSON estrito e UTF-8. `npm run template:identities` valida o
+arquivo de origem. No desenvolvimento, editar o asset em `dist` vale na próxima
+operação; leve a alteração para `src` antes do próximo build. Na distribuição
+oficial, o JSON integra o payload assinado e mudanças exigem reempacotamento
+e assinatura. O mapa nunca renomeia nem preenche comentários no After Effects.
+
 ## Mecânica Meu CRF e Cartão CRF
 
 O Comments da precomp `DE X POR Y MEU CRF POR Z CARTAO CRF` identifica a
@@ -212,12 +296,12 @@ As camadas internas são localizadas por `Layer.comment`, sem índice fixo:
 `PULO PRECO CARTAO CRF`, `PRECO DE`, `PRECO POR` e `PRECO POR CARTAO`.
 O comentário atual do jump do cartão no schema oficial é `PULO PRECO CARTAO CRF`.
 
-O fallback por nome é controlado por `MECHANIC_LAYER_NAME_FALLBACK_ENABLED` em
-`mechanics/config.ts` e fica desativado por padrão. Quando ativado, tenta os
+O fallback por nome é controlado por `fallback.mechanicLayers` em
+`template-identities.json` e fica ativado por padrão. Quando ativado, tenta os
 nomes configurados somente se nenhum comentário corresponder. Comentários ou
 nomes ambíguos não escolhem uma camada arbitrária. Os nomes aceitos, incluindo
 os aliases anteriores dos jumps, estão no
-[mapa de camadas](../MAPA_CAMADAS_MECANICAS_CEP.md).
+[mapa de nomes](src/js/assets/template-identities.json).
 
 O editor mantém os três preços e seus IDs internos. O dropdown nativo chamado
 `Unidade` é procurado **somente na controladora identificada**, em qualquer

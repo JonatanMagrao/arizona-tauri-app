@@ -1,3 +1,5 @@
+import { withMechanicsSchema } from "../mechanics/schemaRuntime";
+import { getOfferRoleIdentity } from "../layers/offerStructure";
 import type { OfferEditorActionResult } from "../types";
 import {
   getOfferByLayerIndex,
@@ -24,7 +26,7 @@ export const swapOfferProducts = (
   sourceProductIndex: number,
   targetProductIndex: number,
   openOfferPrecomp?: boolean
-): OfferEditorActionResult => {
+): OfferEditorActionResult => withMechanicsSchema(() => {
   const result = createActionResult();
   const offer = getOfferByLayerIndex(offerLayerIndex, result);
 
@@ -106,7 +108,7 @@ export const swapOfferProducts = (
   }
 
   return result;
-};
+});
 
 const captureLayerState = (layer: Layer | null, role: string): LayerSwapState => {
   if (layer === null || !(layer instanceof AVLayer)) {
@@ -131,7 +133,7 @@ const captureLayerState = (layer: Layer | null, role: string): LayerSwapState =>
     rollbackScale,
     name: layer.name,
     // In fallback mode the name itself identifies the slot and must stay put.
-    preserveName: comment !== role,
+    preserveName: comment !== getOfferRoleIdentity(role).comment.replace(/^\s+|\s+$/g, "").toUpperCase(),
   };
 };
 

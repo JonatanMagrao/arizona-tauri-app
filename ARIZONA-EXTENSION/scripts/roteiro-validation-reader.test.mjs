@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
+import { approvedTemplateIdentities } from "./template-test-assets.mjs";
 import { isAllTakePayMechanicType } from "../src/shared/allTakePayMechanic.js";
 
 const [readerSource, editorSource, discoverySource] = await Promise.all([
@@ -41,6 +42,10 @@ function fixture() {
     calls.images = 0;
   };
   const mocks = {
+    "../../template/templateIdentities": {
+      withTemplateIdentities: (callback) => callback(),
+      getTemplateIdentities: approvedTemplateIdentities,
+    },
     "../mechanics/schemaRuntime": {
       withMechanicsSchema: (callback) => callback(),
     },
@@ -112,6 +117,7 @@ function fixture() {
     "../../../../../shared/allTakePayMechanic": { isAllTakePayMechanicType },
     "../layers/findLayers": mocks["../layers/findLayers"],
     "../mechanics/schemaRuntime": mocks["../mechanics/schemaRuntime"],
+    "../../template/templateIdentities": mocks["../../template/templateIdentities"],
     "./firstOfferProductForValidation": { getFirstOfferProductForValidation: reader },
   }).getOffersFirstProductInfo;
   const offer = (layers) => {

@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import ts from "typescript";
+import { createTemplateIdentitiesHarness } from "./template-identities-test-harness.mjs";
 
 const domainDirectory = fileURLToPath(new URL("../src/jsx/aeft/domains/ofertas/", import.meta.url));
 const compiled = new Map();
@@ -80,10 +81,11 @@ class AVLayer {
   }
 }
 
-function harness() {
+function harness(fallback = { offerLayers: false, mechanicLayers: false, projectItems: false }) {
+  const identities = createTemplateIdentitiesHarness(fallback);
   const layouts = COMMENTS.map((comment, index) => new CompItem("Nome livre " + index, comment));
   const folder = new FolderItem("Nome livre da pasta", "OFERTA 01", layouts);
-  const offer = new AVLayer("Oferta_01", "CAMADA OFERTA 1", layouts[0]);
+  const offer = new AVLayer("Oferta_01", "CAMADA OFERTA 01", layouts[0]);
   const other = new AVLayer("Outra camada", "DECORACAO", new CompItem("Fundo"));
   other.selected = false;
   const miolo = new CompItem("Miolo", "", [offer, other]);
@@ -101,7 +103,7 @@ function harness() {
       compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES5 },
     }).outputText);
     vm.runInNewContext(compiled.get(filename), {
-      module, exports: module.exports, app, AVLayer, CompItem, FolderItem, FootageItem,
+      module, exports: module.exports, app, AVLayer, CompItem, FolderItem, FootageItem, File: identities.File,
       require(specifier) {
         assert.ok(specifier.startsWith("."));
         const base = path.resolve(path.dirname(filename), specifier);
@@ -113,7 +115,8 @@ function harness() {
     return module.exports;
   }
   const api = { ...load("offers/offerLayouts.ts"), ...load("actions/replaceOfferLayout.ts") };
-  const h = { ...api, app, project, items, layouts, folder, offer, other, miolo };
+  load("../template/templateIdentities.ts").configureTemplateIdentitiesPath("/template-identities.json");
+  const h = { ...api, app, project, items, layouts, folder, offer, other, miolo, identities };
   h.request = (targetItemId = layouts[1].id) => ({ context: plain(h.getOfferLayoutOptions(offer.index).context), targetItemId });
   return h;
 }
@@ -133,9 +136,141 @@ const noWrites = (h) => {
 };
 const undoClosed = (h) => assert.deepEqual(h.app.undoEvents, [["begin", "Trocar régua da oferta"], ["end"]]);
 
+function useOnlyNames(h) {
+  h.offer.comment = "";
+  h.offer.storedName = "Oferta_01";
+  h.folder.comment = "";
+  h.folder.name = "OFERTA 01";
+  h.layouts.forEach((item, index) => {
+    item.comment = "";
+    item.name = h.identities.config.layouts[COMMENTS[index]].names[0];
+  });
+}
+
+test("name-only layouts resolve aliases from the asset and replace only the source", () => {
+  const h = harness({});
+  useOnlyNames(h);
+  h.identities.config.layouts[COMMENTS[1]].names.push("Régua alternativa validada");
+  h.layouts[1].name = "Régua alternativa validada";
+  h.offer.autoName = true;
+  const before = state(h);
+  const menu = h.getOfferLayoutOptions(1);
+  assert.equal(menu.ok, true, menu.errors.join("; "));
+  assert.equal(menu.context.layerComment, "CAMADA OFERTA 01");
+  assert.equal(menu.context.folderComment, "OFERTA 01");
+  assert.ok(menu.options.every((option) => option.enabled));
+  assert.equal(h.replaceOfferLayout({ context: plain(menu.context), targetItemId: h.layouts[1].id }).ok, true);
+  assert.equal(h.offer.source, h.layouts[1]);
+  assert.deepEqual(state(h), before);
+  undoClosed(h);
+});
+
+test("each fallback flag controls its own scope and mechanicLayers does not disable layout discovery", () => {
+  for (const flag of ["offerLayers", "projectItems", "mechanicLayers"]) {
+    const h = harness({});
+    useOnlyNames(h);
+    h.identities.config.fallback[flag] = false;
+    assert.equal(h.getOfferLayoutOptions(1).ok, flag === "mechanicLayers", flag);
+    noWrites(h);
+  }
+});
+
+test("offer name patterns are anchored and keep padded numbers separate from duplicate suffixes", () => {
+  for (const name of ["Oferta_01 extra", "Cópia Oferta_01", "Oferta_01 2", "Oferta_00", "Oferta_001"]) {
+    const h = harness({});
+    useOnlyNames(h);
+    h.offer.storedName = name;
+    assert.equal(h.getOfferLayoutOptions(1).ok, false, name);
+    noWrites(h);
+  }
+});
+
+test("a unique comment beats duplicate names at every layout discovery scope", () => {
+  const h = harness({});
+  h.other.storedName = "Oferta_01";
+  h.other.comment = "";
+  const decoyFolder = new FolderItem("OFERTA 01", "");
+  const decoyLayout = new CompItem(h.identities.config.layouts[COMMENTS[1]].names[0], "");
+  decoyLayout.parentFolder = h.folder;
+  h.folder.children.push(decoyLayout);
+  h.items.push(decoyFolder, decoyLayout);
+  const menu = h.getOfferLayoutOptions(1);
+  assert.equal(menu.ok, true);
+  assert.equal(menu.context.folderItemId, h.folder.id);
+  assert.equal(menu.options[1].itemId, h.layouts[1].id);
+  noWrites(h);
+});
+
+test("recognized conflicting comments are never reinterpreted through offer, folder or layout names", () => {
+  for (const scope of ["offer", "folder", "layout"]) {
+    const h = harness({});
+    useOnlyNames(h);
+    if (scope === "offer") h.offer.comment = "MECANICA 1";
+    if (scope === "folder") h.folder.comment = "OFERTA 02";
+    if (scope === "layout") h.layouts[1].comment = COMMENTS[2];
+    const menu = h.getOfferLayoutOptions(1);
+    if (scope === "layout") assert.equal(menu.options[1].enabled, false);
+    else assert.equal(menu.ok, false);
+    noWrites(h);
+  }
+});
+
+test("name-only selected offer cannot steal a slot owned by another layer comment", () => {
+  const h = harness({});
+  h.offer.comment = "";
+  h.other.comment = "CAMADA OFERTA 01";
+  assert.equal(h.getOfferLayoutOptions(1).ok, false);
+  noWrites(h);
+});
+
+test("duplicate names fail closed separately for offers, folders and layout targets", () => {
+  for (const scope of ["offer", "folder", "layout"]) {
+    const h = harness({});
+    useOnlyNames(h);
+    const request = h.request();
+    if (scope === "offer") { h.other.storedName = "Oferta_01"; h.other.comment = ""; }
+    if (scope === "folder") h.items.push(new FolderItem("OFERTA 01"));
+    if (scope === "layout") {
+      const duplicate = new CompItem(h.layouts[1].name);
+      duplicate.parentFolder = h.folder;
+      h.folder.children.push(duplicate);
+      h.items.push(duplicate);
+    }
+    const menu = h.getOfferLayoutOptions(1);
+    if (scope === "layout") assert.equal(menu.options[1].enabled, false);
+    else assert.equal(menu.ok, false);
+    assert.equal(h.replaceOfferLayout(request).ok, false);
+    noWrites(h);
+  }
+});
+
+test("duplicate comments cannot be repaired by a unique matching name", () => {
+  const h = harness({});
+  const duplicate = new CompItem("Outra régua", COMMENTS[1]);
+  duplicate.parentFolder = h.folder;
+  h.layouts[1].name = h.identities.config.layouts[COMMENTS[1]].names[0];
+  h.folder.children.push(duplicate);
+  h.items.push(duplicate);
+  assert.equal(h.getOfferLayoutOptions(1).options[1].enabled, false);
+  noWrites(h);
+});
+
+test("one validated map is pinned per listing and configuration failures block mutation", () => {
+  const h = harness({});
+  useOnlyNames(h);
+  h.identities.state.afterRead = () => { h.identities.state.malformed = true; };
+  const menu = h.getOfferLayoutOptions(1);
+  assert.equal(menu.ok, true);
+  assert.equal(h.identities.state.reads, 1);
+  const result = h.replaceOfferLayout({ context: plain(menu.context), targetItemId: h.layouts[1].id });
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((error) => error.includes("template-identities.json")));
+  noWrites(h);
+});
+
 test("menu resolves the numbered layer comment and direct folder items, with four serializable options and no writes", () => {
   const h = harness();
-  h.offer.comment = "  camada oferta 1\t";
+  h.offer.comment = "  camada oferta 01\t";
   h.folder.comment = " oferta 01 ";
   h.layouts.forEach((item) => { item.comment = item.comment.toLowerCase() + " "; });
   const before = state(h);
@@ -145,7 +280,7 @@ test("menu resolves the numbered layer comment and direct folder items, with fou
     comment, label: ["2 produtos", "2 produtos eletro", "3 produtos", "Simples"][index], current: index === 0, enabled: true,
   })));
   assert.deepEqual(plain(menu.context), { projectKey: h.project.file.fsName, compItemId: h.miolo.id,
-    offerLayerIndex: 1, offerLayerId: h.offer.id, layerComment: "CAMADA OFERTA 1", sourceItemId: h.layouts[0].id,
+    offerLayerIndex: 1, offerLayerId: h.offer.id, layerComment: "CAMADA OFERTA 01", sourceItemId: h.layouts[0].id,
     folderItemId: h.folder.id, folderComment: "OFERTA 01" });
   assert.equal(JSON.stringify(menu).includes("replaceSource"), false);
   assert.deepEqual(state(h), before);
@@ -156,7 +291,7 @@ test("offer number comes from its comment, independently of layer name and index
   for (const [slot, folderComment] of [[1, "OFERTA 01"], [2, "OFERTA 02"], [10, "OFERTA 10"], [100, "OFERTA 100"]]) {
     const h = harness();
     h.offer.storedName = "Nome sem número";
-    h.offer.comment = "CAMADA OFERTA " + slot;
+    h.offer.comment = "CAMADA OFERTA " + String(slot).padStart(2, "0");
     h.folder.comment = folderComment;
     h.miolo.layers.reverse();
     const menu = h.getOfferLayoutOptions(h.offer.index);
@@ -257,8 +392,8 @@ for (const invalidation of ["missing-layer-comment", "malformed-layer-comment", 
     const h = harness();
     const request = h.request();
     if (invalidation === "missing-layer-comment") { h.offer.comment = ""; h.offer.storedName = "CAMADA OFERTA 1"; }
-    if (invalidation === "malformed-layer-comment") h.offer.comment = "CAMADA OFERTA 1 EXTRA";
-    if (invalidation === "duplicate-layer-comment") h.other.comment = " camada oferta 1 ";
+    if (invalidation === "malformed-layer-comment") h.offer.comment = "CAMADA OFERTA 01 EXTRA";
+    if (invalidation === "duplicate-layer-comment") h.other.comment = " camada oferta 01 ";
     if (invalidation === "missing-folder-comment") { h.folder.comment = ""; h.folder.name = "OFERTA 01"; }
     if (invalidation === "duplicate-folder-comment") h.items.push(new FolderItem("Outra", " oferta 01 "));
     if (invalidation === "duplicate-miolo") h.items.push(new CompItem("Miolo"));

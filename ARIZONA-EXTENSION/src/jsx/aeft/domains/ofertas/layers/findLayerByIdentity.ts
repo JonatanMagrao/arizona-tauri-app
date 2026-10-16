@@ -1,9 +1,10 @@
-import { MECHANIC_LAYER_NAME_FALLBACK_ENABLED } from "../mechanics/config";
+import { getTemplateIdentities } from "../../template/templateIdentities";
 import { addError, getLayerByIndex } from "./findLayers";
 
 interface LayerIdentity {
   comment: string;
   fallbackNames: string[];
+  recognizedComments?: string[];
   context: string;
   layerLabel?: string;
 }
@@ -68,7 +69,7 @@ export const findLayerByIdentity = (
 
   if (found !== null) return found;
 
-  if (!MECHANIC_LAYER_NAME_FALLBACK_ENABLED) {
+  if (!getTemplateIdentities().fallback.mechanicLayers) {
     explain(missingCommentReason, "O comentário obrigatório não foi encontrado.");
     addError(
       errors,
@@ -83,6 +84,18 @@ export const findLayerByIdentity = (
     if (layer === null) continue;
 
     const name = normalizeIdentity(layer.name);
+    // A comment assigning a different role must never be overridden by a name.
+    let assignedComment = "";
+    try { assignedComment = normalizeIdentity(layer.comment); } catch (error) { continue; }
+    let assignedElsewhere = false;
+    const recognized = identity.recognizedComments || [];
+    for (let ci = 0; ci < recognized.length; ci += 1) {
+      if (assignedComment !== expectedComment && assignedComment === normalizeIdentity(recognized[ci])) {
+        assignedElsewhere = true;
+        break;
+      }
+    }
+    if (assignedElsewhere) continue;
     let matchesName = false;
     for (let ni = 0; ni < identity.fallbackNames.length; ni += 1) {
       if (name === normalizeIdentity(identity.fallbackNames[ni])) {

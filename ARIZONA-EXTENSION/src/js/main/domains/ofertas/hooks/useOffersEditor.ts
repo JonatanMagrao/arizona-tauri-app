@@ -30,6 +30,7 @@ import type {
   OfferEditorSnapshot,
   OfferInstallmentJumpTarget,
   OfferLayoutChangeRequest,
+  OfferLegalOptionsContext,
   OfferMechanicChangeRequest,
 } from "../types";
 
@@ -334,9 +335,11 @@ export const useOffersEditor = ({
   );
 
   const updateLegalControl = useCallback(
-    (offerLayerIndex: number, controlId: string, enabled: boolean) =>
+    (offerLayerIndex: number, controlId: string, enabled: boolean, expectedContext?: OfferLegalOptionsContext) =>
       runOfferAction("alterar_controle_legal", "Alterar controle legal", () =>
-        updateOfferLegalControl(offerLayerIndex, controlId, enabled)
+        expectedContext
+          ? updateOfferLegalControl(offerLayerIndex, controlId, enabled, expectedContext)
+          : updateOfferLegalControl(offerLayerIndex, controlId, enabled)
       ),
     [runOfferAction]
   );
@@ -350,9 +353,11 @@ export const useOffersEditor = ({
   );
 
   const updateLegalControlOption = useCallback(
-    (offerLayerIndex: number, controlId: string, selectedIndex: number) =>
+    (offerLayerIndex: number, controlId: string, selectedIndex: number, expectedContext?: OfferLegalOptionsContext) =>
       runOfferAction("selecionar_opcao_legal", "Selecionar opção legal", () =>
-        updateOfferLegalControlOption(offerLayerIndex, controlId, selectedIndex)
+        expectedContext
+          ? updateOfferLegalControlOption(offerLayerIndex, controlId, selectedIndex, expectedContext)
+          : updateOfferLegalControlOption(offerLayerIndex, controlId, selectedIndex)
       ),
     [runOfferAction]
   );

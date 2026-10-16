@@ -4,8 +4,9 @@ import type {
   OfferImageInfo,
   OfferSummary,
 } from "../types";
+import { expandTemplateIdentity, getTemplateIdentities, withTemplateIdentities } from "../../template/templateIdentities";
+import { isTemplateOfferLayerComment, readTemplateOfferSlot, resolveTemplateIdentity } from "../../project/resolveTemplateIdentity";
 
-const COMP_NAME = "Miolo";
 const OFFER_SELECTION_OFFSET_FRAMES = 30;
 const LABEL_TO_MARKER_INDEX: { [label: number]: number } = {
   1: 1,
@@ -17,23 +18,30 @@ const LABEL_TO_MARKER_INDEX: { [label: number]: number } = {
 };
 
 export const getOffersComp = (
-  openInViewer: boolean = false
+  openInViewer: boolean = false,
+  errors?: string[]
 ): CompItem | null => {
   if (app.project === null) return null;
+  let compName: string;
+  try { compName = getTemplateIdentities().named.offersComp; } catch (error) {
+    if (errors) addError(errors, String(error));
+    return null;
+  }
+  let found: CompItem | null = null;
 
   for (let index = 1; index <= app.project.numItems; index += 1) {
     const item = app.project.item(index);
 
-    if (item instanceof CompItem && item.name === COMP_NAME) {
-      if (openInViewer) {
-        openCompInViewer(item);
+    if (item instanceof CompItem && item.name === compName) {
+      if (found !== null) {
+        if (errors) addError(errors, 'Mais de uma precomp se chama "' + compName + '".');
+        return null;
       }
-
-      return item;
+      found = item;
     }
   }
-
-  return null;
+  if (found !== null && openInViewer) openCompInViewer(found);
+  return found;
 };
 
 export const openCompInViewer = (comp: CompItem): void => {
@@ -59,36 +67,61 @@ export const openOfferSourceInViewer = (offer: Layer): void => {
 export const getOfferByLayerIndex = (
   offerLayerIndex: number,
   result: OfferEditorActionResult
-): Layer | null => {
-  const comp = getOffersComp();
+): Layer | null => withTemplateIdentities(() => {
+  const comp = getOffersComp(false, result.errors);
 
   if (comp === null) {
-    result.message = 'Precomp "Miolo" nao encontrada.';
+    result.message = result.errors.length > 0 ? result.errors[0] : 'Precomp "Miolo" nao encontrada.';
     return null;
   }
 
-  const offer = getLayerByIndex(comp, offerLayerIndex);
-
-  if (offer === null || !nameMatches(offer.name, /Oferta_/)) {
-    result.message = "Oferta nao encontrada.";
-    return null;
+  const offers = getOfferLayers(comp, result.errors);
+  for (let index = 0; index < offers.length; index += 1) {
+    if (offers[index].index === offerLayerIndex) return offers[index];
   }
+  result.message = result.errors.length > 0 ? result.errors[0] : "Oferta nao encontrada.";
+  return null;
+});
 
-  return offer;
-};
-
-export const getOfferLayers = (comp: CompItem): Layer[] => {
+export const getOfferLayers = (comp: CompItem, errors?: string[]): Layer[] => withTemplateIdentities(() => {
   const offers: Layer[] = [];
-
-  for (let index = comp.numLayers; index > 0; index -= 1) {
-    const layer = comp.layer(index);
-    if (nameMatches(layer.name, /Oferta_/)) {
-      offers.push(layer);
+  try {
+    const config = getTemplateIdentities();
+    const candidates: Layer[] = [];
+    const slots: number[] = [];
+    const seen: { [slot: string]: boolean } = {};
+    for (let index = 1; index <= comp.numLayers; index += 1) {
+      const layer = getLayerByIndex(comp, index);
+      if (layer === null) continue;
+      candidates.push(layer);
+      const slot = readTemplateOfferSlot(layer);
+      if (slot !== null && !seen["$" + slot]) {
+        seen["$" + slot] = true;
+        slots.push(slot);
+      }
     }
+    const resolved: Layer[] = [];
+    for (let index = 0; index < slots.length; index += 1) {
+      const identity = expandTemplateIdentity(config.offerLayers.offer, slots[index]);
+      const matches = resolveTemplateIdentity(candidates, identity,
+        config.fallback.offerLayers, isTemplateOfferLayerComment).matches;
+      if (matches.length === 1) resolved.push(matches[0]);
+      else if (matches.length > 1 && errors) {
+        addError(errors, 'A identidade "' + identity.comment + '" corresponde a mais de uma camada de oferta.');
+      }
+    }
+    // Preserve the editor's bottom-to-top timeline ordering.
+    for (let index = candidates.length - 1; index >= 0; index -= 1) {
+      for (let matchIndex = 0; matchIndex < resolved.length; matchIndex += 1) {
+        if (candidates[index] === resolved[matchIndex]) { offers.push(candidates[index]); break; }
+      }
+    }
+  } catch (error) {
+    if (errors) addError(errors, String(error));
+    return [];
   }
-
   return offers;
-};
+});
 
 export const createOfferSummaries = (offers: Layer[]): OfferSummary[] => {
   const summaries: OfferSummary[] = [];
@@ -115,10 +148,15 @@ export const resolveSelectedOffer = (
   comp: CompItem,
   offers: Layer[],
   requestedOfferLayerIndex?: number
-): Layer | null => {
+): Layer | null => withTemplateIdentities(() => {
+  const eligible = getOfferLayers(comp);
+  const contains = (layer: Layer): boolean => {
+    for (let index = 0; index < eligible.length; index += 1) if (eligible[index] === layer) return true;
+    return false;
+  };
   if (typeof requestedOfferLayerIndex === "number" && requestedOfferLayerIndex > 0) {
     const requestedOffer = getLayerByIndex(comp, requestedOfferLayerIndex);
-    if (requestedOffer !== null && nameMatches(requestedOffer.name, /Oferta_/)) {
+    if (requestedOffer !== null && contains(requestedOffer)) {
       return requestedOffer;
     }
   }
@@ -127,13 +165,14 @@ export const resolveSelectedOffer = (
 
   if (selectedLayers && selectedLayers.length === 1) {
     const selectedLayer = selectedLayers[0];
-    if (nameMatches(selectedLayer.name, /Oferta_/)) {
+    if (contains(selectedLayer)) {
       return selectedLayer;
     }
   }
 
-  return offers.length > 0 ? offers[0] : null;
-};
+  for (let index = 0; index < offers.length; index += 1) if (contains(offers[index])) return offers[index];
+  return null;
+});
 
 export const selectOffer = (comp: CompItem, offer: Layer): void => {
   comp.time = clampTime(

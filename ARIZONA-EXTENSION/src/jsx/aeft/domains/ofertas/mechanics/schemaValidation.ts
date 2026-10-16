@@ -66,6 +66,16 @@ const CONTRACTS: MechanicContract[] = [
   },
 ];
 
+// Identity aliases reference these roles, while schema.json alone owns their
+// comments. Sharing the contract keeps both assets aligned without copying data.
+export const mechanicsSchemaLayerRoles = (): { [id: string]: string[] } => {
+  const result: { [id: string]: string[] } = {};
+  for (let index = 0; index < CONTRACTS.length; index += 1) {
+    result[CONTRACTS[index].id] = CONTRACTS[index].layers.slice(0);
+  }
+  return result;
+};
+
 type SchemaObject = { [key: string]: unknown };
 
 function owns(value: object, key: string): boolean {

@@ -33,6 +33,7 @@ import {
 } from "../layers/legalControls";
 import { readMechanic } from "../mechanics/registry";
 import { withMechanicsSchema } from "../mechanics/schemaRuntime";
+import { getTemplateIdentities } from "../../template/templateIdentities";
 
 const createSnapshot = (): OfferEditorSnapshot => ({
   ok: false,
@@ -46,16 +47,16 @@ const createSnapshot = (): OfferEditorSnapshot => ({
 
 export const getOffersEditorSnapshot = (
   requestedOfferLayerIndex?: number
-): OfferEditorSnapshot => {
+): OfferEditorSnapshot => withMechanicsSchema(() => {
   const snapshot = createSnapshot();
-  const comp = getOffersComp();
+  const comp = getOffersComp(false, snapshot.errors);
 
   if (comp === null) {
-    snapshot.message = 'Precomp "Miolo" nao encontrada.';
+    snapshot.message = snapshot.errors.length > 0 ? snapshot.errors[0] : 'Precomp "Miolo" nao encontrada.';
     return snapshot;
   }
 
-  const offers = getOfferLayers(comp);
+  const offers = getOfferLayers(comp, snapshot.errors);
   const selectedOffer = resolveSelectedOffer(
     comp,
     offers,
@@ -67,7 +68,8 @@ export const getOffersEditorSnapshot = (
   snapshot.offers = createOfferSummaries(offers);
 
   if (offers.length < 1) {
-    snapshot.message = 'Nenhuma layer "Oferta_" encontrada na precomp "Miolo".';
+    snapshot.message = snapshot.errors.length > 0 ? snapshot.errors[0]
+      : "Nenhuma camada de oferta identificada pelo comentário ou nome configurado.";
     return snapshot;
   }
 
@@ -79,14 +81,14 @@ export const getOffersEditorSnapshot = (
   const details = generateOfferData(selectedOffer);
   snapshot.selectedOfferLayerIndex = selectedOffer.index;
   snapshot.selectedOffer = toPublicOfferDetails(selectedOffer, details);
-  snapshot.errors = details.errors.slice(0);
+  snapshot.errors = snapshot.errors.concat(details.errors);
   snapshot.message =
     snapshot.selectedOffer.products.length > 0
       ? "Oferta carregada."
       : "Nenhum produto ativo encontrado nesta oferta.";
 
   return snapshot;
-};
+});
 
 export const generateOfferData = (offer: Layer): InternalOfferDetails => withMechanicsSchema(() => {
   const errors: string[] = [];
@@ -96,7 +98,7 @@ export const generateOfferData = (offer: Layer): InternalOfferDetails => withMec
   const legalDisabledSummaries: string[] = [];
   const legalSource = getLegalTextSource(offerSource, errors, legalDisabledReasons, legalDisabledSummaries);
   const legalTextProperty = getLegalTextProperty(legalSource, errors);
-  const legalControls = readLegalControls(legalSource, errors);
+  const legalControls = readLegalControls(legalSource, errors, offer);
   if (legalSource === null && legalDisabledReasons.length > 0) {
     for (let index = 0; index < legalControls.length; index += 1) {
       legalControls[index].disabledReason = legalDisabledReasons.join(" ");
@@ -110,7 +112,7 @@ export const generateOfferData = (offer: Layer): InternalOfferDetails => withMec
     const descriptionPrecomp = layers.descriptionLayer;
     const descriptionProperty = getNestedTextProperty(
       descriptionPrecomp,
-      "DESCRITIVO",
+      getTemplateIdentities().named.descriptionText,
       "descricao do produto " + layers.slot,
       errors
     );
@@ -275,10 +277,11 @@ export const toPublicOfferDetails = (
       const options: OfferOption[] = [];
 
       for (let oi = 0; oi < control.optionGroup.options.length; oi += 1) {
-        options.push({ label: control.optionGroup.options[oi].label });
+        options.push({ id: control.optionGroup.options[oi].id, label: control.optionGroup.options[oi].label });
       }
 
       optionGroup = {
+        context: control.optionGroup.context,
         id: control.optionGroup.id,
         type: control.optionGroup.type,
         placement: control.optionGroup.placement,

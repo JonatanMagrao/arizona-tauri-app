@@ -16,6 +16,7 @@ import {
 } from "./textFields";
 import { makeLayerOptionGroup } from "../mechanics/shared";
 import { findOfferStructureLayer } from "./offerStructure";
+import { readBannerControl } from "./bannerOptions";
 
 interface LegalTextLayerControlConfig {
   id: string;
@@ -72,23 +73,6 @@ const LEGAL_TEXT_LAYER_CONTROLS: LegalTextLayerControlConfig[] = [
   },
   { id: "selo-leite", label: "Selo leite", layerIndex: 4 },
   { id: "selo-moderacao", label: "Selo beba com moderação", layerIndex: 5 },
-  {
-    id: "tarja-eletro-pneu",
-    label: "Eletro/Pneu",
-    layerIndex: 6,
-    optionGroup: {
-      id: "eletro-pneu-menu",
-      label: "Menu",
-      options: [
-        { layerIndex: 4 },
-        { layerIndex: 5 },
-        { layerIndex: 6 },
-        { layerIndex: 7 },
-        { layerIndex: 8 },
-        { layerIndex: 9 },
-      ],
-    },
-  },
 ];
 
 export const getLegalTextSource = (
@@ -126,7 +110,8 @@ export const getLegalTextProperty = (
 
 export const readLegalControls = (
   legalSource: CompItem | null,
-  errors: string[]
+  errors: string[],
+  offer?: Layer
 ): InternalLegalControl[] => {
   const controls: InternalLegalControl[] = [];
 
@@ -189,6 +174,7 @@ export const readLegalControls = (
     });
   }
 
+  controls.push(readBannerControl(legalSource, errors, offer));
   return controls;
 };
 

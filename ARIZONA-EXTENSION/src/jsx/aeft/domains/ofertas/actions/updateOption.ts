@@ -38,7 +38,7 @@ export const updateOfferOption = (
       }
 
       applyOptionGroupSelection(optionGroup, selectedIndex);
-      return optionGroup.label + " atualizada.";
+      return "Opção atualizada: " + optionGroup.label + ".";
     }
   );
 };

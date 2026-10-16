@@ -1,18 +1,18 @@
 {
-  "name": "com.arizona-carrefour.cep", 
+  "name": "com.arizona-carrefour.cep",
   "private": true,
   "version": "2.4.0",
   "type": "module",
   "scripts": {
     "license:keys": "node scripts/generate-license-trusted-keys.mjs",
     "mechanics:schema": "node scripts/validate-mechanics-schema.mjs",
-    "predev": "npm run mechanics:schema && npm run license:keys",
-    "prewatch": "npm run mechanics:schema && npm run license:keys",
-    "prebuild": "npm run mechanics:schema && npm run license:keys",
-    "prezxp": "npm run mechanics:schema && npm run license:keys",
-    "prezip": "npm run mechanics:schema && npm run license:keys",
-    "pretest": "npm run mechanics:schema",
-    "test": "node --test --test-isolation=none scripts/all-take-pay-mechanic.test.mjs scripts/mechanic-source-identity.test.mjs scripts/meu-crf-card-mechanic.test.mjs scripts/current-mechanics.test.mjs scripts/mechanics-schema-validation.test.mjs scripts/mechanics-schema-runtime.test.mjs scripts/mechanics-schema-bootstrap.test.mjs scripts/mechanics-schema-integration.test.mjs scripts/offer-structure.test.mjs scripts/offer-layouts.test.mjs scripts/offer-layout-menu.test.mjs scripts/offer-mechanics.test.mjs scripts/offer-mechanic-menu.test.mjs scripts/legal-cpf-controls.test.mjs scripts/roteiro-validation.test.mjs scripts/project-open.test.mjs scripts/project-opening-panel.test.mjs scripts/project-item-comment-search.test.mjs scripts/roteiro-document-cache.test.mjs scripts/roteiro-cache-integration.test.mjs scripts/roteiro-validation-reader.test.mjs scripts/tooltips.test.mjs",
+    "predev": "npm run mechanics:schema && npm run template:identities && npm run license:keys",
+    "prewatch": "npm run mechanics:schema && npm run template:identities && npm run license:keys",
+    "prebuild": "npm run mechanics:schema && npm run template:identities && npm run license:keys",
+    "prezxp": "npm run mechanics:schema && npm run template:identities && npm run license:keys",
+    "prezip": "npm run mechanics:schema && npm run template:identities && npm run license:keys",
+    "pretest": "npm run mechanics:schema && npm run template:identities",
+    "test": "node --test --test-isolation=none scripts/all-take-pay-mechanic.test.mjs scripts/mechanic-source-identity.test.mjs scripts/meu-crf-card-mechanic.test.mjs scripts/current-mechanics.test.mjs scripts/mechanics-schema-validation.test.mjs scripts/mechanics-schema-runtime.test.mjs scripts/mechanics-schema-bootstrap.test.mjs scripts/mechanics-schema-integration.test.mjs scripts/offer-structure.test.mjs scripts/offer-layouts.test.mjs scripts/offer-layout-menu.test.mjs scripts/offer-mechanics.test.mjs scripts/offer-mechanic-menu.test.mjs scripts/legal-cpf-controls.test.mjs scripts/roteiro-validation.test.mjs scripts/project-open.test.mjs scripts/project-opening-panel.test.mjs scripts/project-item-comment-search.test.mjs scripts/roteiro-document-cache.test.mjs scripts/roteiro-cache-integration.test.mjs scripts/roteiro-validation-reader.test.mjs scripts/tooltips.test.mjs scripts/template-identities-runtime.test.mjs scripts/offer-discovery.test.mjs scripts/legal-options-panel.test.mjs scripts/banner-options.test.mjs",
     "dev": "vite",
     "watch": "tsc && vite build --watch true",
     "build": "rimraf dist/* && tsc -p \"tsconfig-build.json\" && vite build",
@@ -21,7 +21,8 @@
     "zip": "rimraf dist/* && tsc -p \"tsconfig-build.json\" && cross-env ZIP_PACKAGE=true vite build",
     "serve": "cross-env SERVE_PANEL=true vite preview",
     "symlink": "cross-env BOLT_ACTION=symlink vite",
-    "delsymlink": "cross-env BOLT_ACTION=delsymlink vite"
+    "delsymlink": "cross-env BOLT_ACTION=delsymlink vite",
+    "template:identities": "node scripts/validate-template-identities.mjs"
   },
   "dependencies": {
     "react": "^19.1.0",

@@ -211,10 +211,25 @@ export interface OfferTextField {
 }
 
 export interface OfferOption {
+  id?: string;
   label: string;
 }
 
+export interface OfferLegalOptionsContext {
+  projectKey: string;
+  offersCompId: number;
+  offerLayerId: number;
+  offerLayerIndex: number;
+  offerSourceId: number;
+  legalLayerId: number;
+  legalSourceId: number;
+  bannerLayerId: number;
+  bannerSourceId: number;
+  revision: string;
+}
+
 export interface OfferOptionGroup {
+  context?: OfferLegalOptionsContext;
   disabledSummary?: string;
   disabledReason?: string;
   id: string;

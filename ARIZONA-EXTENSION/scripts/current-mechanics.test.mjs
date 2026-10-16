@@ -5,9 +5,11 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import ts from "typescript";
+import { createTemplateTestAssets } from "./template-test-assets.mjs";
 
 const domainDirectory = fileURLToPath(new URL("../src/jsx/aeft/domains/ofertas/", import.meta.url));
 const plain = (value) => JSON.parse(JSON.stringify(value));
+const templateAssets = createTemplateTestAssets({ mechanicLayers: false });
 const schemaFilePath = "C:/extension/js/assets/schema.json";
 const schemaBinary = readFileSync(new URL("../src/js/assets/schema.json", import.meta.url)).toString("latin1");
 class File {
@@ -21,6 +23,7 @@ class File {
 
 // Simulate AE objects only. Registry, snapshots, readers, actions and mutation
 // helpers are the production modules, including the shared jump implementation.
+let nextNativeId = 1;
 class Property {
   constructor(name, value, dropdown = false) {
     this.name = this.matchName = name;
@@ -54,6 +57,7 @@ class MarkerProperty {
 class AVLayer extends PropertyGroup {
   constructor(name, properties = [], source = null) {
     super(name, properties);
+    this.id = nextNativeId++;
     this.source = source;
     this.comment = "";
     this.enabled = true;
@@ -77,6 +81,7 @@ class TextLayer extends AVLayer {
 
 class CompItem {
   constructor(layers, name = "Precomp personalizada", comment = "") {
+    this.id = nextNativeId++;
     this.layers = layers;
     this.name = name;
     this.comment = comment;
@@ -102,7 +107,7 @@ const app = {
 const context = vm.createContext({
   app, AVLayer, TextLayer, CompItem, Property, PropertyGroup, FootageItem,
   FileSource, PropertyValueType: { OneD: 1 },
-  File,
+  File: templateAssets.wrapFile(File),
 });
 const modules = new Map();
 function loadModule(filename) {
@@ -129,6 +134,7 @@ const { updateOfferOption, updateOfferInstallmentJump } = loadModule(path.join(d
 const { getOffersEditorSnapshot } = loadModule(path.join(domainDirectory, "snapshot/buildOfferSnapshot.ts"));
 const { getOffersFirstProductInfo } = loadModule(path.join(domainDirectory, "snapshot/offerDiscovery.ts"));
 loadModule(path.join(domainDirectory, "mechanics/schemaRuntime.ts")).configureMechanicsSchemaPath(schemaFilePath);
+loadModule(path.resolve(domainDirectory, "../template/templateIdentities.ts")).configureTemplateIdentitiesPath(templateAssets.filePath);
 
 const units = ["Cada", "Kg", "A cada 100g", "Kg/cada"];
 const subtypes = ["Padrão", "Meu Carrefour", "Cartão Carrefour"];
@@ -169,7 +175,7 @@ const cases = [
     controllerIndex: 5, effects: [["Controle sem relação", 19, false], ["Condição", 4]],
     optionEffectIndices: [1],
     fields: [["preco-de", "De", "price", "199,90"], ["preco", "Preco", "price", "179,90"], ["preco-parcela", "Parcela", "price", "59,97"], ["numero-de-parcelas", "Parcelas", "integer", "3"]],
-    groups: [group("mechanicCondition", "Mecânica", 3, ["Cartão Carrefour", "Plano Controle", "Cartão Carrefour/Plano Controle", "De/Por no Cartão Carrefour", "De/Por no Plano Controle", "De/Por no Cartão Carrefour/Plano Controle", "De/Por no Cartão Carrefour PB"], "header")],
+    groups: [group("mechanicCondition", "Controlador de Mecânica", 3, ["Cartão Carrefour", "Plano Controle", "Cartão Carrefour/Plano Controle", "De/Por no Cartão Carrefour", "De/Por no Plano Controle", "De/Por no Cartão Carrefour/Plano Controle", "De/Por no Cartão Carrefour PB"], "header")],
     jumpNames: ["PULO PREÇO CHEIO", "PULO PARCELA"],
   },
   {
@@ -247,10 +253,16 @@ function fixture(spec) {
 function mountOffer(env) {
   const legalText = new TextLayer("Texto legal", "Oferta válida enquanto durarem os estoques.");
   legalText.properties.push(new PropertyGroup("ADBE Effect Parade", [effect("Ajuste", 80, false)]));
+  const electro = new TextLayer("Eletro", "Condição de eletro");
+  electro.comment = "ELETRO";
+  const tire = new TextLayer("Pneu", "Condição de pneus");
+  tire.comment = "PNEU";
+  tire.enabled = false;
+  const bannerSource = new CompItem([electro, tire], "TARJA_ELETRO_PNEU");
   const legalSource = new CompItem([
     controller(effect("Validade", 12, false)), new AVLayer("Fundo"), legalText,
     new AVLayer("Leite"), new AVLayer("Moderação"),
-    new AVLayer("Eletro", [], new CompItem(Array.from({ length: 9 }, (_, i) => new AVLayer("Opção " + i)))),
+    new AVLayer("TARJA_ELETRO_PNEU", [], bannerSource),
   ], "Legal");
   const offerSource = new CompItem([
     new AVLayer("Legal", [], legalSource),
@@ -262,7 +274,8 @@ function mountOffer(env) {
     offerSource.layer(index).comment = comment;
   }
   const miolo = new CompItem([new AVLayer("Oferta_01", [], offerSource)], "Miolo");
-  app.project = { numItems: 1, item: () => miolo };
+  miolo.layer(1).comment = "CAMADA OFERTA 01";
+  app.project = { file: { fsName: "C:/projetos/mecanicas.aep", name: "mecanicas.aep" }, numItems: 1, item: () => miolo };
   app.undoEvents = [];
   return miolo;
 }
@@ -462,13 +475,12 @@ test("current comments keep priority and unsupported comments still permit curre
 });
 
 function withLayerNameFallback(enabled, run) {
-  const config = loadModule(path.join(domainDirectory, "mechanics/config.ts"));
-  const previous = config.MECHANIC_LAYER_NAME_FALLBACK_ENABLED;
-  config.MECHANIC_LAYER_NAME_FALLBACK_ENABLED = enabled;
+  const previous = templateAssets.map.fallback.mechanicLayers;
+  templateAssets.map.fallback.mechanicLayers = enabled;
   try {
     run();
   } finally {
-    config.MECHANIC_LAYER_NAME_FALLBACK_ENABLED = previous;
+    templateAssets.map.fallback.mechanicLayers = previous;
   }
 }
 
@@ -706,6 +718,119 @@ test("all seven mechanics resolve commented roles independently of layer names a
       mechanic.optionGroups.forEach((group, index) => assert.equal(group.controllerProperty, env.optionProperties[index]));
       if (spec.jumpNames) assert.equal(mechanic.installmentJump.enabled, true);
     }
+  });
+});
+
+test("all seven mechanics use the JSON name map after comments are removed and reject it when disabled", () => {
+  for (const spec of cases) {
+    const env = fixture(spec);
+    for (const layer of env.source.layers) {
+      layer.comment = "";
+      if (layer.name === "PORCENTAGEM DESCONTO") layer.name = "POR CENTAGEM DESCONTO";
+    }
+    setLayerOrder(env.source, [...env.source.layers].reverse());
+    withLayerNameFallback(true, () => {
+      const errors = [];
+      const mechanic = readMechanic(env.valueLayer, errors);
+      assert.deepEqual(errors, [], spec.identity);
+      assert.equal(mechanic.type, spec.type);
+      mechanic.fields.forEach((field, index) => {
+        assert.equal(field.enabled, true, spec.identity + ": " + field.id);
+        assert.equal(field.property, env.fields[index]);
+      });
+      mechanic.optionGroups.forEach((group, index) => {
+        assert.equal(group.enabled, true);
+        assert.equal(group.controllerProperty, env.optionProperties[index]);
+      });
+      if (spec.jumpNames) assert.equal(mechanic.installmentJump.enabled, true);
+    });
+    withLayerNameFallback(false, () => {
+      const mechanic = readMechanic(env.valueLayer, []);
+      assert.equal(mechanic.fields.every((field) => !field.enabled), true, spec.identity);
+      assert.equal(mechanic.optionGroups.every((group) => !group.enabled), true, spec.identity);
+      if (spec.jumpNames) assert.equal(mechanic.installmentJump.enabled, false);
+    });
+  }
+});
+
+test("projectItems toggles source-name recognition independently of internal-layer fallback", () => {
+  const previous = templateAssets.map.fallback.projectItems;
+  try {
+    for (const spec of cases) {
+      const env = fixture(spec);
+      env.source.comment = "";
+      env.source.name = spec.identity + " 2";
+      templateAssets.map.fallback.projectItems = false;
+      assert.equal(readMechanic(env.valueLayer, []).unsupported, true, spec.identity);
+      templateAssets.map.fallback.projectItems = true;
+      assert.equal(readMechanic(env.valueLayer, []).type, spec.type);
+      templateAssets.map.fallback.projectItems = false;
+      env.source.comment = spec.identity;
+      assert.equal(readMechanic(env.valueLayer, []).type, spec.type);
+    }
+  } finally {
+    templateAssets.map.fallback.projectItems = previous;
+  }
+});
+
+test("a configured project-item comment identifies the same mechanic family even with name fallback disabled", () => {
+  const previousComment = templateAssets.map.mechanics.SIMPLES.comment;
+  const previousFallback = templateAssets.map.fallback.projectItems;
+  try {
+    templateAssets.map.mechanics.SIMPLES.comment = "PRECO {n}";
+    templateAssets.map.fallback.projectItems = false;
+    const env = fixture(cases[0]);
+    env.source.comment = "PRECO 2";
+    env.source.name = "Precomp livre";
+    const errors = [];
+    const mechanic = readMechanic(env.valueLayer, errors);
+    assert.deepEqual(errors, []);
+    assert.equal(mechanic.type, "Simples");
+    assert.equal(mechanic.fields[0].property, env.fields[0]);
+    mountOffer(env);
+    assert.equal(updateOfferField(1, 0, "preco", "24,90").ok, true);
+    assert.equal(env.fields[0].value.text, "24,90");
+    assertUndoClosed();
+  } finally {
+    templateAssets.map.mechanics.SIMPLES.comment = previousComment;
+    templateAssets.map.fallback.projectItems = previousFallback;
+  }
+});
+
+test("findLayerByIdentity never reuses a layer assigned to a different recognized comment", () => {
+  const { findLayerByIdentity } = loadModule(path.join(domainDirectory, "layers/findLayerByIdentity.ts"));
+  const conflicting = new TextLayer("PRECO DE", "29,90");
+  conflicting.comment = "PRECO POR";
+  const source = new CompItem([conflicting]);
+  const identity = {
+    comment: "PRECO DE", fallbackNames: ["PRECO DE"],
+    recognizedComments: ["PRECO DE", "PRECO POR"], context: "mecanica",
+  };
+  withLayerNameFallback(true, () => {
+    assert.equal(findLayerByIdentity(source, identity, []), null);
+    const valid = new TextLayer("PRECO DE", "19,90");
+    setLayerOrder(source, [conflicting, valid]);
+    assert.equal(findLayerByIdentity(source, identity, []), valid);
+    valid.comment = "PRECO DE";
+    valid.name = "Campo renomeado";
+    assert.equal(findLayerByIdentity(source, identity, []), valid);
+  });
+});
+
+test("findLayerByIdentity excludes unreadable comments from fallback candidates", () => {
+  const { findLayerByIdentity } = loadModule(path.join(domainDirectory, "layers/findLayerByIdentity.ts"));
+  const unreadable = new TextLayer("PRECO", "999,90");
+  Object.defineProperty(unreadable, "comment", { get() { throw new Error("Native comment unavailable"); } });
+  const source = new CompItem([unreadable]);
+  const identity = {
+    comment: "PRECO", fallbackNames: ["PRECO"],
+    recognizedComments: ["PRECO", "CONTROLADOR DE MECANICA"], context: "mecanica",
+  };
+  withLayerNameFallback(true, () => {
+    assert.equal(findLayerByIdentity(source, identity, []), null);
+    const valid = new TextLayer("PRECO", "19,90");
+    setLayerOrder(source, [unreadable, valid]);
+    assert.equal(findLayerByIdentity(source, identity, []), valid);
   });
 });
 
@@ -1079,8 +1204,11 @@ test("TODOS A X% optional fallback accepts the defined percentage name and both 
     percent.name = "POR CENTAGEM DESCONTO";
     control.name = "Nome desconhecido";
     const mechanic = readMechanic(env.valueLayer, []);
-    assert.equal(mechanic.fields[0].enabled, false);
+    assert.equal(mechanic.fields[0].enabled, true);
+    assert.equal(mechanic.fields[0].property, percent.text.sourceText);
     assert.equal(mechanic.optionGroups.every((group) => !group.enabled), true);
+    percent.name = "PORCENTAGEM DESCONTO DESCONHECIDA";
+    assert.equal(readMechanic(env.valueLayer, []).fields[0].enabled, false);
   });
 });
 
@@ -1995,6 +2123,10 @@ test("COMBINADA optional name fallback resolves moved roles and the configured c
     const oldPercentName = fixture(cases[5]);
     oldPercentName.source.layer(16).comment = "";
     oldPercentName.source.layer(16).name = "POR CENTAGEM DESCONTO";
+    const field = readMechanic(oldPercentName.valueLayer, []).fields.find((item) => item.id === "por-centagem-desconto");
+    assert.equal(field.enabled, true);
+    assert.equal(field.property, oldPercentName.source.layer(16).text.sourceText);
+    oldPercentName.source.layer(16).name = "PORCENTAGEM DESCONTO DESCONHECIDA";
     assertCombinedRoleUnavailable(oldPercentName, "percent");
   });
 });

@@ -30,6 +30,7 @@ import {
   makeValueField,
 } from "./shared";
 import { getMechanicsSchema, withMechanicsSchema } from "./schemaRuntime";
+import { getTemplateIdentities } from "../../template/templateIdentities";
 import {
   type MechanicEffectSchema,
   type MechanicSchema,
@@ -96,7 +97,7 @@ const DEFINITIONS: { [name: string]: MechanicDefinition } = {
       { id: "preco-parcela", label: "Parcela", format: "price" },
       { id: "numero-de-parcelas", label: "Parcelas", format: "integer" },
     ],
-    effects: [{ id: "mechanicCondition", label: "Mecânica", lookup: "name", placement: "header" }],
+    effects: [{ id: "mechanicCondition", label: "Controlador de Mecânica", lookup: "name", placement: "header" }],
     jump: { marker: "marcadores", fullPrice: "pulo-preco-cheio", installmentPrice: "pulo-parcela" },
   },
   "DE X POR Y MEU CRF POR Z CARTAO CRF": {
@@ -130,29 +131,29 @@ const DEFINITIONS: { [name: string]: MechanicDefinition } = {
 const getMechanicSchema = (name: MechanicSchemaId): MechanicSchema =>
   getMechanicsSchema()[name];
 
-const fallbackNames = (role: string, comment: string): string[] => {
-  const names = [comment];
-  // Keep the previously supported template spellings as explicit aliases.
-  if (role === "controlador") {
-    names.push("Controlador de Mecânica", "CONTROLADOR DE MECANICA");
-  } else if (role === "pulo-preco-cheio") {
-    names.push("PULO PREÇO CHEIO", "PULO PRECO CHEIO");
-  } else if (role === "pulo-preco-meu-crf") {
-    names.push("PULO PREÇO MEU CRF", "PULO PRECO MEU CRF");
-  } else if (role === "pulo-preco-meu-cartao-crf") {
-    names.push("PULO PREÇO CARTAO CRF", "PULO PRECO MEU CARTAO CRF");
+// Comments and names have separate sources. A customized schema comment must
+// not silently become a name alias that can collide with another role.
+const fallbackNames = (family: MechanicSchemaId, role: string): string[] =>
+  getTemplateIdentities().mechanics[family].layers[role].slice(0);
+
+const recognizedLayerComments = (config: MechanicSchema): string[] => {
+  const comments: string[] = [];
+  for (const role in config.layers) {
+    if (config.layers.hasOwnProperty(role)) comments.push(config.layers[role]);
   }
-  return names;
+  return comments;
 };
 
 const getJumpDefinition = (
   definition: MechanicDefinition,
-  config: MechanicSchema
+  config: MechanicSchema,
+  family: MechanicSchemaId
 ): InstallmentJumpDefinition => {
   if (!definition.jump) throw new Error("Mecânica sem jump.");
   const identity = (role: string) => ({
     comment: config.layers[role],
-    fallbackNames: fallbackNames(role, config.layers[role]),
+    fallbackNames: fallbackNames(family, role),
+    recognizedComments: recognizedLayerComments(config),
   });
   return {
     context: definition.type,
@@ -239,6 +240,7 @@ export const readConfiguredMechanic = (
   let config: MechanicSchema;
   try {
     config = getMechanicSchema(name);
+    getTemplateIdentities();
   } catch (error) {
     addError(errors, String(error));
     return {
@@ -255,7 +257,8 @@ export const readConfiguredMechanic = (
       layerDiagnostics[role] = {};
       layerCache[role] = findLayerByIdentity(source, {
         comment: config.layers[role],
-        fallbackNames: fallbackNames(role, config.layers[role]),
+        fallbackNames: fallbackNames(name, role),
+        recognizedComments: recognizedLayerComments(config),
         context: definition.type,
         layerLabel: role === "controlador" ? "Controlador de Mecânica" : config.layers[role],
       }, errors, layerDiagnostics[role]);
@@ -335,7 +338,7 @@ export const readConfiguredMechanic = (
     mechanic.fields.push(result);
   }
   if (definition.jump) {
-    mechanic.installmentJump = readInstallmentJump(source, getJumpDefinition(definition, config), errors);
+    mechanic.installmentJump = readInstallmentJump(source, getJumpDefinition(definition, config, name), errors);
   }
   return mechanic;
 });
@@ -347,5 +350,5 @@ export const applyConfiguredMechanicJump = (
 ): void => withMechanicsSchema(() => {
   const definition = DEFINITIONS[name];
   const config = getMechanicSchema(name);
-  applyInstallmentJump(product, target, getJumpDefinition(definition, config));
+  applyInstallmentJump(product, target, getJumpDefinition(definition, config, name));
 });

@@ -1,0 +1,305 @@
+{
+  "version": 1,
+  "fallback": {
+    "offerLayers": true,
+    "mechanicLayers": true,
+    "projectItems": true
+  },
+  "named": {
+    "offersComp": "Miolo",
+    "descriptionText": "DESCRITIVO"
+  },
+  "offerLayers": {
+    "offer": {
+      "comment": "CAMADA OFERTA {nn}",
+      "names": [
+        "Oferta_{nn}",
+        "Oferta_{n}",
+        "CAMADA OFERTA {n}"
+      ]
+    },
+    "description": {
+      "comment": "DESCRITIVO {n}",
+      "names": [
+        "DESCRITIVO {n}"
+      ]
+    },
+    "mechanic": {
+      "comment": "MECANICA {n}",
+      "names": [
+        "MECANICA {n}"
+      ]
+    },
+    "product": {
+      "comment": "PRODUTO {n}",
+      "names": [
+        "PRODUTO {n}"
+      ]
+    },
+    "legal": {
+      "comment": "TEXTO LEGAL",
+      "names": [
+        "TEXTO LEGAL",
+        "TEXTO LEGAL_01",
+        "TEXTO LEGAL_02",
+        "TEXTO LEGAL_03",
+        "TEXTO LEGAL_04",
+        "TEXTO LEGAL_05",
+        "TEXTO LEGAL_06"
+      ]
+    },
+    "markers": {
+      "comment": "MARCADORES",
+      "names": [
+        "MARCADORES"
+      ]
+    }
+  },
+  "projectItems": {
+    "offerFolder": {
+      "comment": "OFERTA {nn}",
+      "names": [
+        "OFERTA {nn}"
+      ]
+    },
+    "mechanicsFolder": {
+      "comment": "MECANICAS",
+      "names": [
+        "MECANICAS",
+        "_MECANICAS"
+      ]
+    }
+  },
+  "banners": {
+    "eletroPneu": {
+      "layerNames": ["TARJA_ELETRO_PNEU"],
+      "sourceNames": ["TARJA_ELETRO_PNEU"],
+      "layers": {
+        "control": { "comment": "CONTROL", "names": ["CARTAO CONTROL"] },
+        "background": { "comment": "TARJA", "names": ["TARJA_ROSA"] },
+        "electro": { "comment": "ELETRO", "names": ["todo o eletro em até  15x SEM JUROS em nossos"] },
+        "tire": { "comment": "PNEU", "names": ["todos os pneus em até  10x SEM JUROS em nossos"] }
+      }
+    }
+  },
+  "layouts": {
+    "OFERTA REGUA 2 PRODUTOS": {
+      "comment": "OFERTA REGUA 2 PRODUTOS",
+      "names": [
+        "OFERTA REGUA 2 PRODUTOS"
+      ]
+    },
+    "OFERTA REGUA 2 PRODUTOS ELETRO": {
+      "comment": "OFERTA REGUA 2 PRODUTOS ELETRO",
+      "names": [
+        "OFERTA REGUA 2 PRODUTOS ELETRO"
+      ]
+    },
+    "OFERTA REGUA 3 PRODUTOS": {
+      "comment": "OFERTA REGUA 3 PRODUTOS",
+      "names": [
+        "OFERTA REGUA 3 PRODUTOS"
+      ]
+    },
+    "OFERTA SIMPLES": {
+      "comment": "OFERTA SIMPLES",
+      "names": [
+        "OFERTA SIMPLES"
+      ]
+    }
+  },
+  "mechanics": {
+    "SIMPLES": {
+      "comment": "SIMPLES {n}",
+      "names": [
+        "SIMPLES {n}"
+      ],
+      "sourceNames": [
+        "SIMPLES"
+      ],
+      "layers": {
+        "preco": [
+          "PRECO"
+        ],
+        "controlador": [
+          "CONTROLADOR DE MECANICA",
+          "Controlador de Mecânica"
+        ]
+      }
+    },
+    "TODOS A COM LEVE X PAGUE Y": {
+      "comment": "TODOS A COM LEVE X PAGUE Y",
+      "names": [
+        "TODOS A COM LEVE X PAGUE Y",
+        "TODOS A COM LEVE X PAGUE Y 1",
+        "TODOS A COM LEVE X PAGUE Y 2",
+        "TODOS A LEVE X PAGUE Y"
+      ],
+      "sourceNames": [
+        "TODOS A COM LEVE X PAGUE Y",
+        "TODOS A LEVE X PAGUE Y"
+      ],
+      "layers": {
+        "controlador": [
+          "CONTROLADOR DE MECANICA",
+          "Controlador de Mecânica"
+        ],
+        "leve-x": [
+          "LEVE X"
+        ],
+        "pague-y": [
+          "PAGUE Y"
+        ]
+      }
+    },
+    "TODOS A COM X% DESCONTO": {
+      "comment": "TODOS A COM X% DESCONTO",
+      "names": [
+        "TODOS A COM X% DESCONTO",
+        "TODOS A COM X% DESCONTO 1",
+        "TODOS A COM X% DESCONTO 2"
+      ],
+      "sourceNames": [
+        "TODOS A COM X% DESCONTO"
+      ],
+      "layers": {
+        "controlador": [
+          "CONTROLADOR DE MECANICA",
+          "Controlador de Mecânica"
+        ],
+        "por-centagem-desconto": [
+          "PORCENTAGEM DESCONTO",
+          "POR CENTAGEM DESCONTO"
+        ]
+      }
+    },
+    "DESCONTO R$ CARTAO CRF": {
+      "comment": "DESCONTO R$ CARTAO CRF",
+      "names": [
+        "DESCONTO R$ CARTAO CRF",
+        "DESCONTO R$ CARTAO CRF 1"
+      ],
+      "sourceNames": [
+        "DESCONTO R$ CARTAO CRF"
+      ],
+      "layers": {
+        "desconto-reais": [
+          "PRECO DESCONTO"
+        ]
+      }
+    },
+    "DE X POR Y PARCELAMENTO": {
+      "comment": "DE X POR Y PARCELAMENTO",
+      "names": [
+        "DE X POR Y PARCELAMENTO",
+        "DE X POR Y PARCELAMENTO 1"
+      ],
+      "sourceNames": [
+        "DE X POR Y PARCELAMENTO"
+      ],
+      "layers": {
+        "marcadores": [
+          "MARCADORES"
+        ],
+        "pulo-preco-cheio": [
+          "PULO PRECO CHEIO",
+          "PULO PREÇO CHEIO"
+        ],
+        "pulo-parcela": [
+          "PULO PARCELA"
+        ],
+        "controlador": [
+          "CONTROLADOR DE MECANICA",
+          "Controlador de Mecânica"
+        ],
+        "preco-de": [
+          "PRECO DE"
+        ],
+        "preco": [
+          "PRECO"
+        ],
+        "preco-parcela": [
+          "PRECO PARCELA"
+        ],
+        "numero-de-parcelas": [
+          "NUMERO DE PARCELAS"
+        ]
+      }
+    },
+    "DE X POR Y MEU CRF POR Z CARTAO CRF": {
+      "comment": "DE X POR Y MEU CRF POR Z CARTAO CRF",
+      "names": [
+        "DE X POR Y MEU CRF POR Z CARTAO CRF",
+        "DE X POR Y MEU CRF POR Z CARTAO CRF 1"
+      ],
+      "sourceNames": [
+        "DE X POR Y MEU CRF POR Z CARTAO CRF"
+      ],
+      "layers": {
+        "controlador": [
+          "CONTROLADOR DE MECANICA",
+          "Controlador de Mecânica"
+        ],
+        "marcadores": [
+          "MARCADORES"
+        ],
+        "pulo-preco-meu-crf": [
+          "PULO PRECO MEU CRF",
+          "PULO PREÇO MEU CRF"
+        ],
+        "pulo-preco-meu-cartao-crf": [
+          "PULO PRECO CARTAO CRF",
+          "PULO PREÇO CARTAO CRF",
+          "PULO PRECO MEU CARTAO CRF"
+        ],
+        "preco-de": [
+          "PRECO DE"
+        ],
+        "preco-por": [
+          "PRECO POR"
+        ],
+        "preco-por-cartao": [
+          "PRECO POR CARTAO"
+        ]
+      }
+    },
+    "DE X POR Y | X% DESCONTO | LEVE X PAGUE Y": {
+      "comment": "DE X POR Y | X% DESCONTO | LEVE X PAGUE Y",
+      "names": [
+        "DE X POR Y | X% DESCONTO | LEVE X PAGUE Y",
+        "DE X POR Y | X% DESCONTO | LEVE X PAGUE Y 2",
+        "DE X POR Y | X% DESCONTO | LEVE X PAGUE Y 1",
+        "DE X POR Y | X% DESCONTO | LEVE X PAGUE Y 3"
+      ],
+      "sourceNames": [
+        "DE X POR Y | X% DESCONTO | LEVE X PAGUE Y"
+      ],
+      "layers": {
+        "marcadores": [
+          "MARCADORES"
+        ],
+        "pulo-preco-cheio": [
+          "PULO PRECO CHEIO",
+          "PULO PREÇO CHEIO"
+        ],
+        "pulo": [
+          "PULO"
+        ],
+        "controlador": [
+          "CONTROLADOR DE MECANICA",
+          "Controlador de Mecânica"
+        ],
+        "preco-de": [
+          "PRECO DE"
+        ],
+        "preco-por": [
+          "PRECO POR"
+        ],
+        "por-centagem-desconto": [
+          "PORCENTAGEM DESCONTO",
+          "POR CENTAGEM DESCONTO"
+        ]
+      }
+    }
+  }
+}

@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import ts from "typescript";
+import { createTemplateTestAssets } from "./template-test-assets.mjs";
 
 const mechanicsDirectory = fileURLToPath(new URL("../src/jsx/aeft/domains/ofertas/mechanics/", import.meta.url));
 const schemaPath = fileURLToPath(new URL("../src/js/assets/schema.json", import.meta.url));
@@ -110,6 +111,7 @@ const envFor = (identity, layers) => {
 };
 
 function harness(schema = approvedSchema()) {
+  const templateAssets = createTemplateTestAssets({ mechanicLayers: false });
   const modules = new Map();
   const app = {
     project: null,
@@ -137,7 +139,7 @@ function harness(schema = approvedSchema()) {
     }).outputText;
     vm.runInNewContext(javaScript, {
       module, exports: module.exports, app,
-      AVLayer, TextLayer, CompItem, FootageItem, Property, PropertyGroup, File,
+      AVLayer, TextLayer, CompItem, FootageItem, Property, PropertyGroup, File: templateAssets.wrapFile(File),
       PropertyValueType: { OneD: 1 },
       require(specifier) {
         assert.ok(specifier.startsWith("."), `Unexpected runtime dependency: ${specifier}`);
@@ -147,8 +149,8 @@ function harness(schema = approvedSchema()) {
         return load(target);
       },
     }, { filename });
-    if (filename === path.join(mechanicsDirectory, "config.ts")) {
-      module.exports.MECHANIC_LAYER_NAME_FALLBACK_ENABLED = false;
+    if (filename === path.resolve(mechanicsDirectory, "../../template/templateIdentities.ts")) {
+      module.exports.configureTemplateIdentitiesPath(templateAssets.filePath);
     }
     return module.exports;
   }
@@ -159,7 +161,7 @@ function harness(schema = approvedSchema()) {
   const validation = load(path.join(mechanicsDirectory, "schemaValidation.ts"));
   const runtime = load(path.join(mechanicsDirectory, "schemaRuntime.ts"));
   runtime.configureMechanicsSchemaPath(schemaFilePath);
-  return { app, load, schemaFile, ...runtime, ...engine, ...actions, ...fields, ...snapshots, ...validation };
+  return { app, load, schemaFile, templateAssets, ...runtime, ...engine, ...actions, ...fields, ...snapshots, ...validation };
 }
 
 function mountOffer(h, env) {
@@ -180,6 +182,7 @@ function mountOffer(h, env) {
     source.layer(index).comment = comment;
   }
   const miolo = new CompItem([new AVLayer("Oferta_01", [], source)], "Miolo");
+  miolo.layer(1).comment = "CAMADA OFERTA 01";
   h.app.project = { numItems: 1, item: () => miolo };
   return miolo;
 }
@@ -264,6 +267,35 @@ test("schema editing changes layer comments while field/action IDs and public DT
   assert.equal(publicMechanic.fields[0].value, "24,90");
   assert.equal(JSON.stringify(publicMechanic).includes("controllerProperty"), false);
   assert.equal(JSON.stringify(publicMechanic).includes("controllerOptionValues"), false);
+});
+
+test("custom schema comments never become fallback names or redirect a price write to the controller", () => {
+  const schema = approvedSchema();
+  schema[SIMPLE].layers.preco = "CONTROLADOR DE MECANICA";
+  schema[SIMPLE].layers.controlador = "FOO";
+  const h = harness(schema);
+  h.templateAssets.map.fallback.mechanicLayers = true;
+  const unit = effect("Unidade", 2);
+  const control = new TextLayer("CONTROLADOR DE MECANICA", "Texto da controladora");
+  control.properties.push(new PropertyGroup("ADBE Effect Parade", [unit]));
+  const env = envFor(SIMPLE, [control]);
+  let mechanic = h.readConfiguredMechanic(env.valueLayer, SIMPLE, []);
+  assert.equal(mechanic.fields[0].enabled, false);
+  assert.equal(mechanic.fields[0].property, null);
+  assert.equal(mechanic.optionGroups[0].controllerProperty, effectValue(unit));
+  mountOffer(h, env);
+  assert.equal(h.updateOfferField(1, 0, "preco", "99,90").ok, false);
+  assert.deepEqual(control.text.sourceText.writes, []);
+
+  const price = new TextLayer("PRECO", "15,90");
+  env.source.layers.push(price);
+  mechanic = h.readConfiguredMechanic(env.valueLayer, SIMPLE, []);
+  assert.equal(mechanic.fields[0].property, price.text.sourceText);
+  assert.equal(h.updateOfferField(1, 0, "preco", "24,90").ok, true);
+  assert.equal(price.text.sourceText.value.text, "24,90");
+  assert.deepEqual(control.text.sourceText.writes, []);
+  assert.equal(h.updateOfferOption(1, 0, "unit", 3).ok, true);
+  assert.deepEqual(effectValue(unit).writes, [4]);
 });
 
 test("positional effect follows edited layer binding and index without making effect name mandatory", () => {

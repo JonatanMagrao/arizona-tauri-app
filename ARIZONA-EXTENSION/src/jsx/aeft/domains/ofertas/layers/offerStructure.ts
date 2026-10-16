@@ -1,4 +1,5 @@
-import { OFFER_LAYER_NAME_FALLBACK_ENABLED } from "./config";
+import { expandTemplateIdentity, getTemplateIdentities, withTemplateIdentities } from "../../template/templateIdentities";
+import { isTemplateOfferLayerComment } from "../../project/resolveTemplateIdentity";
 import { addError, getLayerByIndex } from "./findLayers";
 
 export interface OfferProductLayerSet {
@@ -19,6 +20,18 @@ interface RoleMatch {
 
 const normalizeIdentity = (value: string): string =>
   String(value || "").replace(/^\s+|\s+$/g, "").toUpperCase();
+
+// Role IDs stay stable for actions; configurable comments and names live in the asset.
+export const getOfferRoleIdentity = (role: string): { comment: string; names: string[] } => {
+  const map = getTemplateIdentities().offerLayers;
+  if (role === "TEXTO LEGAL") return map.legal;
+  if (role === "MARCADORES") return map.markers;
+  const match = /^(DESCRITIVO|MECANICA|PRODUTO) ([1-3])$/.exec(role);
+  if (match === null) throw new Error("Papel de camada desconhecido: " + role);
+  const identity = match[1] === "DESCRITIVO" ? map.description
+    : match[1] === "MECANICA" ? map.mechanic : map.product;
+  return expandTemplateIdentity(identity, Number(match[2]));
+};
 
 const offerContext = (source: CompItem): string =>
   'na oferta "' + source.name + '"';
@@ -46,35 +59,34 @@ const readIdentity = (layer: Layer, byName: boolean): string => {
   }
 };
 
-const isOfferRoleIdentity = (identity: string): boolean => {
-  if (identity === "TEXTO LEGAL" || identity === "MARCADORES") return true;
-  for (let slot = 1; slot <= 3; slot += 1) {
-    if (
-      identity === "DESCRITIVO " + slot ||
-      identity === "MECANICA " + slot ||
-      identity === "PRODUTO " + slot
-    ) return true;
-  }
-  return false;
-};
-
 const scanRole = (
   source: CompItem,
   role: string,
   byName: boolean
 ): RoleMatch => {
-  const expected = normalizeIdentity(role);
+  const identity = getOfferRoleIdentity(role);
+  const expected = normalizeIdentity(identity.comment);
   let found: Layer | null = null;
   let count = 0;
 
   for (let index = 1; index <= source.numLayers; index += 1) {
     const layer = getLayerByIndex(source, index);
-    if (layer === null || readIdentity(layer, byName) !== expected) continue;
+    if (layer === null) continue;
+    const actual = readIdentity(layer, byName);
+    let matches = actual === expected;
     if (byName) {
-      const comment = readIdentity(layer, false);
+      matches = false;
+      for (let ni = 0; ni < identity.names.length; ni += 1) {
+        if (actual === normalizeIdentity(identity.names[ni])) { matches = true; break; }
+      }
+    }
+    if (!matches) continue;
+    if (byName) {
+      let comment: string;
+      try { comment = normalizeIdentity(layer.comment); } catch (error) { continue; }
       // A recognized comment already assigns this layer to an offer role. A
       // different name cannot repurpose it, even when name fallback is enabled.
-      if (comment !== expected && isOfferRoleIdentity(comment)) continue;
+      if (comment !== expected && isTemplateOfferLayerComment(comment)) continue;
     }
     found = layer;
     count += 1;
@@ -91,43 +103,44 @@ const findRole = (
   disabledReasons?: string[],
   disabledSummaries?: string[]
 ): RoleMatch => {
+  const displayRole = getOfferRoleIdentity(role).comment;
   let result = scanRole(source, role, false);
   let byName = false;
 
-  if (result.count === 0 && OFFER_LAYER_NAME_FALLBACK_ENABLED) {
+  if (result.count === 0 && getTemplateIdentities().fallback.offerLayers) {
     result = scanRole(source, role, true);
     byName = true;
   }
 
   if (result.count > 1) {
     addDisabledSummary(disabledSummaries, byName
-      ? 'Mais de uma camada possui o nome "' + role + '" nesta oferta.'
-      : 'Mais de uma camada possui o comentário "' + role + '" nesta oferta.');
+      ? 'Mais de uma camada possui o nome "' + displayRole + '" nesta oferta.'
+      : 'Mais de uma camada possui o comentário "' + displayRole + '" nesta oferta.');
     if (disabledReasons) {
       disabledReasons.push(
-        (byName ? 'Nome "' : 'Comentário "') + role + '" repetido ' +
+        (byName ? 'Nome "' : 'Comentário "') + displayRole + '" repetido ' +
           offerContext(source) + ". Mantenha-o apenas na " + roleLayerLabel(role) + "."
       );
     }
     addError(
       errors,
       'Mais de uma camada tem o ' + (byName ? "nome" : "comentário") +
-        ' "' + role + '" ' + offerContext(source) + "."
+        ' "' + displayRole + '" ' + offerContext(source) + "."
     );
   } else if (result.count === 0 && required) {
     addDisabledSummary(disabledSummaries,
-      'Não foi encontrada uma camada com o comentário "' + role + '" nesta oferta.');
+      'Não foi encontrada uma camada com o comentário "' + displayRole + '" nesta oferta.');
     if (disabledReasons) {
       disabledReasons.push(
-        'Falta o comentário "' + role + '". Adicione-o à ' +
+        'Falta o comentário "' + displayRole + '". Adicione-o à ' +
           roleLayerLabel(role) + " " + offerContext(source) + "."
       );
     }
     addError(
       errors,
-      'Não encontrei a camada com o comentário "' + role + '" ' +
+      'Não encontrei a camada com o comentário "' + displayRole + '" ' +
         offerContext(source) +
-        (OFFER_LAYER_NAME_FALLBACK_ENABLED
+        (getTemplateIdentities().fallback.offerLayers
           ? ". Também não encontrei o nome correspondente."
           : ". O fallback por nome está desativado.")
     );
@@ -163,16 +176,17 @@ const validateRoleLayer = (
   disabledSummaries?: string[]
 ): Layer | null => {
   if (layer === null) return null;
+  const displayRole = getOfferRoleIdentity(role).comment;
   if (isImage ? isProductImageLayer(layer) : isPrecompLayer(layer)) return layer;
 
   addDisabledSummary(disabledSummaries,
-    'A origem da camada com o comentário "' + role + '" não é ' + (isImage
+    'A origem da camada com o comentário "' + displayRole + '" não é ' + (isImage
       ? "uma imagem ou precomp válida."
       : "uma precomp válida."));
 
   if (disabledReasons) {
     disabledReasons.push(
-      'A camada com o comentário "' + role + '" ' + offerContext(source) +
+      'A camada com o comentário "' + displayRole + '" ' + offerContext(source) +
         (isImage
           ? " precisa ter uma imagem ou precomp válida como origem."
           : " precisa ter uma precomp válida como origem.")
@@ -181,7 +195,7 @@ const validateRoleLayer = (
 
   addError(
     errors,
-    'A camada "' + role + '" ' + offerContext(source) +
+    'A camada "' + displayRole + '" ' + offerContext(source) +
       (isImage
         ? " não possui uma origem de imagem válida."
         : " não possui uma precomp válida.")
@@ -208,9 +222,14 @@ export const resolveOfferProductLayers = (
   source: CompItem | null,
   errors: string[],
   unresolvedSlots?: number[]
-): OfferProductLayerSet[] => {
+): OfferProductLayerSet[] => withTemplateIdentities(() => {
   const products: OfferProductLayerSet[] = [];
   if (source === null) return products;
+  try { getTemplateIdentities(); } catch (error) {
+    addError(errors, String(error));
+    if (unresolvedSlots) unresolvedSlots.push(1, 2, 3);
+    return products;
+  }
 
   for (let slot = 1; slot <= 3; slot += 1) {
     const disabledReasons: string[] = [];
@@ -322,7 +341,7 @@ export const resolveOfferProductLayers = (
   }
 
   return products;
-};
+});
 
 export const findOfferStructureLayer = (
   source: CompItem | null,
@@ -330,10 +349,16 @@ export const findOfferStructureLayer = (
   errors: string[],
   disabledReasons?: string[],
   disabledSummaries?: string[]
-): Layer | null => {
+): Layer | null => withTemplateIdentities(() => {
   if (source === null) {
     if (disabledReasons) disabledReasons.push("Confira a origem da camada da oferta.");
     addDisabledSummary(disabledSummaries, "A precomp da oferta não foi encontrada.");
+    return null;
+  }
+  try { getTemplateIdentities(); } catch (error) {
+    addError(errors, String(error));
+    if (disabledReasons) disabledReasons.push(String(error));
+    addDisabledSummary(disabledSummaries, "Não foi possível ler o mapa de nomes do template.");
     return null;
   }
   const identity = role === "legal" ? "TEXTO LEGAL" : "MARCADORES";
@@ -341,7 +366,7 @@ export const findOfferStructureLayer = (
   return role === "legal"
     ? validateRoleLayer(source, identity, found, errors, false, disabledReasons, disabledSummaries)
     : found;
-};
+});
 
 // Offer markers are optional while resolving products. This helper can be used
 // by an operation that specifically needs them without changing other timelines.
