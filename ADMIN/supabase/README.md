@@ -163,6 +163,23 @@ npx supabase functions deploy app-release-device --project-ref <PROJECT_REF> --u
 
 As functions validam a publishable key e o JWT do usuario dentro do proprio codigo.
 
+### Contador de vagas da equipe na Gestão do app
+
+Para publicar somente a apresentação do contador, preservando o limite real
+da licença, as contas e os demais endpoints:
+
+```powershell
+cd ADMIN
+npm test
+npx supabase functions deploy admin-list-members --project-ref nizchnscqkixawqxrwzd --use-api
+```
+
+A publicação preserva `verify_jwt = true` desta Function, além da validação
+interna da sessão. A Function usa `is_active_master_email` para não descontar uma identidade já
+isenta. O gestor autenticado que consome vaga sai tanto do total exibido quanto
+do consumo exibido; a disponibilidade permanece igual à calculada pelo banco.
+Não há migration, alteração de secrets ou atualização do Tauri para esse ajuste.
+
 ### Fila distribuida de renderizacao
 
 A fila usa as migrations aditivas `20260811160000_render_queue.sql`,

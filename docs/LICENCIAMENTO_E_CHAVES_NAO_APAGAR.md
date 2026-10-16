@@ -198,11 +198,12 @@ qualquer estrutura ambígua são recusados.
 isso ele nunca é usado sozinho: app e instalador também verificam a XMLDSig com
 a chave do certificado pinado e comparam os digests SHA-256 de todos os arquivos
 da árvore; o CEP da Adobe repete a verificação ao carregar. O pipeline de
-release ainda valida o timestamp RFC 3161. Antes de trocar a instalação, o fluxo
-`per-user` do Tauri desliga `PlayerDebugMode` para que um ajuste legado não
-elimine a última barreira do CEP. O helper elevado do instalador Full não toca
-em HKCU; ligar esse modo continua sendo uma exceção explícita de
-desenvolvimento/suporte que relaxa essa barreira externa.
+release ainda valida o timestamp RFC 3161. Ao instalar uma versão de produção,
+o processo original do Tauri desliga `PlayerDebugMode` após a substituição,
+exceto enquanto houver uma junction de desenvolvimento preservada. Os
+helpers elevados do Full e do atualizador não tocam em HKCU; ligar esse modo
+continua sendo uma exceção explícita de desenvolvimento/suporte que relaxa essa
+barreira externa.
 
 Quando a checagem de identidade falha, tanto a inspeção quanto a instalação
 devolvem (convenção `code: message` já usada por `src-tauri/src/cep_manager.rs`):
@@ -312,13 +313,21 @@ Staging e backups do Full ficam em
 `%CommonProgramW6432%\Adobe\CEP\.arizona-install-work`, fora de
 `extensions`. O helper elevado não escreve em `%APPDATA%` nem altera HKCU.
 
-O atualizador independente do CEP executado pelo Tauri continua per-user em:
+Desde o Tauri 2.4.1, o atualizador manual prefere uma instalação compartilhada
+existente e solicita elevação para atualizá-la. O helper elevado aceita somente
+os destinos CEP das pastas conhecidas do Windows, verifica novamente o pacote
+e usa o mesmo lock do Full. Após conferir a instalação resultante, o processo
+original consolida a cópia normal do usuário. Junctions de desenvolvimento são
+preservadas por padrão; encerrar o modo dev exige escolha explícita e remove
+somente o link.
+
+Sem instalação compartilhada normal, o Tauri continua usando o destino per-user:
 
 ```text
 C:\Users\<usuario>\AppData\Roaming\Adobe\CEP\extensions\com.arizona-carrefour.cep
 ```
 
-O work root desse fluxo também é irmão de `extensions`, em
+O work root do fluxo per-user também é irmão de `extensions`, em
 `%APPDATA%\Adobe\CEP\.arizona-install-work`; staging e backup nunca ficam em
 uma pasta que o CEP possa carregar como outra cópia do bundle.
 

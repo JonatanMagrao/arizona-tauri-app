@@ -135,10 +135,16 @@ Para o CEP `perMachine`, o Full compara `ExtensionBundleVersion` por precedênci
 SemVer:
 
 - payload mais novo: atualiza;
-- mesma versão intacta: preserva sem fechar o After Effects;
+- mesma versão intacta e conteúdo assinado idêntico: preserva sem fechar o After Effects;
+- mesma versão com conteúdo assinado diferente: atualiza, exigindo o After Effects fechado;
 - mesma versão corrompida: repara com o pacote assinado;
 - instalação mais nova e intacta: preserva, mesmo dentro de um Tauri antigo;
 - instalação mais nova e corrompida: aborta em vez de fazer downgrade implícito.
+
+A comparação de conteúdo usa a cobertura e os digests SHA-256 dos arquivos
+verificados na assinatura. Reassinar os mesmos arquivos, inclusive com outro
+timestamp, não provoca reinstalação; uma correção empacotada com o mesmo número
+de versão é aplicada quando esses arquivos mudam.
 
 O switch técnico `-AllowCepVersionDowngrade` existe somente para rollback
 explícito e supervisionado pelo suporte; o setup normal nunca o envia. Toda
@@ -155,13 +161,48 @@ O tratamento de compatibilidade da instalação `currentUser` 2.0.0 no item 1 é
 feito pelo hook NSIS antes da instalação dos assets. Ele não muda o escopo do
 CEP novo nem dá ao helper elevado de assets autorização para escrever em HKCU.
 
-A instalação/atualização manual iniciada pelo Tauri é um fluxo separado e
-continua `per-user` em
-`%APPDATA%\Adobe\CEP\extensions\com.arizona-carrefour.cep`. Ela usa seu próprio
-work root fora de `extensions`; não altera o destino `perMachine` do Full. O app
-mostra o inventário `perUser`/`perMachine`, pede confirmação para downgrade
-`perUser` e bloqueia a operação quando uma cópia `perMachine` mais nova
-continuaria sendo escolhida pela Adobe.
+Ao iniciar o Arizona App instalado pelo Full, o processo normal do usuário
+consolida automaticamente uma cópia normal antiga do CEP em seu próprio
+`%APPDATA%`. O Full continua sem acessar perfis pelo helper elevado: a etapa
+do usuário exige o recibo `installer/installed-assets.json`, o hash do pacote
+embutido e a verificação criptográfica de que a instalação compartilhada
+corresponde ao conteúdo assinado desse pacote. A versão do perfil deve ser
+igual ou anterior à compartilhada; uma cópia mais nova é preservada.
+
+O aplicativo aguarda o After Effects fechar antes de retirar a cópia do perfil
+e tenta novamente a cada 15 segundos enquanto estiver aberto. Arquivos da
+instalação compartilhada ficam protegidos contra escrita e exclusão durante
+a verificação. A cópia do perfil é revalidada, movida para a pasta de trabalho
+fora de `extensions` e restaurada se o contexto mudar antes da exclusão.
+Falhas de verificação interrompem a retirada; uma falha na limpeza pode deixar
+resíduos na pasta de trabalho, fora de `extensions`. O estado local informa
+que a finalização está pendente; nenhuma informação é enviada para fora da máquina.
+
+Essa etapa não percorre perfis de outros usuários, não altera `PlayerDebugMode`
+e não remove junctions de desenvolvimento nem segue junctions ancestrais.
+Também não roda em `tauri dev`, sem recibo do Full ou com o aplicativo elevado.
+O botão de conclusão do instalador já inicia o app com `RunAsUser`; se ele não
+for iniciado nesse momento, a consolidação ocorre na próxima abertura normal.
+
+A atualização manual do Tauri 2.4.1 prefere o destino `perMachine` existente.
+`update-cep-system.ps1` solicita elevação e reutiliza as verificações e a troca
+transacional do CEP. Sua lista de destinos permitidos vem das pastas conhecidas
+do Windows, e seus locks são os mesmos do Full. Esse helper não escreve em
+`%APPDATA%` nem em HKCU. As cópias normais redundantes da máquina são retiradas
+da pasta que o Adobe examina somente depois de verificar a nova instalação.
+
+O processo original confirma assinatura e versão do resultado antes de
+consolidar a cópia do usuário. Sem instalação compartilhada, a operação segue
+em `%APPDATA%\Adobe\CEP\extensions\com.arizona-carrefour.cep`. O painel mostra
+o destino e a necessidade de administrador antes da confirmação; mudanças no
+destino entre a leitura e a instalação interrompem a operação. Downgrades de
+versões normais exigem autorização explícita.
+
+Junctions de desenvolvimento são diferenciadas de cópias normais e preservadas
+por padrão. Se o usuário escolher encerrar o modo dev, apenas o link é
+removido após a instalação verificada, nunca os arquivos do build para o qual
+aponta. Ao preservar o link, o atualizador mantém a configuração de diagnóstico
+necessária ao desenvolvimento.
 
 A migração 2.0.0 preserva os dados autenticados em
 `%LOCALAPPDATA%\com.pc.arizona-app`; remove somente o executável, registro e

@@ -292,6 +292,7 @@ pub fn run() {
             let bridge = app.state::<CepBridgeState>();
             let app_handle = app.handle().clone();
             diagnostics::initialize(&app_handle);
+            cep_manager::start_full_consolidation(&app_handle);
             render_queue::start_worker(&app_handle);
             remove_legacy_cep_bridge_session(&app_handle);
             restore_app_window_position(&app_handle);

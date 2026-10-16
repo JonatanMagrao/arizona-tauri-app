@@ -1965,6 +1965,9 @@ export const OffersPanel = ({
 
   const handleRefreshOffers = async () => {
     if (loading) return;
+    // Refreshing after an external open must also replace the project's
+    // identity/previews; the remounted editor will read its own new snapshot.
+    if (onBeforeOfferNavigation && !(await onBeforeOfferNavigation())) return;
 
     const refreshed = await refreshOffers();
     await onRefreshProductImages?.();
@@ -2203,6 +2206,12 @@ export const OffersPanel = ({
             </header>
 
             <div className="offer-products">
+              {selectedOffer.products.length === 0 ? (
+                <div className="offers-empty" role="status">
+                  {getPublicErrorMessage(snapshot?.message,
+                    "Nenhum produto ativo encontrado nesta oferta.")}
+                </div>
+              ) : null}
               {selectedOffer.products.map((product) => (
                 <ProductEditor
                   isRnProject={isRnProject}

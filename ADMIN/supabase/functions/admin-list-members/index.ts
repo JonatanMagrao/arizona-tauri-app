@@ -11,6 +11,7 @@ import {
   requirePublishableKey,
 } from "../_shared/supabase.ts";
 import { resolveMaster, resolveMember } from "../_shared/actors.ts";
+import { managementSeatCounter } from "../_shared/management-seat-counter.ts";
 import {
   adminGoogleOAuthNotBefore,
   enforceRateLimit,
@@ -110,8 +111,12 @@ Deno.serve(async (req) => {
 
     if (consumedSeatsError) throw consumedSeatsError;
 
-    const seatsAllowed = Number(organization.seats_allowed || 0);
-    const consumed = Number(consumedSeats || 0);
+    const seatCounter = await managementSeatCounter(admin, {
+      actor,
+      members: members || [],
+      seatsAllowed: Number(organization.seats_allowed || 0),
+      consumedSeats: Number(consumedSeats || 0),
+    });
 
     return jsonResponse({
       ok: true,
@@ -119,14 +124,14 @@ Deno.serve(async (req) => {
       organization: {
         id: organization.id,
         name: organization.name,
-        seatsAllowed,
+        seatsAllowed: seatCounter.seatsAllowed,
         licenseExpiresOn: organization.license_expires_on,
       },
       currentMemberId: actor.kind === "member" ? actor.id : null,
       canManageManagers: actor.kind === "master",
       users,
-      consumedSeats: consumed,
-      availableSeats: Math.max(0, seatsAllowed - consumed),
+      consumedSeats: seatCounter.consumedSeats,
+      availableSeats: seatCounter.availableSeats,
       refreshedAt: new Date().toISOString(),
     });
   } catch (error) {

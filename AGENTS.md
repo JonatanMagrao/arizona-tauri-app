@@ -113,14 +113,25 @@ extensão CEP, chaves públicas/privadas ou geração de tokens, leia
   `%CommonProgramW6432%\Adobe\CEP\.arizona-install-work`, fora de `extensions`.
   Os helpers elevados de assets do Full não escrevem em `%APPDATA%` nem alteram
   HKCU.
-- A instalação/atualização manual iniciada pelo Tauri continua `per-user`, em
+- Após o Full, o Tauri release aberto normalmente verifica recibo, assinatura e
+  conteúdo instalado antes de consolidar a cópia normal redundante do usuário
+  atual. Aguarda o After fechar e preserva junctions de desenvolvimento, versões
+  mais novas do usuário e outros perfis. Essa fase não usa o helper elevado.
+- A atualização manual iniciada pelo Tauri respeita o escopo existente. Quando
+  existe instalação normal `perMachine`, atualiza esse destino com elevação e
+  consolida as cópias normais do mesmo bundle; sem ela, usa `perUser` em
   `%APPDATA%\Adobe\CEP\extensions\com.arizona-carrefour.cep`.
+- O helper elevado do atualizador só opera destinos CEP conhecidos da máquina;
+  não escreve em `%APPDATA%` nem HKCU. O processo original trata a cópia do
+  usuário somente depois de conferir o resultado da instalação compartilhada.
 - Instalação não cria `Plug-ins\Arizona` em nenhuma versão do After Effects.
 - Upgrade e desinstalação procuram apenas o arquivo legado exato
   `Plug-ins\Arizona\ArizonaBridgeTest.aex`, removem-no com segurança e só apagam
   a pasta `Arizona` quando ela fica vazia.
 - Em desenvolvimento, o destino `per-user` pode ser uma junction para
-  `ARIZONA-EXTENSION\dist\cep`.
+  `ARIZONA-EXTENSION\dist\cep`. Esse link é identificado como modo dev e é
+  preservado por padrão ao atualizar uma instalação compartilhada. Encerrar o
+  modo dev exige escolha explícita e remove somente o link, nunca seu alvo.
 
 ## Notas operacionais
 

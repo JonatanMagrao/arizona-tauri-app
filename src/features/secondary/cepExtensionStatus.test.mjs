@@ -1,11 +1,20 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import vm from "node:vm";
+import { transformSync } from "esbuild";
+import * as statusHelpers from "./cepExtensionStatus.js";
 
 import {
   cepAdditionalInstallations,
-  cepDowngradeRequiresFullInstaller,
+  cepConsolidationMessage,
+  cepDevelopmentModePreserved,
+  cepDevLinkRequiresReplacement,
+  cepHasInstallTarget,
+  cepHasPerUserDevLink,
   cepInstallationLocationLabel,
   cepInstallationScopeLabel,
+  cepInstalledVersionForUpdate,
   cepInstallActionLabel,
   cepInstallCommandArgs,
   cepVersionRelation,
@@ -28,6 +37,12 @@ test("normalizes the legacy CEP status without requiring the new installation fi
       scope: null,
       installations: [],
       hasMultipleInstallations: false,
+      targetScope: null,
+      targetPath: "",
+      requiresElevation: false,
+      developmentMode: false,
+      consolidationRequired: false,
+      automaticConsolidation: "idle",
     },
   );
 });
@@ -153,6 +168,8 @@ test("sends downgrade authorization only after explicit confirmation", () => {
     expectedVersion: " 2.1.0 ",
     replaceDevLink: true,
     relation: "downgrade",
+    targetScope: "perMachine",
+    targetPath: "C:\\Program Files\\Common Files\\Adobe\\CEP\\extensions\\com.arizona-carrefour.cep",
   };
 
   assert.deepEqual(cepInstallCommandArgs(base), {
@@ -160,12 +177,16 @@ test("sends downgrade authorization only after explicit confirmation", () => {
     expectedVersion: "2.1.0",
     replaceDevLink: true,
     allowDowngrade: false,
+    expectedTargetScope: base.targetScope,
+    expectedTargetPath: base.targetPath,
   });
   assert.deepEqual(cepInstallCommandArgs({ ...base, downgradeConfirmed: true }), {
     path: base.path,
     expectedVersion: "2.1.0",
     replaceDevLink: true,
     allowDowngrade: true,
+    expectedTargetScope: base.targetScope,
+    expectedTargetPath: base.targetPath,
   });
   assert.equal(
     cepInstallCommandArgs({ ...base, relation: "upgrade", downgradeConfirmed: true })
@@ -174,7 +195,7 @@ test("sends downgrade authorization only after explicit confirmation", () => {
   );
 });
 
-test("requires a Full installer when any valid per-machine installation is newer", () => {
+test("compares releases against the highest valid normal installation across scopes", () => {
   const status = normalizeCepExtensionStatus({
     installed: true,
     version: "2.3.0",
@@ -195,9 +216,8 @@ test("requires a Full installer when any valid per-machine installation is newer
     ],
   });
 
-  assert.equal(cepDowngradeRequiresFullInstaller("2.1.0", status), true);
-  assert.equal(cepDowngradeRequiresFullInstaller("2.2.0", status), false);
-  assert.equal(cepDowngradeRequiresFullInstaller("2.2.1", status), false);
+  assert.equal(cepInstalledVersionForUpdate(status), "2.3.0");
+  assert.equal(cepVersionRelation("2.2.0", cepInstalledVersionForUpdate(status)), "downgrade");
 
   const invalidMachineStatus = normalizeCepExtensionStatus({
     installed: true,
@@ -212,24 +232,390 @@ test("requires a Full installer when any valid per-machine installation is newer
       },
     ],
   });
-  assert.equal(cepDowngradeRequiresFullInstaller("2.1.0", invalidMachineStatus), false);
+  assert.equal(cepInstalledVersionForUpdate(invalidMachineStatus), "");
 });
 
 test("falls back to the effective scope when the backend has no installation inventory", () => {
   assert.equal(
-    cepDowngradeRequiresFullInstaller("2.1.0", normalizeCepExtensionStatus({
+    cepInstalledVersionForUpdate(normalizeCepExtensionStatus({
       installed: true,
       version: "2.2.0",
       scope: "perMachine",
     })),
-    true,
+    "2.2.0",
   );
   assert.equal(
-    cepDowngradeRequiresFullInstaller("2.1.0", normalizeCepExtensionStatus({
+    cepInstalledVersionForUpdate(normalizeCepExtensionStatus({
       installed: true,
       version: "2.2.0",
       scope: "perUser",
     })),
-    false,
+    "2.2.0",
   );
+});
+
+test("a development junction and a machine release preserve development by default", () => {
+  const status = normalizeCepExtensionStatus({
+    installed: true, version: "9.0.0-dev", isDevLink: true, scope: "perUser",
+    targetScope: "perMachine", targetPath: " C:\\CEP\\machine ",
+    requiresElevation: true, developmentMode: true, consolidationRequired: false,
+    installations: [
+      { scope: "perUser", installed: true, isDevLink: true, manifestValid: true, version: "9.0.0-dev" },
+      { scope: "perMachine", installed: true, isDevLink: false, manifestValid: true, version: "2.4.0" },
+    ],
+  });
+  assert.equal(status.hasMultipleInstallations, true);
+  assert.equal(status.developmentMode, true);
+  assert.equal(status.consolidationRequired, false);
+  assert.equal(cepInstallationLocationLabel(status), "Desenvolvimento");
+  assert.equal(cepDevLinkRequiresReplacement(status), false);
+  assert.equal(cepInstalledVersionForUpdate(status), "2.4.0");
+  assert.equal(cepVersionRelation("2.4.1", cepInstalledVersionForUpdate(status)), "upgrade");
+  const args = cepInstallCommandArgs({ ...status, path: "update.zxp" });
+  assert.equal(args.expectedTargetScope, "perMachine");
+  assert.equal(args.expectedTargetPath, "C:\\CEP\\machine");
+  assert.equal(args.replaceDevLink, false);
+  assert.equal(cepInstallCommandArgs({ ...status, path: "update.zxp", replaceDevLink: true }).expectedTargetScope, "perMachine");
+});
+
+test("only a development junction requires its explicit replacement without a release downgrade", () => {
+  const status = normalizeCepExtensionStatus({
+    installed: true, version: "99.0.0", isDevLink: true,
+    targetScope: "perUser", targetPath: "C:\\CEP\\user",
+    installations: [{ scope: "perUser", installed: true, isDevLink: true, manifestValid: true, version: "99.0.0" }],
+  });
+  assert.equal(cepDevLinkRequiresReplacement(status), true);
+  assert.equal(cepInstalledVersionForUpdate(status), "");
+  assert.equal(cepVersionRelation("2.4.0", cepInstalledVersionForUpdate(status)), "install");
+  assert.equal(cepInstalledVersionForUpdate({ installed: true, isDevLink: true, version: "99.0.0" }), "");
+});
+
+test("normal duplicate releases retain the backend target and consolidation decision", () => {
+  const status = normalizeCepExtensionStatus({
+    targetScope: "perMachine", targetPath: "C:\\CEP\\machine", requiresElevation: true,
+    consolidationRequired: true,
+    installations: [
+      { installed: true, scope: "perUser", version: "2.4.1", manifestValid: true },
+      { installed: true, scope: "perMachine", version: "2.4.0", manifestValid: true },
+      { installed: false, scope: "perMachine", version: "9.0.0", manifestValid: true },
+    ],
+  });
+  assert.equal(status.developmentMode, false);
+  assert.equal(status.consolidationRequired, true);
+  assert.equal(status.requiresElevation, true);
+  assert.equal(cepInstalledVersionForUpdate(status), "2.4.1");
+  assert.equal(cepDevLinkRequiresReplacement(status), false);
+  assert.equal(cepHasInstallTarget(status), true);
+});
+
+test("development links outside the current profile are preserved without offering their removal", () => {
+  const status = normalizeCepExtensionStatus({ developmentMode: true, targetScope: "perUser", targetPath: "C:\\CEP\\user",
+    installations: [
+      { installed: true, scope: "perUser", version: "2.4.0", manifestValid: true },
+      { installed: true, scope: "perMachine", isDevLink: true, version: "9.0.0", manifestValid: true },
+    ],
+  });
+  assert.equal(cepHasPerUserDevLink(status), false);
+  assert.equal(cepDevLinkRequiresReplacement(status), false);
+  assert.equal(cepDevelopmentModePreserved(status, true), true);
+  assert.equal(cepInstalledVersionForUpdate(status), "2.4.0");
+});
+
+test("installation commands require a current explicit destination and never infer it from the effective version", () => {
+  for (const invalid of [null, {}, { targetScope: "system", targetPath: "C:\\CEP" }, { targetScope: "perMachine", targetPath: "  " }]) {
+    assert.equal(cepHasInstallTarget(invalid), false);
+    assert.throws(() => cepInstallCommandArgs({ path: "update.zxp", ...invalid }), /cep_install_target_changed/);
+  }
+  const status = normalizeCepExtensionStatus({
+    installed: true, scope: "perMachine", path: "C:\\Old", targetScope: "perUser", targetPath: "C:\\User",
+    requiresElevation: "true", developmentMode: "true", consolidationRequired: "true",
+  });
+  assert.equal(status.requiresElevation, false);
+  assert.equal(status.developmentMode, false);
+  assert.equal(status.consolidationRequired, false);
+  const args = cepInstallCommandArgs({ ...status, path: "update.zxp" });
+  assert.equal(args.expectedTargetScope, "perUser");
+  assert.equal(args.expectedTargetPath, "C:\\User");
+});
+
+let panelSource = "";
+
+function elements(node, predicate) {
+  if (Array.isArray(node)) return node.flatMap((child) => elements(child, predicate));
+  if (!node || typeof node !== "object") return [];
+  return [...(predicate(node) ? [node] : []), ...elements(node.props?.children, predicate)];
+}
+function nodeText(node) {
+  if (Array.isArray(node)) return node.map(nodeText).join("");
+  if (node && typeof node === "object") return nodeText(node.props?.children);
+  return node === undefined || node === null || typeof node === "boolean" ? "" : String(node);
+}
+
+function panelHarness(status, selectedVersion = "2.4.1", installError = null) {
+  if (!panelSource) {
+    panelSource = transformSync(
+      readFileSync(new URL("./SecondaryWindow.jsx", import.meta.url), "utf8")
+        + "\nexport { ExtensionSettingsPanel as TestPanel };",
+      { loader: "jsx", format: "cjs", jsx: "automatic" },
+    ).code;
+  }
+  const values = [];
+  const dependencies = [];
+  const effects = [];
+  const cleanups = [];
+  const eventListeners = new Map();
+  const statusResponses = [];
+  const calls = [];
+  const errors = [];
+  const successes = [];
+  let cursor = 0;
+  const react = {
+    useState(initial) {
+      const index = cursor++;
+      if (!(index in values)) values[index] = typeof initial === "function" ? initial() : initial;
+      return [values[index], (next) => { values[index] = typeof next === "function" ? next(values[index]) : next; }];
+    },
+    useRef(initial) {
+      const index = cursor++;
+      if (!(index in values)) values[index] = { current: initial };
+      return values[index];
+    },
+    useEffect(callback, deps) {
+      const index = cursor++;
+      if (!dependencies[index] || deps.some((value, depIndex) => !Object.is(value, dependencies[index][depIndex]))) {
+        dependencies[index] = deps;
+        effects.push(callback);
+      }
+    },
+  };
+  const jsx = (type, props) => ({ type, props });
+  const commandNames = { cepExtensionStatus: "status", cepDebugModeStatus: "debug", inspectCepZxp: "inspect", installCepZxp: "install" };
+  const invokeCommand = async (command, args) => {
+    calls.push({ command, args });
+    if (command === "status") return statusResponses.length ? statusResponses.shift() : status;
+    if (command === "debug") return { enabled: false };
+    if (command === "inspect") return { bundleId: "com.arizona-carrefour.cep", version: selectedVersion, trusted: true };
+    if (command === "install") {
+      if (installError) throw new Error(installError);
+      return { version: selectedVersion };
+    }
+    throw new Error("Unexpected command " + command);
+  };
+  const module = { exports: {} };
+  const require = (specifier) => {
+    if (specifier === "react") return react;
+    if (specifier === "react/jsx-runtime") return { jsx, jsxs: jsx, Fragment: "fragment" };
+    if (specifier === "./cepExtensionStatus") return statusHelpers;
+    if (specifier.endsWith("/tauriCommands")) return { commandNames, invokeCommand };
+    if (specifier.endsWith("/publicErrors")) return { publicErrorMessage: (_error, fallback) => fallback };
+    if (specifier === "@tauri-apps/plugin-dialog") return { open: async () => "C:\\Downloads\\extension.zxp" };
+    if (specifier === "@tauri-apps/api/event") return {
+      listen: async (name, callback) => {
+        eventListeners.set(name, callback);
+        return () => eventListeners.delete(name);
+      },
+    };
+    if (specifier === "@tauri-apps/api/webview") return { getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }) };
+    return {};
+  };
+  const sandbox = vm.createContext({ module, exports: module.exports, require,
+    window: { addEventListener() {}, removeEventListener() {} } });
+  vm.runInContext(panelSource, sandbox);
+  const harness = {
+    calls, errors, successes, tree: null,
+    render() {
+      cursor = 0;
+      this.tree = module.exports.TestPanel({ showError: (value) => errors.push(value), showSuccess: (value) => successes.push(value) });
+      while (effects.length > 0) {
+        const cleanup = effects.shift()();
+        if (cleanup) cleanups.push(cleanup);
+      }
+      return this.tree;
+    },
+    async openConfirmation() {
+      this.render();
+      await new Promise((resolve) => setImmediate(resolve));
+      this.render();
+      const choose = elements(this.tree, (node) => node.type === "button" && nodeText(node) === "Escolher arquivo…")[0];
+      await choose.props.onClick();
+      this.render();
+      const install = elements(this.tree, (node) => node.type === "button" && node.props.className === "btn btn-primary")[0];
+      assert.equal(install.props.disabled, false);
+      install.props.onClick();
+      this.render();
+    },
+    confirmButton() {
+      const dialog = elements(this.tree, (node) => node.props?.role === "dialog")[0];
+      return elements(dialog, (node) => node.type === "button" && node.props.className === "btn btn-primary")[0];
+    },
+    checks() { return elements(this.tree, (node) => node.type === "input" && node.props.type === "checkbox"); },
+    queueStatus(response) { statusResponses.push(response); },
+    emitConsolidation() { eventListeners.get("arizona-cep:consolidation-changed")?.({ payload: "completed" }); },
+    get listenerCount() { return eventListeners.size; },
+    unmount() { cleanups.forEach((cleanup) => cleanup()); },
+  };
+  return harness;
+}
+
+const machineStatus = (patch = {}) => ({
+  installed: true, version: "2.4.0", scope: "perMachine", path: "C:\\CEP\\machine",
+  targetScope: "perMachine", targetPath: "C:\\CEP\\machine", requiresElevation: true,
+  developmentMode: false, consolidationRequired: false,
+  installations: [{ installed: true, scope: "perMachine", path: "C:\\CEP\\machine", version: "2.4.0", manifestValid: true }],
+  ...patch,
+});
+
+test("automatic consolidation messages distinguish pending work, preserved newer copies and failures", () => {
+  for (const [state, expected] of [
+    ["checking", /Conferindo/],
+    ["waitingForAfterEffects", /Feche o After Effects.*automaticamente/],
+    ["preservedNewerUser", /mais nova.*preservada/],
+    ["blocked", /não foi concluída.*Atualizar/],
+    ["idle", /Use Atualizar/],
+  ]) {
+    const normalized = normalizeCepExtensionStatus({ consolidationRequired: true, automaticConsolidation: state });
+    assert.equal(normalized.automaticConsolidation, state);
+    assert.match(cepConsolidationMessage(normalized), expected);
+    assert.doesNotMatch(cepConsolidationMessage(normalized), /próxima instalação/);
+  }
+  assert.equal(normalizeCepExtensionStatus({ automaticConsolidation: "unexpected" }).automaticConsolidation, "idle");
+  assert.equal(cepConsolidationMessage({ consolidationRequired: false, automaticConsolidation: "completed" }), "");
+});
+
+test("the extension panel removes the duplicate warning when consolidation finishes", async () => {
+  const status = machineStatus({ consolidationRequired: true, automaticConsolidation: "waitingForAfterEffects" });
+  status.installations.push({ installed: true, scope: "perUser", path: "C:\\CEP\\user", version: "2.4.0", manifestValid: true });
+  const h = panelHarness(status);
+  h.render();
+  await new Promise((resolve) => setImmediate(resolve));
+  h.render();
+  assert.match(nodeText(h.tree), /Feche o After Effects.*automaticamente/);
+  assert.match(nodeText(h.tree), /Outra instalação encontrada/);
+  status.installations.pop();
+  status.consolidationRequired = false;
+  status.automaticConsolidation = "completed";
+  h.emitConsolidation();
+  await new Promise((resolve) => setImmediate(resolve));
+  h.render();
+  assert.doesNotMatch(nodeText(h.tree), /Outra instalação encontrada|consolidará/);
+  assert.equal(h.calls.filter(({ command }) => command === "status").length, 2);
+  h.unmount();
+  assert.equal(h.listenerCount, 0);
+});
+
+test("a late pre-consolidation status cannot restore the duplicate warning", async () => {
+  let resolveOld;
+  const oldResponse = new Promise((resolve) => { resolveOld = resolve; });
+  const h = panelHarness(machineStatus({ automaticConsolidation: "completed" }));
+  h.queueStatus(oldResponse);
+  h.render();
+  await new Promise((resolve) => setImmediate(resolve));
+  h.emitConsolidation();
+  await new Promise((resolve) => setImmediate(resolve));
+  resolveOld(machineStatus({ consolidationRequired: true, automaticConsolidation: "waitingForAfterEffects" }));
+  await new Promise((resolve) => setImmediate(resolve));
+  h.render();
+  assert.doesNotMatch(nodeText(h.tree), /consolidará|Feche o After Effects/);
+  h.unmount();
+});
+
+test("closing the extension panel before listener setup prevents late status reads", async () => {
+  const h = panelHarness(machineStatus());
+  h.render();
+  h.unmount();
+  await new Promise((resolve) => setImmediate(resolve));
+  h.emitConsolidation();
+  assert.equal(h.listenerCount, 0);
+  assert.equal(h.calls.filter(({ command }) => command === "status").length, 0);
+});
+
+test("the installation dialog describes the machine target and sends its confirmed destination", async () => {
+  const h = panelHarness(machineStatus({ consolidationRequired: true }));
+  await h.openConfirmation();
+  assert.match(nodeText(h.tree), /autoriza[çc][ãa]o de administrador/);
+  assert.match(nodeText(h.tree), /cópias adicionais serão removidas/);
+  assert.equal(h.confirmButton().props.disabled, false);
+  await h.confirmButton().props.onClick();
+  const args = h.calls.find(({ command }) => command === "install").args;
+  assert.equal(args.expectedTargetScope, "perMachine");
+  assert.equal(args.expectedTargetPath, "C:\\CEP\\machine");
+  assert.equal(args.replaceDevLink, false);
+  assert.equal(args.allowDowngrade, false);
+});
+
+test("a dev link with a machine release stays optional and never changes the update scope", async () => {
+  for (const endDevelopment of [false, true]) {
+    const status = machineStatus({ developmentMode: true });
+    status.installations.push({ installed: true, scope: "perUser", isDevLink: true, version: "99.0.0", manifestValid: true });
+    const h = panelHarness(status);
+    await h.openConfirmation();
+    assert.equal(h.checks().length, 1);
+    assert.equal(h.checks()[0].props.checked, false);
+    assert.equal(h.confirmButton().props.disabled, false);
+    if (endDevelopment) {
+      h.checks()[0].props.onChange({ target: { checked: true } });
+      h.render();
+    }
+    await h.confirmButton().props.onClick();
+    const args = h.calls.find(({ command }) => command === "install").args;
+    assert.equal(args.replaceDevLink, endDevelopment);
+    assert.equal(args.expectedTargetScope, "perMachine");
+    assert.equal(args.allowDowngrade, false);
+    assert.equal(h.successes[0].includes("Modo de desenvolvimento preservado"), !endDevelopment);
+    assert.equal(h.calls.filter(({ command }) => command === "debug").length, 2);
+  }
+});
+
+test("a dev-only install requires consent and a machine downgrade requires its separate confirmation", async () => {
+  const h = panelHarness({ installed: true, version: "99.0.0", isDevLink: true, developmentMode: true,
+    targetScope: "perUser", targetPath: "C:\\CEP\\user", requiresElevation: false,
+    installations: [{ installed: true, scope: "perUser", isDevLink: true, version: "99.0.0", manifestValid: true }] });
+  await h.openConfirmation();
+  assert.equal(h.confirmButton().props.disabled, true);
+  h.checks()[0].props.onChange({ target: { checked: true } });
+  h.render();
+  assert.equal(h.confirmButton().props.disabled, false);
+  await h.confirmButton().props.onClick();
+  const args = h.calls.find(({ command }) => command === "install").args;
+  assert.equal(args.replaceDevLink, true);
+  assert.equal(args.allowDowngrade, false);
+  assert.equal(args.expectedTargetScope, "perUser");
+
+  const downgrade = panelHarness(machineStatus(), "2.3.0");
+  await downgrade.openConfirmation();
+  assert.doesNotMatch(nodeText(downgrade.tree), /instalador Full/);
+  assert.equal(downgrade.confirmButton().props.disabled, true);
+  downgrade.checks()[0].props.onChange({ target: { checked: true } });
+  downgrade.render();
+  await downgrade.confirmButton().props.onClick();
+  assert.equal(downgrade.calls.find(({ command }) => command === "install").args.allowDowngrade, true);
+});
+
+test("cancelled elevation and incomplete consolidation refresh status with accurate feedback", async () => {
+  for (const [code, expected] of [
+    ["cep_elevation_cancelled", /administrador foi cancelada/],
+    ["cep_consolidation_failed", /finalização da atualização ficou pendente/],
+    ["cep_install_target_changed", /confira o destino/],
+  ]) {
+    const h = panelHarness(machineStatus(), "2.4.1", code + ": test");
+    await h.openConfirmation();
+    await h.confirmButton().props.onClick();
+    assert.match(h.errors[0], expected);
+    assert.equal(h.successes.length, 0);
+    assert.equal(h.calls.filter(({ command }) => command === "status").length, 2);
+  }
+});
+
+test("the dialog preserves a machine development link without offering an ineffective exit checkbox", async () => {
+  const h = panelHarness({ installed: true, version: "9.0.0", isDevLink: true, scope: "perMachine", developmentMode: true,
+    targetScope: "perUser", targetPath: "C:\\CEP\\user", requiresElevation: false,
+    installations: [{ installed: true, scope: "perMachine", isDevLink: true, version: "9.0.0", manifestValid: true }] });
+  await h.openConfirmation();
+  assert.equal(h.checks().length, 0);
+  assert.equal(h.confirmButton().props.disabled, false);
+  await h.confirmButton().props.onClick();
+  const args = h.calls.find(({ command }) => command === "install").args;
+  assert.equal(args.replaceDevLink, false);
+  assert.equal(args.expectedTargetScope, "perUser");
+  assert.match(h.successes[0], /Modo de desenvolvimento preservado/);
 });

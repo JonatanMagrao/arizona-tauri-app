@@ -136,6 +136,9 @@ function New-SyntheticZxp {
     [string]$BundleId = "com.arizona-carrefour.cep",
     [string]$BundleVersion = "9.9.9",
     [string]$CertificateSeed = "arizona-test-certificate",
+    [string]$IndexContent = "<html></html>",
+    [hashtable]$ExtraSignedFiles = @{},
+    [switch]$ReverseSignedEntries,
     [switch]$OmitSignatures,
     [switch]$OmitMimetype,
     [switch]$OmitDebug,
@@ -156,7 +159,10 @@ function New-SyntheticZxp {
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <ExtensionManifest Version="6.0" ExtensionBundleId="$BundleId" ExtensionBundleVersion="$BundleVersion" ExtensionBundleName="Arizona - Carrefour" />
 "@
-    "main/index.html" = "<html></html>"
+    "main/index.html" = $IndexContent
+  }
+  foreach ($extraName in $ExtraSignedFiles.Keys) {
+    $textEntries.Add([string]$extraName, [string]$ExtraSignedFiles[$extraName])
   }
 
   # Part of the signature manifest, so the release pipeline must ship it as is.
@@ -186,7 +192,16 @@ function New-SyntheticZxp {
     $entries[$entryName] = $utf8.GetBytes([string]$textEntries[$entryName])
   }
   if (!$OmitSignatures) {
-    $signatureXml = New-SyntheticCepSignatureXml -Entries $entries -Identity $identity
+    $signatureEntries = $entries
+    if ($ReverseSignedEntries) {
+      $signatureEntries = [ordered]@{}
+      $names = @($entries.Keys)
+      [array]::Reverse($names)
+      foreach ($entryName in $names) {
+        $signatureEntries[$entryName] = $entries[$entryName]
+      }
+    }
+    $signatureXml = New-SyntheticCepSignatureXml -Entries $signatureEntries -Identity $identity
     if ($TamperSignatureValue) {
       $signatureDocument = New-Object System.Xml.XmlDocument
       $signatureDocument.PreserveWhitespace = $true
@@ -245,6 +260,8 @@ function New-SyntheticCepPayload {
     [string]$TauriVersion = "test",
     [string]$BundleVersion = "9.9.9",
     [string]$CertificateSeed = "arizona-test-certificate",
+    [string]$IndexContent = "<html></html>",
+    [switch]$ReverseSignedEntries,
     [string]$Sha256Override = "",
     [switch]$OmitSignatures,
     [switch]$OmitDebug,
@@ -262,6 +279,8 @@ function New-SyntheticCepPayload {
     -Path (Join-Path $payloadRootFull "cep\com.arizona-carrefour.cep.zxp") `
     -BundleVersion $BundleVersion `
     -CertificateSeed $CertificateSeed `
+    -IndexContent $IndexContent `
+    -ReverseSignedEntries:$ReverseSignedEntries `
     -OmitSignatures:$OmitSignatures `
     -OmitDebug:$OmitDebug `
     -IncludeSourceMap:$IncludeSourceMap `

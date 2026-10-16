@@ -44,6 +44,31 @@ try {
   $directoryVerification = Assert-CepDirectoryContentSignature -Directory $validDirectory
   Assert-True ($directoryVerification.CertificateFingerprint -ceq $valid.CertificateFingerprint) `
     "the extracted signed tree should pass the same verification"
+  Assert-True (Test-CepVerifiedContentEqual -Left $verification -Right $directoryVerification) `
+    "verified archive and extracted tree should have the same signed file identity"
+
+  $reissued = New-SyntheticZxp -Path (Join-Path $testRoot "reissued.zxp") -ReverseSignedEntries
+  $reissuedVerification = Assert-ZxpContentSignature -Path $reissued.Path
+  Assert-True ($reissued.Sha256 -cne $valid.Sha256) `
+    "the reordered signed manifest must produce a different signature envelope"
+  Assert-True (Test-CepVerifiedContentEqual -Left $verification -Right $reissuedVerification) `
+    "content equality must ignore signature envelope bytes and reference order"
+
+  $changed = New-SyntheticZxp -Path (Join-Path $testRoot "changed.zxp") -IndexContent "correction"
+  $changedVerification = Assert-ZxpContentSignature -Path $changed.Path
+  Assert-True (!(Test-CepVerifiedContentEqual -Left $verification -Right $changedVerification)) `
+    "different verified digests must prevent same-version preservation"
+
+  $extra = New-SyntheticZxp -Path (Join-Path $testRoot "extra.zxp") -ExtraSignedFiles @{ "main/new.js" = "new" }
+  $extraVerification = Assert-ZxpContentSignature -Path $extra.Path
+  Assert-True (!(Test-CepVerifiedContentEqual -Left $verification -Right $extraVerification)) `
+    "adding a signed file must change content identity"
+  Assert-True (!(Test-CepVerifiedContentEqual -Left $extraVerification -Right $verification)) `
+    "removing a signed file must change content identity"
+  $renamed = New-SyntheticZxp -Path (Join-Path $testRoot "renamed.zxp") -ExtraSignedFiles @{ "main/renamed.js" = "new" }
+  $renamedVerification = Assert-ZxpContentSignature -Path $renamed.Path
+  Assert-True (!(Test-CepVerifiedContentEqual -Left $extraVerification -Right $renamedVerification)) `
+    "equal digest sets with different signed paths must not be treated as identical"
 
   $invalidSignature = New-SyntheticZxp `
     -Path (Join-Path $testRoot "invalid-signature.zxp") `

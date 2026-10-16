@@ -777,6 +777,10 @@ html, body, #root, .content{ overflow-x: hidden; }
   align-self: start;
 }
 
+.content--jobs{
+  align-content: safe center;
+}
+
 .content .form-row{
   margin-bottom: 4px;
 }

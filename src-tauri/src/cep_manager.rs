@@ -23,6 +23,9 @@ use zip::ZipArchive;
 use crate::after_effects;
 use crate::AuthState;
 
+mod full_consolidation;
+pub use full_consolidation::start_full_consolidation;
+
 const CEP_BUNDLE_ID: &str = "com.arizona-carrefour.cep";
 const PLAYER_DEBUG_MODE_VALUE: &str = "PlayerDebugMode";
 const CSXS_VERSIONS: [&str; 2] = ["CSXS.11", "CSXS.12"];
@@ -89,6 +92,12 @@ pub struct CepExtensionStatus {
     scope: Option<String>,
     installations: Vec<CepInstallationStatus>,
     has_multiple_installations: bool,
+    target_scope: String,
+    target_path: String,
+    requires_elevation: bool,
+    development_mode: bool,
+    consolidation_required: bool,
+    automatic_consolidation: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -107,6 +116,21 @@ struct CepInstallationCandidate {
     status: CepInstallationStatus,
     semantic_version: Option<Version>,
     manifest_modified: Option<SystemTime>,
+    regular_directory: bool,
+    manifest_digest: Option<String>,
+    link_target: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CepInstallPlan {
+    scope: String,
+    target: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+struct CepUserConsolidation {
+    expected: CepInstallationCandidate,
+    content_digest: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -149,6 +173,7 @@ pub fn set_cep_debug_mode(
 pub fn cep_extension_status() -> Result<CepExtensionStatus, String> {
     let _operation = lock_cep_operation()?;
     let candidates = cep_installation_inventory()?;
+    let plan = select_install_plan(&candidates)?;
     let effective = select_effective_installation(&candidates);
     let fallback = candidates
         .first()
@@ -172,6 +197,18 @@ pub fn cep_extension_status() -> Result<CepExtensionStatus, String> {
         scope: effective.map(|candidate| candidate.status.scope.clone()),
         installations,
         has_multiple_installations,
+        target_scope: plan.scope.clone(),
+        target_path: plan.target.to_string_lossy().into_owned(),
+        requires_elevation: plan.scope == CEP_SCOPE_PER_MACHINE,
+        development_mode: candidates
+            .iter()
+            .any(|candidate| candidate.status.installed && candidate.status.is_dev_link),
+        consolidation_required: candidates
+            .iter()
+            .filter(|candidate| candidate.regular_directory && candidate.status.installed)
+            .count()
+            > 1,
+        automatic_consolidation: full_consolidation::status().to_string(),
     })
 }
 
@@ -194,6 +231,8 @@ pub async fn install_cep_zxp(
     replace_dev_link: Option<bool>,
     allow_downgrade: Option<bool>,
     expected_version: Option<String>,
+    expected_target_scope: String,
+    expected_target_path: String,
 ) -> Result<CepInstallResult, String> {
     let replace_dev_link = replace_dev_link.unwrap_or(false);
     let allow_downgrade = allow_downgrade.unwrap_or(false);
@@ -207,6 +246,8 @@ pub async fn install_cep_zxp(
             replace_dev_link,
             allow_downgrade,
             expected_version.as_deref(),
+            &expected_target_scope,
+            Path::new(&expected_target_path),
             &verifier,
         )
     })
@@ -672,13 +713,500 @@ fn assert_extracted_tree_is_trusted(extracted: &Path) -> Result<(), String> {
     assert_signed_by_trusted_certificate(&signatures_xml)
 }
 
+fn select_install_plan(candidates: &[CepInstallationCandidate]) -> Result<CepInstallPlan, String> {
+    // Match the native x64/x86 inventory order, regardless of which version
+    // Adobe would currently load. Never create a second per-user release over
+    // a Full installation, and never treat a reparse point as a normal release.
+    let target = candidates
+        .iter()
+        .find(|candidate| {
+            candidate.status.scope == CEP_SCOPE_PER_MACHINE && candidate.regular_directory
+        })
+        .or_else(|| {
+            candidates
+                .iter()
+                .find(|candidate| candidate.status.scope == CEP_SCOPE_PER_USER)
+        })
+        .ok_or_else(|| {
+            "cep_install_failed: Não foi possível determinar o destino CEP.".to_string()
+        })?;
+    Ok(CepInstallPlan {
+        scope: target.status.scope.clone(),
+        target: PathBuf::from(&target.status.path),
+    })
+}
+
+fn assert_expected_install_target(
+    plan: &CepInstallPlan,
+    expected_scope: &str,
+    expected_path: &Path,
+) -> Result<(), String> {
+    if expected_scope != plan.scope
+        || windows_path_dedup_key(expected_path) != windows_path_dedup_key(&plan.target)
+    {
+        return Err("cep_install_target_changed: O destino da extensão mudou. Atualize o status e confirme a instalação novamente.".to_string());
+    }
+    Ok(())
+}
+
+fn installation_state_matches(
+    expected: &CepInstallationCandidate,
+    current: &CepInstallationCandidate,
+) -> bool {
+    expected.status.installed == current.status.installed
+        && expected.status.is_dev_link == current.status.is_dev_link
+        && expected.regular_directory == current.regular_directory
+        && expected.status.manifest_valid == current.status.manifest_valid
+        && expected.status.version == current.status.version
+        && expected.manifest_modified == current.manifest_modified
+        && expected.manifest_digest == current.manifest_digest
+        && expected.link_target == current.link_target
+}
+
+fn assert_inventory_unchanged(
+    expected: &[CepInstallationCandidate],
+    current: &[CepInstallationCandidate],
+) -> Result<(), String> {
+    let unchanged = expected.len() == current.len()
+        && expected.iter().zip(current).all(|(before, after)| {
+            before.status.scope == after.status.scope
+                && windows_path_dedup_key(Path::new(&before.status.path))
+                    == windows_path_dedup_key(Path::new(&after.status.path))
+                && installation_state_matches(before, after)
+        });
+    if !unchanged {
+        return Err("cep_installation_changed: Uma instalação CEP mudou durante a operação. Atualize o status e tente novamente.".to_string());
+    }
+    Ok(())
+}
+
+fn system_update_arguments(
+    verifier: &CepContentVerifier,
+    zxp_path: &Path,
+    sha256: &str,
+    version: &str,
+    target: &Path,
+    allow_downgrade: bool,
+) -> Result<Vec<OsString>, String> {
+    let script = verifier
+        .script
+        .parent()
+        .ok_or_else(|| "cep_install_failed: Pasta de helpers não encontrada.".to_string())?
+        .join("update-cep-system.ps1");
+    require_regular_verifier_file(&script, "update-cep-system.ps1")?;
+    require_regular_verifier_file(
+        &script.with_file_name("cep-system-update-core.ps1"),
+        "cep-system-update-core.ps1",
+    )?;
+    let mut arguments = vec![
+        OsString::from("-NoProfile"),
+        OsString::from("-NonInteractive"),
+        OsString::from("-ExecutionPolicy"),
+        OsString::from("Bypass"),
+        OsString::from("-File"),
+        script.into_os_string(),
+        OsString::from("-ZxpPath"),
+        absolute_verification_target(zxp_path)?.into_os_string(),
+        OsString::from("-ExpectedSha256"),
+        OsString::from(sha256),
+        OsString::from("-ExpectedVersion"),
+        OsString::from(version),
+        OsString::from("-TargetPath"),
+        target.as_os_str().to_os_string(),
+    ];
+    if allow_downgrade {
+        arguments.push(OsString::from("-AllowDowngrade"));
+    }
+    Ok(arguments)
+}
+
+fn system_update_exit_result(
+    code: Option<i32>,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> Result<(), String> {
+    match code {
+        Some(0) => Ok(()),
+        Some(1223) => Err("cep_elevation_cancelled: A autorização do Windows foi cancelada. A instalação não foi iniciada.".to_string()),
+        Some(20) => Err("after_effects_running: Feche o After Effects antes de instalar a extensão.".to_string()),
+        _ => {
+            let detail = verifier_process_detail(stdout, stderr);
+            Err(format!("cep_install_failed: O helper de instalação para todos os usuários não concluiu a operação (código {code:?}). {detail}"))
+        }
+    }
+}
+
+#[cfg(windows)]
+fn run_system_update(verifier: &CepContentVerifier, arguments: &[OsString]) -> Result<(), String> {
+    let output = Command::new(&verifier.powershell)
+        .args(arguments)
+        .stdin(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|err| {
+            format!("cep_install_failed: Não foi possível iniciar a atualização elevada: {err}")
+        })?;
+    system_update_exit_result(output.status.code(), &output.stdout, &output.stderr)
+}
+
+#[cfg(not(windows))]
+fn run_system_update(
+    _verifier: &CepContentVerifier,
+    _arguments: &[OsString],
+) -> Result<(), String> {
+    Err(
+        "cep_install_failed: A atualização elevada CEP está disponível apenas no Windows."
+            .to_string(),
+    )
+}
+
+fn archive_sha256(path: &Path) -> Result<String, String> {
+    let mut file = fs::File::open(path)
+        .map_err(|err| format!("cep_install_failed: Não foi possível ler o ZXP: {err}"))?;
+    assert_archive_file_size(&file)?;
+    let expected_length = file
+        .metadata()
+        .map_err(|err| format!("cep_install_failed: Não foi possível inspecionar o ZXP: {err}"))?
+        .len();
+    let mut hash = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    let mut total = 0u64;
+    loop {
+        let count = file
+            .read(&mut buffer)
+            .map_err(|err| format!("cep_install_failed: Falha ao calcular o hash do ZXP: {err}"))?;
+        if count == 0 {
+            break;
+        }
+        total += count as u64;
+        if total > expected_length || total > MAX_ZXP_ARCHIVE_BYTES {
+            return Err("cep_zxp_changed: O tamanho do ZXP mudou durante a leitura. Selecione o arquivo novamente.".to_string());
+        }
+        hash.update(&buffer[..count]);
+    }
+    if total != expected_length {
+        return Err("cep_zxp_changed: O tamanho do ZXP mudou durante a leitura. Selecione o arquivo novamente.".to_string());
+    }
+    Ok(format!("{:x}", hash.finalize()))
+}
+
+fn install_system_zxp_file(
+    zxp_path: &Path,
+    package: &CepZxpInfo,
+    plan: &CepInstallPlan,
+    inventory: &[CepInstallationCandidate],
+    replace_dev_link: bool,
+    allow_downgrade: bool,
+    verifier: &CepContentVerifier,
+) -> Result<CepInstallResult, String> {
+    let sha256 = archive_sha256(zxp_path)?;
+    let arguments = system_update_arguments(
+        verifier,
+        zxp_path,
+        &sha256,
+        &package.version,
+        &plan.target,
+        allow_downgrade,
+    )?;
+    let current = cep_installation_inventory()?;
+    assert_expected_install_target(&select_install_plan(&current)?, &plan.scope, &plan.target)?;
+    assert_inventory_unchanged(inventory, &current)?;
+    assert_after_effects_is_closed()?;
+    let consolidation = prepare_user_consolidation(inventory, replace_dev_link)?;
+    let preserves_dev_link = inventory.iter().any(|candidate| {
+        candidate.status.is_dev_link
+            && candidate.status.installed
+            && (candidate.status.scope != CEP_SCOPE_PER_USER || !replace_dev_link)
+    });
+    // HKCU belongs to this unelevated process. Do not disrupt an intentionally
+    // preserved development link, whose unsigned build still needs this flag.
+    run_system_update(verifier, &arguments)?;
+    finish_system_installation(inventory, consolidation.as_ref(), || {
+        if folder_is_junction(&plan.target) || !plan.target.is_dir() {
+            return Err("cep_install_failed: O destino elevado não é uma pasta normal após o commit.".to_string());
+        }
+        let actual = installed_bundle_version(&plan.target)?;
+        assert_zxp_version_unchanged(&package.version, &actual)?;
+        assert_extracted_tree_is_trusted(&plan.target)?;
+        assert_extracted_debug_file(&plan.target)?;
+        verify_cep_content_signature(verifier, CepContentTarget::Directory(&plan.target))?;
+        assert_after_effects_is_closed()
+    }, || {
+        // UAC cancellation and a failed link retirement leave HKCU untouched.
+        // A preserved development tree continues to require the debug flag.
+        let now_preserves_dev_link = cep_installation_inventory()?.iter().any(|candidate| candidate.status.is_dev_link && candidate.status.installed);
+        if !preserves_dev_link && !now_preserves_dev_link { apply_debug_mode(false)?; }
+        Ok(())
+    }).map_err(|err| {
+        if err.starts_with("cep_consolidation_failed:") { err } else {
+            format!("cep_consolidation_failed: O helper concluiu a instalação do sistema, mas a finalização falhou. A cópia do perfil foi preservada: {err}")
+        }
+    })?;
+    Ok(CepInstallResult {
+        version: package.version.clone(),
+    })
+}
+
+fn prepare_user_consolidation(
+    inventory: &[CepInstallationCandidate],
+    replace_dev_link: bool,
+) -> Result<Option<CepUserConsolidation>, String> {
+    let Some(user) = inventory
+        .iter()
+        .find(|candidate| candidate.status.scope == CEP_SCOPE_PER_USER)
+    else {
+        return Ok(None);
+    };
+    if !user.status.installed
+        || (user.status.is_dev_link && !replace_dev_link)
+        || (!user.status.is_dev_link && !user.regular_directory)
+    {
+        return Ok(None);
+    }
+    let content_digest = if user.regular_directory {
+        Some(installation_tree_digest(Path::new(&user.status.path))?)
+    } else {
+        None
+    };
+    Ok(Some(CepUserConsolidation {
+        expected: user.clone(),
+        content_digest,
+    }))
+}
+
+fn finish_system_installation<F, G>(
+    inventory: &[CepInstallationCandidate],
+    consolidation: Option<&CepUserConsolidation>,
+    verify_commit: F,
+    finalize_profile: G,
+) -> Result<(), String>
+where
+    F: FnOnce() -> Result<(), String>,
+    G: FnOnce() -> Result<(), String>,
+{
+    // A helper exit code alone never authorizes deleting the user's copy.
+    verify_commit()?;
+    // An absent or intentionally preserved user target is still part of the
+    // transaction. A new dev link during UAC must never lose its debug flag.
+    if let Some(expected) = inventory
+        .iter()
+        .find(|candidate| candidate.status.scope == CEP_SCOPE_PER_USER)
+    {
+        let current =
+            inspect_cep_installation(CEP_SCOPE_PER_USER, Path::new(&expected.status.path));
+        if !installation_state_matches(expected, &current) {
+            return Err("cep_consolidation_failed: A instalação do sistema foi verificada, mas o destino do perfil mudou durante a operação. O perfil e o PlayerDebugMode foram preservados.".to_string());
+        }
+    }
+    if let Some(user) = consolidation {
+        retire_user_installation(user).map_err(|err| format!("cep_consolidation_failed: A versão para todos os usuários foi instalada e verificada, mas a cópia do perfil não foi totalmente consolidada: {err}"))?;
+    }
+    finalize_profile().map_err(|err| format!("cep_consolidation_failed: A extensão foi instalada e as cópias antigas foram consolidadas, mas não foi possível finalizar o PlayerDebugMode: {err}"))
+}
+
+fn assert_no_link_ancestors(path: &Path) -> Result<(), String> {
+    let mut current = path.parent();
+    while let Some(parent) = current {
+        if folder_is_junction(parent) {
+            return Err(format!(
+                "a pasta ancestral {} é um link e foi preservada",
+                parent.display()
+            ));
+        }
+        let metadata = fs::symlink_metadata(parent).map_err(|err| {
+            format!(
+                "não foi possível verificar a pasta ancestral {}: {err}",
+                parent.display()
+            )
+        })?;
+        if !metadata.is_dir() {
+            return Err(format!(
+                "a pasta ancestral {} não é um diretório",
+                parent.display()
+            ));
+        }
+        current = parent.parent();
+    }
+    Ok(())
+}
+
+fn installation_tree_digest(root: &Path) -> Result<String, String> {
+    assert_no_link_ancestors(root)?;
+    if folder_is_junction(root) {
+        return Err("a cópia normal do perfil tornou-se um link".to_string());
+    }
+    let mut pending = vec![root.to_path_buf()];
+    let mut records = Vec::new();
+    let mut total_bytes = 0u64;
+    let mut count = 0usize;
+    while let Some(current) = pending.pop() {
+        count += 1;
+        if count > MAX_ZXP_ENTRIES + 1 {
+            return Err(
+                "a cópia do perfil excede o limite de arquivos para consolidação segura"
+                    .to_string(),
+            );
+        }
+        assert_no_link_ancestors(&current)?;
+        let metadata = fs::symlink_metadata(&current)
+            .map_err(|err| format!("não foi possível inspecionar {}: {err}", current.display()))?;
+        let relative = current
+            .strip_prefix(root)
+            .map_err(|err| err.to_string())?
+            .to_string_lossy();
+        if folder_is_junction(&current) {
+            let target = fs::read_link(&current).map_err(|err| {
+                format!(
+                    "não foi possível identificar o link {}: {err}",
+                    current.display()
+                )
+            })?;
+            records.push(format!("L:{}:{}", relative, target.display()));
+        } else if metadata.is_dir() {
+            records.push(format!("D:{relative}"));
+            for entry in fs::read_dir(&current).map_err(|err| err.to_string())? {
+                pending.push(entry.map_err(|err| err.to_string())?.path());
+            }
+        } else if metadata.is_file() {
+            total_bytes = total_bytes
+                .checked_add(metadata.len())
+                .ok_or_else(|| "tamanho de arquivo inválido".to_string())?;
+            if total_bytes > MAX_ZXP_TOTAL_UNCOMPRESSED_BYTES {
+                return Err(
+                    "a cópia do perfil excede o limite de tamanho para consolidação segura"
+                        .to_string(),
+                );
+            }
+            let mut file = fs::File::open(&current).map_err(|err| err.to_string())?;
+            let mut hash = Sha256::new();
+            let mut buffer = [0u8; 64 * 1024];
+            let mut read = 0u64;
+            loop {
+                let size = file.read(&mut buffer).map_err(|err| err.to_string())?;
+                if size == 0 {
+                    break;
+                }
+                read += size as u64;
+                if read > metadata.len() {
+                    return Err("um arquivo do perfil mudou durante a leitura".to_string());
+                }
+                hash.update(&buffer[..size]);
+            }
+            if read != metadata.len() {
+                return Err("um arquivo do perfil mudou durante a leitura".to_string());
+            }
+            records.push(format!("F:{}:{}:{:x}", relative, read, hash.finalize()));
+        } else {
+            return Err(format!(
+                "entrada não suportada na cópia do perfil: {}",
+                current.display()
+            ));
+        }
+    }
+    records.sort();
+    let mut digest = Sha256::new();
+    for record in records {
+        digest.update(record.len().to_le_bytes());
+        digest.update(record.as_bytes());
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
+fn retire_user_installation(consolidation: &CepUserConsolidation) -> Result<(), String> {
+    retire_user_installation_guarded(consolidation, || Ok(()))
+}
+
+fn retire_user_installation_guarded<F>(
+    consolidation: &CepUserConsolidation,
+    mut guard: F,
+) -> Result<(), String>
+where
+    F: FnMut() -> Result<(), String>,
+{
+    let expected = &consolidation.expected;
+    let target = PathBuf::from(&expected.status.path);
+    assert_no_link_ancestors(&target)?;
+    let current = inspect_cep_installation(CEP_SCOPE_PER_USER, &target);
+    if !installation_state_matches(expected, &current) {
+        return Err(
+            "o destino do perfil mudou; ele foi preservado. Atualize o status e tente novamente."
+                .to_string(),
+        );
+    }
+    if let Some(digest) = &consolidation.content_digest {
+        if &installation_tree_digest(&target)? != digest {
+            return Err(
+                "o conteúdo do perfil mudou durante a atualização e foi preservado".to_string(),
+            );
+        }
+    }
+    let extensions = target
+        .parent()
+        .ok_or_else(|| "pasta CEP inválida".to_string())?;
+    let work_root = install_work_root(extensions)?;
+    for directory in [
+        extensions,
+        extensions
+            .parent()
+            .ok_or_else(|| "pasta CEP inválida".to_string())?,
+        work_root.as_path(),
+    ] {
+        if folder_is_junction(directory) {
+            return Err(format!(
+                "a pasta {} é um link e foi preservada",
+                directory.display()
+            ));
+        }
+    }
+    fs::create_dir_all(&work_root)
+        .map_err(|err| format!("não foi possível criar {}: {err}", work_root.display()))?;
+    let retired = unused_install_work_path(&work_root, "retired")?;
+    guard()?;
+    // Quarantine atomically outside Adobe's scanned directory. A link is moved
+    // and removed as a link; its repository target is never traversed.
+    fs::rename(&target, &retired)
+        .map_err(|err| format!("não foi possível reservar a cópia anterior: {err}"))?;
+    let reserved = inspect_cep_installation(CEP_SCOPE_PER_USER, &retired);
+    let reserved_content_matches = match &consolidation.content_digest {
+        Some(digest) => installation_tree_digest(&retired).is_ok_and(|actual| &actual == digest),
+        None => true,
+    };
+    if !installation_state_matches(expected, &reserved) || !reserved_content_matches {
+        let restore = fs::rename(&retired, &target);
+        return Err(match restore {
+            Ok(()) => "o destino mudou durante a reserva e foi restaurado".to_string(),
+            Err(err) => format!(
+                "o destino mudou; restauração falhou ({err}). Cópia preservada em {}",
+                retired.display()
+            ),
+        });
+    }
+    if let Err(error) = guard() {
+        return Err(match fs::rename(&retired, &target) {
+            Ok(()) => format!("a consolidação foi adiada e a cópia do perfil foi restaurada: {error}"),
+            Err(_) => "a consolidação foi interrompida; a cópia do perfil foi preservada fora de extensions".to_string(),
+        });
+    }
+    remove_install_work_path(&retired).map_err(|err| {
+        format!(
+            "a cópia já saiu da pasta examinada pelo Adobe; limpeza pendente em {}: {err}",
+            retired.display()
+        )
+    })
+}
+
 fn install_zxp_file(
     zxp_path: &Path,
     replace_dev_link: bool,
     allow_downgrade: bool,
     expected_version: Option<&str>,
+    expected_target_scope: &str,
+    expected_target_path: &Path,
     verifier: &CepContentVerifier,
 ) -> Result<CepInstallResult, String> {
+    let mut inventory = cep_installation_inventory()?;
+    let plan = select_install_plan(&inventory)?;
+    assert_expected_install_target(&plan, expected_target_scope, expected_target_path)?;
     // Rejects a foreign bundle before anything is touched on disk; the version
     // that is reported back comes from the extracted manifest further down.
     let package = inspect_zxp_file_with_verifier(zxp_path, verifier)?;
@@ -691,10 +1219,22 @@ fn install_zxp_file(
         &package_version,
         &package.version,
         allow_downgrade,
-        &cep_installation_inventory()?,
+        &inventory,
     )?;
 
     assert_after_effects_is_closed()?;
+
+    if plan.scope == CEP_SCOPE_PER_MACHINE {
+        return install_system_zxp_file(
+            zxp_path,
+            &package,
+            &plan,
+            &inventory,
+            replace_dev_link,
+            allow_downgrade,
+            verifier,
+        );
+    }
 
     let extensions = extensions_dir()?;
     fs::create_dir_all(&extensions).map_err(|err| {
@@ -719,6 +1259,10 @@ fn install_zxp_file(
         );
     }
     recover_interrupted_install(&extensions, &work_root, &target)?;
+    // Recovery may restore a prior target. Capture that restored state as the
+    // transaction baseline without changing the scope confirmed by the caller.
+    inventory = cep_installation_inventory()?;
+    assert_expected_install_target(&select_install_plan(&inventory)?, &plan.scope, &plan.target)?;
 
     // Dev machines keep a junction pointing at the extension build output.
     // Keep it in place until the commit: swap_into_place renames the reparse
@@ -760,28 +1304,43 @@ fn install_zxp_file(
             // The first check only protects the start of a potentially long
             // extraction. Refuse the commit if After Effects opened meanwhile.
             assert_after_effects_is_closed()?;
+            let current_inventory = cep_installation_inventory()?;
+            assert_expected_install_target(
+                &select_install_plan(&current_inventory)?,
+                &plan.scope,
+                &plan.target,
+            )?;
+            assert_inventory_unchanged(&inventory, &current_inventory)?;
             // A Full installer or another process may have replaced the
             // per-machine extension while this package was being extracted.
             // Re-evaluate the effective Adobe candidate immediately before the
             // commit so an older per-user package cannot win accidentally.
-            let extracted_version = parse_cep_semver(&version)
-                .map_err(|err| format!("cep_install_failed: {err}"))?;
+            let extracted_version =
+                parse_cep_semver(&version).map_err(|err| format!("cep_install_failed: {err}"))?;
             assert_downgrade_allowed(
                 &extracted_version,
                 &version,
                 allow_downgrade,
-                &cep_installation_inventory()?,
+                &current_inventory,
             )?;
-            // A signed production tree must not inherit the debug bypass from
-            // an older/dev installation. Clear every supported CSXS key before
-            // touching the current target, and abort safely if that fails.
-            apply_debug_mode(false).map_err(|err| {
-                format!(
-                    "cep_install_failed: Não foi possível desativar o PlayerDebugMode antes da instalação: {err}"
-                )
-            })?;
-            swap_into_place(&extensions, &work_root, &target, &temp)
-                .map_err(|err| format!("cep_install_failed: {err}"))?;
+            finish_user_installation(
+                || {
+                    swap_into_place(&extensions, &work_root, &target, &temp)
+                        .map_err(|err| format!("cep_install_failed: {err}"))
+                },
+                || {
+                    // A failed swap restores the dev link without changing HKCU.
+                    // Keep the flag if another development link remains anywhere.
+                    let preserves_dev_link =
+                        cep_installation_inventory()?.iter().any(|candidate| {
+                            candidate.status.is_dev_link && candidate.status.installed
+                        });
+                    if !preserves_dev_link {
+                        apply_debug_mode(false)?;
+                    }
+                    Ok(())
+                },
+            )?;
             Ok(version)
         });
     let version = match result {
@@ -793,6 +1352,15 @@ fn install_zxp_file(
     };
 
     Ok(CepInstallResult { version })
+}
+
+fn finish_user_installation<F, G>(commit: F, finalize_profile: G) -> Result<(), String>
+where
+    F: FnOnce() -> Result<(), String>,
+    G: FnOnce() -> Result<(), String>,
+{
+    commit()?;
+    finalize_profile().map_err(|err| format!("cep_consolidation_failed: A extensão foi instalada no perfil, mas não foi possível finalizar o PlayerDebugMode: {err}"))
 }
 
 fn assert_after_effects_is_closed() -> Result<(), String> {
@@ -1328,10 +1896,24 @@ fn cep_installation_inventory() -> Result<Vec<CepInstallationCandidate>, String>
             .map(|target| (CEP_SCOPE_PER_MACHINE, target)),
     );
 
-    Ok(targets
+    targets
         .into_iter()
-        .map(|(scope, target)| inspect_cep_installation(scope, &target))
-        .collect())
+        .map(|(scope, target)| {
+            assert_inventory_target_probe(&target, fs::symlink_metadata(&target))?;
+            Ok(inspect_cep_installation(scope, &target))
+        })
+        .collect()
+}
+
+fn assert_inventory_target_probe(
+    path: &Path,
+    probe: io::Result<fs::Metadata>,
+) -> Result<(), String> {
+    match probe {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("cep_install_failed: Não foi possível inspecionar o destino CEP {}. A instalação foi interrompida para não criar uma cópia em outro escopo: {error}", path.display())),
+    }
 }
 
 fn inspect_cep_installation(scope: &str, target: &Path) -> CepInstallationCandidate {
@@ -1341,6 +1923,14 @@ fn inspect_cep_installation(scope: &str, target: &Path) -> CepInstallationCandid
     // broken install left a regular file instead of a directory. Only a valid
     // Arizona manifest can become the effective installation below.
     let installed = fs::symlink_metadata(target).is_ok();
+    let regular_directory =
+        !is_dev_link && fs::symlink_metadata(target).is_ok_and(|metadata| metadata.is_dir());
+    let link_target = if is_dev_link {
+        fs::read_link(target).ok()
+    } else {
+        None
+    };
+    let mut manifest_digest = None;
     let mut status = CepInstallationStatus {
         scope: scope.to_string(),
         installed,
@@ -1355,6 +1945,9 @@ fn inspect_cep_installation(scope: &str, target: &Path) -> CepInstallationCandid
             status,
             semantic_version: None,
             manifest_modified: None,
+            regular_directory,
+            manifest_digest,
+            link_target,
         };
     }
 
@@ -1372,12 +1965,18 @@ fn inspect_cep_installation(scope: &str, target: &Path) -> CepInstallationCandid
             status,
             semantic_version: None,
             manifest_modified: None,
+            regular_directory,
+            manifest_digest,
+            link_target,
         };
     }
 
     let info = read_file_text_limited(&manifest_path, MAX_ZXP_METADATA_BYTES)
         .ok()
-        .and_then(|xml| manifest_bundle_info(&xml).ok());
+        .and_then(|xml| {
+            manifest_digest = Some(format!("{:x}", Sha256::digest(xml.as_bytes())));
+            manifest_bundle_info(&xml).ok()
+        });
     if let Some(info) = info {
         status.version = info.version;
         if info.bundle_id.as_deref() == Some(CEP_BUNDLE_ID) {
@@ -1390,6 +1989,9 @@ fn inspect_cep_installation(scope: &str, target: &Path) -> CepInstallationCandid
                 status,
                 semantic_version,
                 manifest_modified,
+                regular_directory,
+                manifest_digest,
+                link_target,
             };
         }
     }
@@ -1398,6 +2000,9 @@ fn inspect_cep_installation(scope: &str, target: &Path) -> CepInstallationCandid
         status,
         semantic_version: None,
         manifest_modified,
+        regular_directory,
+        manifest_digest,
+        link_target,
     }
 }
 
@@ -1472,38 +2077,14 @@ fn assert_downgrade_allowed(
     allow_downgrade: bool,
     candidates: &[CepInstallationCandidate],
 ) -> Result<(), String> {
-    let blocking_system = candidates
+    // Development trees are not released versions. Leaving development mode
+    // requires its own explicit confirmation, never a release downgrade check.
+    let releases: Vec<_> = candidates
         .iter()
-        .filter(|candidate| candidate.status.scope == CEP_SCOPE_PER_MACHINE)
-        .filter(|candidate| {
-            candidate
-                .semantic_version
-                .as_ref()
-                .is_some_and(|version| version.cmp_precedence(selected_version).is_gt())
-        })
-        .max_by(|left, right| {
-            let left_version = left
-                .semantic_version
-                .as_ref()
-                .expect("filtered system candidate has a version");
-            let right_version = right
-                .semantic_version
-                .as_ref()
-                .expect("filtered system candidate has a version");
-            left_version.cmp_precedence(right_version)
-        });
-    if let Some(blocking_system) = blocking_system {
-        let installed_version_text = blocking_system
-            .status
-            .version
-            .as_deref()
-            .unwrap_or("desconhecida");
-        return Err(format!(
-            "cep_downgrade_requires_full_installer: A versão CEP v{installed_version_text} está instalada para todos os usuários. Instalar a versão anterior v{selected_version_text} apenas no perfil atual não a substituiria; use o instalador Full para fazer um downgrade coordenado."
-        ));
-    }
-
-    let Some(effective) = select_effective_installation(candidates) else {
+        .filter(|candidate| !candidate.status.is_dev_link)
+        .cloned()
+        .collect();
+    let Some(effective) = select_effective_installation(&releases) else {
         return Ok(());
     };
     let Some(installed_version) = effective.semantic_version.as_ref() else {
@@ -1782,15 +2363,18 @@ fn windows_zip_component_is_safe(component: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        any_player_debug_mode_is_enabled, assert_downgrade_allowed, assert_zxp_version_unchanged,
-        content_verifier_arguments, create_install_staging_dir, extract_zxp_to,
-        fingerprint_is_trusted, inspect_cep_installation, install_work_root, is_sha256_hex,
-        is_stale_install_leftover, list_install_backups, manifest_bundle_info, parse_cep_semver,
-        parse_trusted_certificates, player_debug_mode_is_enabled, random_suffix, read_archive_text,
+        any_player_debug_mode_is_enabled, assert_downgrade_allowed, assert_expected_install_target,
+        assert_inventory_unchanged, assert_zxp_version_unchanged, content_verifier_arguments,
+        create_install_staging_dir, extract_zxp_to, fingerprint_is_trusted,
+        finish_system_installation, inspect_cep_installation, install_work_root,
+        installation_tree_digest, is_sha256_hex, is_stale_install_leftover, list_install_backups,
+        manifest_bundle_info, parse_cep_semver, parse_trusted_certificates,
+        player_debug_mode_is_enabled, prepare_user_consolidation, random_suffix, read_archive_text,
         recover_interrupted_install, remove_install_work_path, require_regular_archive_entry,
         resolve_cep_content_verifier_in, sanitized_zip_entry_path, select_effective_installation,
-        signing_certificate_fingerprint, swap_into_place, system_extension_target_dirs_from,
-        system_extensions_dir_from, validate_archive_limits_and_paths,
+        select_install_plan, signing_certificate_fingerprint, swap_into_place,
+        system_extension_target_dirs_from, system_extensions_dir_from, system_update_arguments,
+        system_update_exit_result, validate_archive_limits_and_paths,
         verifier_output_has_success_marker, zip_names_match, CepContentTarget, CepContentVerifier,
         CepExtensionStatus, CEP_BUNDLE_ID, CEP_SCOPE_PER_MACHINE, CEP_SCOPE_PER_USER,
         CONTENT_SIGNATURE_SUCCESS_MARKER, MAX_ZXP_ENTRIES, TRUSTED_CERTIFICATES_MANIFEST,
@@ -2524,7 +3108,7 @@ mod tests {
     }
 
     #[test]
-    fn manual_downgrade_requires_confirmation_or_the_full_installer() {
+    fn manual_release_downgrade_requires_confirmation_in_either_existing_scope() {
         let root = TestDirectory::new("downgrade-policy");
         let user = root.path().join("user");
         let system = root.path().join("system");
@@ -2544,10 +3128,13 @@ mod tests {
             .expect("an upgrade should not require downgrade confirmation");
 
         let system_only = vec![inspect_cep_installation(CEP_SCOPE_PER_MACHINE, &system)];
-        let full_installer_error =
-            assert_downgrade_allowed(&selected_older, "2.1.0", true, &system_only)
-                .expect_err("a per-user package cannot downgrade a newer system install");
-        assert!(full_installer_error.starts_with("cep_downgrade_requires_full_installer:"));
+        assert_downgrade_allowed(&selected_older, "2.1.0", true, &system_only)
+            .expect("a confirmed coordinated system downgrade should pass");
+        assert!(
+            assert_downgrade_allowed(&selected_older, "2.1.0", false, &system_only)
+                .unwrap_err()
+                .starts_with("cep_downgrade_confirmation_required:")
+        );
 
         write_cep_manifest(&user, CEP_BUNDLE_ID, "2.3.0");
         let mixed_scopes = vec![
@@ -2559,10 +3146,8 @@ mod tests {
                 .and_then(|candidate| candidate.status.version.as_deref()),
             Some("2.3.0")
         );
-        let shadowed_system_error =
-            assert_downgrade_allowed(&selected_older, "2.1.0", true, &mixed_scopes)
-                .expect_err("a newer system copy would remain effective after the user downgrade");
-        assert!(shadowed_system_error.starts_with("cep_downgrade_requires_full_installer:"));
+        assert_downgrade_allowed(&selected_older, "2.1.0", true, &mixed_scopes)
+            .expect("the system update consolidates the normal copies in both scopes");
 
         write_cep_manifest(&system, CEP_BUNDLE_ID, "2.2.0+machine.7");
         let same_precedence_system = vec![inspect_cep_installation(CEP_SCOPE_PER_MACHINE, &system)];
@@ -2611,6 +3196,12 @@ mod tests {
                 .map(|candidate| candidate.status.clone())
                 .collect(),
             has_multiple_installations: true,
+            target_scope: CEP_SCOPE_PER_MACHINE.to_string(),
+            target_path: system.to_string_lossy().into_owned(),
+            requires_elevation: true,
+            development_mode: false,
+            consolidation_required: true,
+            automatic_consolidation: "idle".to_string(),
         };
         let json = serde_json::to_value(status).expect("status should serialize");
 
@@ -2619,6 +3210,11 @@ mod tests {
         assert_eq!(json["path"], system.to_string_lossy().as_ref());
         assert_eq!(json["isDevLink"], false);
         assert_eq!(json["scope"], CEP_SCOPE_PER_MACHINE);
+        assert_eq!(json["targetScope"], CEP_SCOPE_PER_MACHINE);
+        assert_eq!(json["targetPath"], system.to_string_lossy().as_ref());
+        assert_eq!(json["requiresElevation"], true);
+        assert_eq!(json["developmentMode"], false);
+        assert_eq!(json["consolidationRequired"], true);
         assert_eq!(json["hasMultipleInstallations"], true);
         assert_eq!(json["installations"].as_array().map(Vec::len), Some(2));
         assert_eq!(json["installations"][0]["scope"], CEP_SCOPE_PER_USER);
@@ -2629,6 +3225,401 @@ mod tests {
                 .map(serde_json::Map::len),
             Some(6)
         );
+    }
+
+    #[test]
+    fn update_plan_preserves_scope_and_prefers_existing_machine_over_user_or_dev_versions() {
+        let root = TestDirectory::new("update-plan");
+        let user = root.path().join("user");
+        let machine = root.path().join("machine");
+        let x86 = root.path().join("machine-x86");
+        let inventory = || {
+            vec![
+                inspect_cep_installation(CEP_SCOPE_PER_USER, &user),
+                inspect_cep_installation(CEP_SCOPE_PER_MACHINE, &machine),
+                inspect_cep_installation(CEP_SCOPE_PER_MACHINE, &x86),
+            ]
+        };
+        let plan = select_install_plan(&inventory()).unwrap();
+        assert_eq!(plan.scope, CEP_SCOPE_PER_USER);
+        assert_eq!(plan.target, user);
+        write_cep_manifest(&user, CEP_BUNDLE_ID, "9.0.0");
+        assert_eq!(
+            select_install_plan(&inventory()).unwrap().scope,
+            CEP_SCOPE_PER_USER
+        );
+        write_cep_manifest(&x86, CEP_BUNDLE_ID, "2.3.0");
+        assert_eq!(select_install_plan(&inventory()).unwrap().target, x86);
+        write_cep_manifest(&machine, CEP_BUNDLE_ID, "2.2.0");
+        let mut candidates = inventory();
+        assert_eq!(select_install_plan(&candidates).unwrap().target, machine);
+        candidates[0].status.is_dev_link = true;
+        candidates[0].regular_directory = false;
+        assert_eq!(
+            select_install_plan(&candidates).unwrap().target,
+            machine,
+            "a dev link must never force an existing Full installation back to per-user"
+        );
+        candidates[1].status.is_dev_link = true;
+        candidates[1].regular_directory = false;
+        assert_eq!(select_install_plan(&candidates).unwrap().target, x86);
+    }
+
+    #[test]
+    fn changed_target_scope_or_inventory_is_rejected_before_elevation() {
+        let root = TestDirectory::new("changed-plan");
+        let user = root.path().join("user");
+        let machine = root.path().join("machine");
+        let before = vec![
+            inspect_cep_installation(CEP_SCOPE_PER_USER, &user),
+            inspect_cep_installation(CEP_SCOPE_PER_MACHINE, &machine),
+        ];
+        let old_plan = select_install_plan(&before).unwrap();
+        write_cep_manifest(&machine, CEP_BUNDLE_ID, "2.4.0");
+        let after = vec![
+            inspect_cep_installation(CEP_SCOPE_PER_USER, &user),
+            inspect_cep_installation(CEP_SCOPE_PER_MACHINE, &machine),
+        ];
+        let new_plan = select_install_plan(&after).unwrap();
+        assert!(
+            assert_expected_install_target(&new_plan, &old_plan.scope, &old_plan.target)
+                .unwrap_err()
+                .starts_with("cep_install_target_changed:")
+        );
+        assert!(assert_inventory_unchanged(&before, &after)
+            .unwrap_err()
+            .starts_with("cep_installation_changed:"));
+        assert_expected_install_target(&new_plan, CEP_SCOPE_PER_MACHINE, &machine).unwrap();
+        assert_inventory_unchanged(&after, &after).unwrap();
+    }
+
+    #[test]
+    fn inventory_permission_or_io_failures_never_mean_an_absent_installation() {
+        let root = TestDirectory::new("inventory-probe");
+        super::assert_inventory_target_probe(root.path(), fs::symlink_metadata(root.path()))
+            .unwrap();
+        super::assert_inventory_target_probe(
+            root.path(),
+            Err(std::io::Error::from(std::io::ErrorKind::NotFound)),
+        )
+        .unwrap();
+        for kind in [
+            std::io::ErrorKind::PermissionDenied,
+            std::io::ErrorKind::Other,
+            std::io::ErrorKind::NotADirectory,
+        ] {
+            let error =
+                super::assert_inventory_target_probe(root.path(), Err(std::io::Error::from(kind)))
+                    .unwrap_err();
+            assert!(error.starts_with("cep_install_failed:"));
+            assert!(error.contains("outro escopo"));
+        }
+    }
+
+    #[test]
+    fn unsigned_development_versions_do_not_trigger_release_downgrade_confirmation() {
+        let root = TestDirectory::new("dev-downgrade");
+        let dev = root.path().join("dev");
+        write_cep_manifest(&dev, CEP_BUNDLE_ID, "99.0.0");
+        let mut candidate = inspect_cep_installation(CEP_SCOPE_PER_USER, &dev);
+        candidate.status.is_dev_link = true;
+        candidate.regular_directory = false;
+        assert_downgrade_allowed(
+            &Version::parse("2.4.0").unwrap(),
+            "2.4.0",
+            false,
+            &[candidate],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn elevated_helper_arguments_keep_untrusted_paths_as_values_and_classify_exit_codes() {
+        let root = TestDirectory::new("helper-arguments");
+        let verifier = create_fake_verifier(root.path());
+        let scripts = verifier.script.parent().unwrap();
+        fs::create_dir_all(scripts).unwrap();
+        for name in ["update-cep-system.ps1", "cep-system-update-core.ps1"] {
+            fs::write(scripts.join(name), b"# test").unwrap();
+        }
+        let zxp = root.path().join("package ' & $name.zxp");
+        let target = root.path().join("Common Files").join(CEP_BUNDLE_ID);
+        let args = system_update_arguments(
+            &verifier,
+            &zxp,
+            TEST_CERTIFICATE_FINGERPRINT,
+            "2.4.0",
+            &target,
+            true,
+        )
+        .unwrap();
+        assert_eq!(args[5], scripts.join("update-cep-system.ps1").as_os_str());
+        assert_eq!(args[7], zxp.as_os_str());
+        assert_eq!(args[13], target.as_os_str());
+        assert_eq!(args.last().unwrap(), "-AllowDowngrade");
+        assert!(!args.iter().any(|value| value == "-Command"));
+        system_update_exit_result(Some(0), b"", b"").unwrap();
+        assert!(system_update_exit_result(Some(1223), b"", b"")
+            .unwrap_err()
+            .starts_with("cep_elevation_cancelled:"));
+        assert!(system_update_exit_result(Some(20), b"", b"")
+            .unwrap_err()
+            .starts_with("after_effects_running:"));
+        assert!(system_update_exit_result(Some(1), b"", b"safe failure")
+            .unwrap_err()
+            .contains("safe failure"));
+    }
+
+    #[test]
+    fn machine_commit_must_be_verified_before_user_cleanup_or_debug_changes() {
+        let (_root, _extensions, _work_root, user) = create_install_layout("verified-first");
+        write_cep_manifest(&user, CEP_BUNDLE_ID, "2.3.0");
+        fs::write(user.join("panel.js"), b"previous user version").unwrap();
+        let inventory = vec![inspect_cep_installation(CEP_SCOPE_PER_USER, &user)];
+        let consolidation = prepare_user_consolidation(&inventory, false)
+            .unwrap()
+            .unwrap();
+        let debug_changed = std::cell::Cell::new(false);
+        let result = finish_system_installation(
+            &inventory,
+            Some(&consolidation),
+            || Err("signature invalid".to_string()),
+            || {
+                debug_changed.set(true);
+                Ok(())
+            },
+        );
+        assert!(result.is_err());
+        assert!(user.is_dir());
+        assert!(!debug_changed.get());
+        finish_system_installation(
+            &inventory,
+            Some(&consolidation),
+            || Ok(()),
+            || {
+                assert!(!user.exists());
+                debug_changed.set(true);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(!user.exists());
+        assert!(debug_changed.get());
+    }
+
+    #[test]
+    fn changed_user_payload_is_preserved_even_when_manifest_and_version_are_identical() {
+        let (_root, _extensions, _work_root, user) = create_install_layout("changed-user-payload");
+        write_cep_manifest(&user, CEP_BUNDLE_ID, "2.3.0");
+        fs::write(user.join("panel.js"), b"old").unwrap();
+        let inventory = vec![inspect_cep_installation(CEP_SCOPE_PER_USER, &user)];
+        let consolidation = prepare_user_consolidation(&inventory, false)
+            .unwrap()
+            .unwrap();
+        fs::write(user.join("panel.js"), b"new").unwrap();
+        let debug_changed = std::cell::Cell::new(false);
+        let error = finish_system_installation(
+            &inventory,
+            Some(&consolidation),
+            || Ok(()),
+            || {
+                debug_changed.set(true);
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert!(error.starts_with("cep_consolidation_failed:"));
+        assert_eq!(fs::read(user.join("panel.js")).unwrap(), b"new");
+        assert!(!debug_changed.get());
+    }
+
+    #[test]
+    fn final_profile_failure_reports_partial_success_after_consolidation() {
+        let (_root, _extensions, _work_root, user) = create_install_layout("debug-finalization");
+        write_cep_manifest(&user, CEP_BUNDLE_ID, "2.3.0");
+        let inventory = vec![inspect_cep_installation(CEP_SCOPE_PER_USER, &user)];
+        let consolidation = prepare_user_consolidation(&inventory, false)
+            .unwrap()
+            .unwrap();
+        let error = finish_system_installation(
+            &inventory,
+            Some(&consolidation),
+            || Ok(()),
+            || Err("registry denied".to_string()),
+        )
+        .unwrap_err();
+        assert!(error.starts_with("cep_consolidation_failed:"));
+        assert!(error.contains("PlayerDebugMode"));
+        assert!(!user.exists());
+    }
+
+    #[cfg(windows)]
+    fn create_test_directory_link(link: &Path, target: &Path) {
+        use base64::Engine;
+        use std::os::windows::process::CommandExt;
+        let script = format!("$ErrorActionPreference='Stop'; New-Item -ItemType Junction -Path '{}' -Target '{}' | Out-Null",
+            link.to_string_lossy().replace('\'', "''"), target.to_string_lossy().replace('\'', "''"));
+        let bytes: Vec<_> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        let encoded = super::BASE64_STANDARD.encode(bytes);
+        let shell = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+            .join("System32/WindowsPowerShell/v1.0/powershell.exe");
+        let result = std::process::Command::new(shell)
+            .args(["-NoProfile", "-NonInteractive", "-EncodedCommand", &encoded])
+            .creation_flags(super::CREATE_NO_WINDOW)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "junction creation failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+
+    #[cfg(not(windows))]
+    fn create_test_directory_link(link: &Path, target: &Path) {
+        std::os::unix::fs::symlink(target, link).unwrap();
+    }
+
+    #[test]
+    fn development_junction_is_preserved_by_default_and_explicit_removal_never_touches_its_target()
+    {
+        let (root, _extensions, _work_root, user) = create_install_layout("dev-preservation");
+        let dev = root.path().join("repository-output");
+        write_cep_manifest(&dev, CEP_BUNDLE_ID, "99.0.0");
+        fs::write(dev.join("do-not-touch.txt"), b"repository output").unwrap();
+        create_test_directory_link(&user, &dev);
+        let inventory = vec![inspect_cep_installation(CEP_SCOPE_PER_USER, &user)];
+        assert!(inventory[0].status.is_dev_link);
+        assert!(prepare_user_consolidation(&inventory, false)
+            .unwrap()
+            .is_none());
+        assert!(super::folder_is_junction(&user));
+        let consolidation = prepare_user_consolidation(&inventory, true)
+            .unwrap()
+            .unwrap();
+        finish_system_installation(&inventory, Some(&consolidation), || Ok(()), || Ok(())).unwrap();
+        assert!(!super::install_path_exists(&user).unwrap());
+        assert_eq!(
+            fs::read(dev.join("do-not-touch.txt")).unwrap(),
+            b"repository output"
+        );
+        assert!(dev.join("CSXS/manifest.xml").is_file());
+    }
+
+    #[test]
+    fn new_development_link_during_elevation_is_not_removed_and_nested_links_are_never_traversed() {
+        let (root, _extensions, _work_root, user) = create_install_layout("new-dev-during-update");
+        write_cep_manifest(&user, CEP_BUNDLE_ID, "2.3.0");
+        let external = root.path().join("external");
+        fs::create_dir_all(&external).unwrap();
+        fs::write(external.join("protected.txt"), b"external content").unwrap();
+        create_test_directory_link(&user.join("nested"), &external);
+        let digest = installation_tree_digest(&user).unwrap();
+        fs::write(external.join("protected.txt"), b"changed external content").unwrap();
+        assert_eq!(
+            installation_tree_digest(&user).unwrap(),
+            digest,
+            "external target contents must not be read"
+        );
+        let inventory = vec![inspect_cep_installation(CEP_SCOPE_PER_USER, &user)];
+        let consolidation = prepare_user_consolidation(&inventory, false)
+            .unwrap()
+            .unwrap();
+        remove_install_work_path(&user).unwrap();
+        create_test_directory_link(&user, &external);
+        let debug_changed = std::cell::Cell::new(false);
+        assert!(finish_system_installation(
+            &inventory,
+            Some(&consolidation),
+            || Ok(()),
+            || {
+                debug_changed.set(true);
+                Ok(())
+            }
+        )
+        .is_err());
+        assert!(super::folder_is_junction(&user));
+        assert!(!debug_changed.get());
+        assert_eq!(
+            fs::read(external.join("protected.txt")).unwrap(),
+            b"changed external content"
+        );
+    }
+
+    #[test]
+    fn per_user_swap_restores_dev_without_changing_debug_and_finalizes_only_after_success() {
+        let (root, extensions, work_root, user) = create_install_layout("user-debug-commit-order");
+        let dev = root.path().join("repository-output");
+        write_cep_manifest(&dev, CEP_BUNDLE_ID, "99.0.0");
+        create_test_directory_link(&user, &dev);
+        let debug_enabled = std::cell::Cell::new(true);
+        let missing = work_root.join("missing-staging");
+        let failed = super::finish_user_installation(
+            || swap_into_place(&extensions, &work_root, &user, &missing),
+            || {
+                debug_enabled.set(false);
+                Ok(())
+            },
+        );
+        assert!(failed.is_err());
+        assert!(super::folder_is_junction(&user));
+        assert!(debug_enabled.get());
+        let staged = create_install_staging_dir(&work_root).unwrap();
+        write_cep_manifest(&staged, CEP_BUNDLE_ID, "2.4.0");
+        super::finish_user_installation(
+            || swap_into_place(&extensions, &work_root, &user, &staged),
+            || {
+                assert!(!super::folder_is_junction(&user));
+                debug_enabled.set(false);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(!debug_enabled.get());
+        assert!(dev.join("CSXS/manifest.xml").is_file());
+        let pending =
+            super::finish_user_installation(|| Ok(()), || Err("registry denied".to_string()))
+                .unwrap_err();
+        assert!(pending.starts_with("cep_consolidation_failed:"));
+        assert!(pending.contains("instalada no perfil"));
+    }
+
+    #[test]
+    fn absent_or_preserved_user_links_are_rechecked_before_profile_finalization() {
+        for initially_present in [false, true] {
+            let (root, _extensions, _work_root, user) = create_install_layout("uac-dev-race");
+            let first = root.path().join("first-dev");
+            let second = root.path().join("second-dev");
+            write_cep_manifest(&first, CEP_BUNDLE_ID, "2.4.0");
+            write_cep_manifest(&second, CEP_BUNDLE_ID, "2.4.0");
+            if initially_present {
+                create_test_directory_link(&user, &first);
+            }
+            let inventory = vec![inspect_cep_installation(CEP_SCOPE_PER_USER, &user)];
+            assert!(prepare_user_consolidation(&inventory, false)
+                .unwrap()
+                .is_none());
+            if initially_present {
+                super::remove_directory_link(&user).unwrap();
+            }
+            create_test_directory_link(&user, &second);
+            let debug_changed = std::cell::Cell::new(false);
+            let error = finish_system_installation(
+                &inventory,
+                None,
+                || Ok(()),
+                || {
+                    debug_changed.set(true);
+                    Ok(())
+                },
+            )
+            .unwrap_err();
+            assert!(error.starts_with("cep_consolidation_failed:"));
+            assert!(!debug_changed.get());
+            assert!(super::folder_is_junction(&user));
+            assert!(first.join("CSXS/manifest.xml").is_file());
+            assert!(second.join("CSXS/manifest.xml").is_file());
+        }
     }
 
     #[test]

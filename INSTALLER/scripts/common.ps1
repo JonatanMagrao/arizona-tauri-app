@@ -1054,6 +1054,37 @@ function Assert-CepReferenceCoverage {
   }
 }
 
+function Test-CepVerifiedContentEqual {
+  param(
+    [Parameter(Mandatory = $true)]$Left,
+    [Parameter(Mandatory = $true)]$Right
+  )
+
+  # Both inputs must have passed the complete signature, coverage and file
+  # digest checks. Compare signed payload identity, not the ZIP or signature
+  # envelope: a new timestamp/signature does not change the extension's files.
+  $leftReferences = @($Left.References)
+  $rightReferences = @($Right.References)
+  if ($leftReferences.Count -eq 0 -or $leftReferences.Count -ne $rightReferences.Count) {
+    return $false
+  }
+  $digests = [System.Collections.Generic.Dictionary[string,string]]::new(
+    [System.StringComparer]::Ordinal
+  )
+  foreach ($reference in $leftReferences) {
+    $digests.Add([string]$reference.NormalizedName, [string]$reference.DigestBase64)
+  }
+  foreach ($reference in $rightReferences) {
+    $name = [string]$reference.NormalizedName
+    if (!$digests.ContainsKey($name) -or
+        $digests[$name] -cne [string]$reference.DigestBase64) {
+      return $false
+    }
+    [void]$digests.Remove($name)
+  }
+  return $digests.Count -eq 0
+}
+
 function Assert-ZxpContentSignature {
   param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -1299,6 +1330,7 @@ function Assert-CepInstalledReleaseIntegrity {
     BundleId = [string]$manifestInfo.BundleId
     BundleVersion = [string]$manifestInfo.BundleVersion
     CertificateFingerprint = [string]$profile.CertificateFingerprint
+    References = @($profile.References)
   }
 }
 

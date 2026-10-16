@@ -34,6 +34,8 @@ const settle = async () => {
 function createHarness({ cep = true } = {}) {
   const slots = [];
   const timers = new Map();
+  const windowListeners = new Map();
+  const documentListeners = new Map();
   const alerts = [];
   let cursor = 0;
   let nextTimer = 0;
@@ -82,7 +84,21 @@ function createHarness({ cep = true } = {}) {
       });
     },
   };
+  const eventTarget = (listeners) => ({
+    addEventListener: (type, callback) => {
+      if (!listeners.has(type)) listeners.set(type, new Set());
+      listeners.get(type).add(callback);
+    },
+    removeEventListener: (type, callback) => listeners.get(type)?.delete(callback),
+  });
+  const document = {
+    ...eventTarget(documentListeners),
+    visibilityState: "visible",
+    hidden: false,
+  };
   const window = {
+    ...eventTarget(windowListeners),
+    document,
     cep: cep ? {} : undefined,
     alert: (message) => alerts.push(message),
     setTimeout: (callback) => { const id = ++nextTimer; timers.set(id, callback); return id; },
@@ -94,6 +110,7 @@ function createHarness({ cep = true } = {}) {
       module,
       exports: module.exports,
       window,
+      document,
       require: (specifier) => {
         if (specifier === "react") return react;
         if (specifier.endsWith("utils/errors")) return load("errors");
@@ -123,6 +140,16 @@ function createHarness({ cep = true } = {}) {
     get value() { return render(); },
     get settersAfterUnmount() { return settersAfterUnmount; },
     get timerCount() { return timers.size; },
+    get listenerCount() {
+      return [...windowListeners.values(), ...documentListeners.values()]
+        .reduce((count, listeners) => count + listeners.size, 0);
+    },
+    focus() { windowListeners.get("focus")?.forEach((callback) => callback()); },
+    setVisible(visible) {
+      document.hidden = !visible;
+      document.visibilityState = visible ? "visible" : "hidden";
+      documentListeners.get("visibilitychange")?.forEach((callback) => callback());
+    },
     runTimers() {
       const pending = [...timers.values()];
       timers.clear();
@@ -359,6 +386,381 @@ test("identity stays empty without CEP and never calls the host", async () => {
   assert.equal(await harness.value.refreshProjectIdentity(true), "");
   assert.equal(harness.value.projectKey, "");
   assert.equal(harness.value.projectName, "");
+  assert.equal(harness.timerCount, 0);
+  assert.equal(harness.listenerCount, 0);
+});
+
+function identityFixture({ initial = { projectKey: "", projectName: "" } } = {}) {
+  const harness = createHarness();
+  let response = initial;
+  let calls = 0;
+  let observing = true;
+  const { useProjectIdentity } = harness.load("identity", {
+    "../services/projectIdentity": {
+      loadProjectIdentity: () => {
+        calls += 1;
+        return response instanceof Error ? Promise.reject(response) : Promise.resolve(response);
+      },
+    },
+  });
+  harness.mount(() => useProjectIdentity({ canObserve: () => observing }));
+  return {
+    harness,
+    respond: (next) => { response = next; },
+    observe: (enabled) => { observing = enabled; },
+    get calls() { return calls; },
+  };
+}
+
+test("external project opening after an empty initial read is detected without user interaction", async () => {
+  const f = identityFixture();
+  await settle();
+  assert.equal(f.harness.value.projectKey, "");
+  f.respond({ projectKey: "C:/jobs/first.aep", projectName: "First" });
+  f.harness.runTimers();
+  await settle();
+  assert.equal(f.harness.value.projectKey, "C:/jobs/first.aep");
+  assert.equal(f.harness.value.projectName, "First");
+
+  f.respond({ projectKey: "C:/jobs/second.aep", projectName: "Second" });
+  f.harness.runTimers();
+  await settle();
+  assert.equal(f.harness.value.projectKey, "C:/jobs/second.aep");
+  f.harness.runTimers();
+  await settle();
+  assert.equal(f.harness.value.projectKey, "C:/jobs/second.aep", "An unchanged project keeps its panel identity");
+
+  f.respond({ projectKey: "", projectName: "" });
+  f.harness.runTimers();
+  await settle();
+  assert.equal(f.harness.value.projectKey, "", "Closing the project also clears the old identity");
+  assert.equal(f.harness.value.projectName, "");
+  f.harness.unmount();
+});
+
+test("a transient identity failure preserves the open project and the next observation recovers", async () => {
+  const f = identityFixture({ initial: { projectKey: "current.aep", projectName: "Current" } });
+  await settle();
+  f.respond(new Error("Host temporarily unavailable while opening"));
+  f.harness.runTimers();
+  await settle();
+  assert.equal(f.harness.value.projectKey, "current.aep");
+  assert.equal(f.harness.value.projectName, "Current");
+  f.respond({ projectKey: "ready.aep", projectName: "Ready" });
+  f.harness.runTimers();
+  await settle();
+  assert.equal(f.harness.value.projectKey, "ready.aep");
+  f.harness.unmount();
+});
+
+test("focus and timer observations share one pending host read and resume after it settles", async () => {
+  const f = identityFixture();
+  await settle();
+  const pending = deferred();
+  f.respond(pending.promise);
+  f.harness.focus();
+  f.harness.focus();
+  f.harness.runTimers();
+  await settle();
+  assert.equal(f.calls, 2, "Repeated triggers cannot enqueue concurrent host reads");
+  pending.resolve({ projectKey: "ready.aep", projectName: "Ready" });
+  await settle();
+  assert.equal(f.harness.value.projectKey, "ready.aep");
+  f.respond({ projectKey: "next.aep", projectName: "Next" });
+  f.harness.runTimers();
+  await settle();
+  assert.equal(f.calls, 3);
+  assert.equal(f.harness.value.projectKey, "next.aep");
+  f.harness.unmount();
+});
+
+test("hidden panels suspend observation and check the host when visible again", async () => {
+  const f = identityFixture({ initial: { projectKey: "old.aep", projectName: "Old" } });
+  await settle();
+  f.harness.setVisible(false);
+  f.respond({ projectKey: "new.aep", projectName: "New" });
+  f.harness.runTimers();
+  f.harness.focus();
+  await settle();
+  assert.equal(f.calls, 1);
+  assert.equal(f.harness.value.projectKey, "old.aep");
+  f.harness.setVisible(true);
+  await settle();
+  assert.equal(f.harness.value.projectKey, "new.aep");
+  f.harness.unmount();
+});
+
+test("busy editors pause observation and discard an earlier observation before resuming", async () => {
+  const f = identityFixture({ initial: { projectKey: "old.aep", projectName: "Old" } });
+  await settle();
+  const pending = deferred();
+  f.respond(pending.promise);
+  f.harness.runTimers();
+  f.observe(false);
+  pending.resolve({ projectKey: "intermediate.aep", projectName: "Intermediate" });
+  await settle();
+  assert.equal(f.harness.value.projectKey, "old.aep");
+  f.harness.runTimers();
+  f.harness.focus();
+  await settle();
+  assert.equal(f.calls, 2, "Busy editors must not queue host observations");
+  f.respond({ projectKey: "ready.aep", projectName: "Ready" });
+  f.observe(true);
+  f.harness.runTimers();
+  await settle();
+  assert.equal(f.harness.value.projectKey, "ready.aep");
+  f.harness.unmount();
+});
+
+test("explicit post-open identity refresh works while automatic observation is paused", async () => {
+  const f = identityFixture({ initial: { projectKey: "old.aep", projectName: "Old" } });
+  await settle();
+  f.observe(false);
+  f.respond({ projectKey: "new.aep", projectName: "New" });
+  assert.equal(await f.harness.value.refreshProjectIdentity(true), "new.aep");
+  assert.equal(f.harness.value.projectKey, "new.aep");
+  f.harness.unmount();
+});
+
+test("unmount removes observation timers/listeners and late reads cannot update the old panel", async () => {
+  const f = identityFixture();
+  await settle();
+  const stale = f.harness.value;
+  const pending = deferred();
+  f.respond(pending.promise);
+  f.harness.focus();
+  f.harness.unmount();
+  pending.resolve({ projectKey: "late.aep", projectName: "Late" });
+  await settle();
+  assert.equal(f.harness.settersAfterUnmount, 0);
+  assert.equal(f.harness.timerCount, 0);
+  assert.equal(f.harness.listenerCount, 0);
+  await stale.refreshProjectIdentity();
+  f.harness.focus();
+  f.harness.runTimers();
+  await settle();
+  assert.equal(f.calls, 2);
+});
+
+test("concurrent post-open refreshes wait for the old observation and share one fresh read", async () => {
+  const old = deferred();
+  const f = identityFixture({ initial: old.promise });
+  const fresh = deferred();
+  f.respond(fresh.promise);
+  const first = f.harness.value.refreshProjectIdentity(true);
+  const second = f.harness.value.refreshProjectIdentity(true);
+  old.resolve({ projectKey: "old.aep", projectName: "Old" });
+  await settle();
+  assert.equal(f.calls, 2);
+  fresh.resolve({ projectKey: "new.aep", projectName: "New" });
+  assert.deepEqual(await Promise.all([first, second]), ["new.aep", "new.aep"]);
+  assert.equal(f.harness.value.projectKey, "new.aep");
+  f.harness.unmount();
+});
+
+test("unmount cancels a queued post-open read as well as the earlier observation", async () => {
+  const old = deferred();
+  const f = identityFixture({ initial: old.promise });
+  const forced = f.harness.value.refreshProjectIdentity(true);
+  f.harness.unmount();
+  old.resolve({ projectKey: "old.aep", projectName: "Old" });
+  assert.equal(await forced, "");
+  await settle();
+  assert.equal(f.calls, 1);
+  assert.equal(f.harness.settersAfterUnmount, 0);
+  assert.equal(f.harness.timerCount, 0);
+  assert.equal(f.harness.listenerCount, 0);
+});
+
+test("concurrent forced refreshes without a prior observation share the same host read", async () => {
+  const f = identityFixture();
+  await settle();
+  const pending = deferred();
+  f.respond(pending.promise);
+  const first = f.harness.value.refreshProjectIdentity(true);
+  const second = f.harness.value.refreshProjectIdentity(true);
+  assert.equal(f.calls, 2);
+  pending.resolve({ projectKey: "ready.aep", projectName: "Ready" });
+  assert.deepEqual(await Promise.all([first, second]), ["ready.aep", "ready.aep"]);
+  assert.equal(f.calls, 2);
+  f.harness.unmount();
+});
+
+const startupSnapshot = (products = [], selectedOfferLayerIndex = 19) => ({
+  ok: true, message: products.length ? "Oferta carregada." : "Nenhum produto ativo encontrado nesta oferta.",
+  compName: "Miolo", offers: [{ layerIndex: selectedOfferLayerIndex, name: "Oferta_01" }],
+  selectedOfferLayerIndex,
+  selectedOffer: { layerIndex: selectedOfferLayerIndex, name: "Oferta_01", products, legalControls: [] },
+  errors: [],
+});
+
+function offersStartupFixture(read, endpoints = {}, { cep = true } = {}) {
+  const harness = createHarness({ cep });
+  const calls = [];
+  const diagnostics = [];
+  const { useOffersEditor } = harness.load("offers", {
+    "../../../services/localDiagnostics": {
+      createDiagnosticOperationId: () => "startup", recordLocalDiagnostic() {},
+      recordDiagnosticFailure: (...args) => diagnostics.push(args),
+    },
+    "../services/ofertas": {
+      loadOffersEditorSnapshot: (index) => { calls.push(index); return read(calls.length, index); },
+      ...endpoints,
+    },
+  });
+  const onStatus = () => {};
+  harness.mount(() => useOffersEditor({ onStatus }));
+  return { harness, calls, diagnostics };
+}
+
+test("startup recovers an offer list whose selected offer products were initially empty, without a path change", async () => {
+  const empty = startupSnapshot();
+  const ready = startupSnapshot([{ index: 0 }, { index: 1 }, { index: 2 }]);
+  const f = offersStartupFixture(async (call) => call === 1 ? empty : ready);
+  await settle();
+  assert.equal(f.harness.value.snapshot, empty);
+  assert.equal(f.harness.timerCount, 1);
+  f.harness.runTimers();
+  await settle();
+  assert.equal(f.harness.value.snapshot, ready);
+  assert.deepEqual(f.calls, [undefined, 19], "Recovery retains the selected offer");
+  assert.equal(f.harness.timerCount, 0);
+  f.harness.runTimers();
+  assert.equal(f.calls.length, 2, "A populated editor is never polled for products");
+  f.harness.unmount();
+});
+
+for (const initialKind of ["no-project", "no-selection", "bridge-error"]) {
+  test(`startup retries ${initialKind} and stops as soon as products are available`, async () => {
+    const ready = startupSnapshot([{ index: 0 }]);
+    const f = offersStartupFixture(async (call) => {
+      if (call > 1) return ready;
+      if (initialKind === "bridge-error") throw new Error("Host is opening a project");
+      return { ok: initialKind !== "no-project", offers: [], selectedOffer: null, selectedOfferLayerIndex: 0, errors: [] };
+    });
+    await settle();
+    f.harness.runTimers();
+    await settle();
+    assert.equal(f.harness.value.snapshot, ready);
+    assert.equal(f.calls.length, 2);
+    assert.equal(f.harness.timerCount, 0);
+    f.harness.unmount();
+  });
+}
+
+test("startup recovery is bounded for genuinely empty offers and is absent without CEP", async () => {
+  const f = offersStartupFixture(async () => startupSnapshot());
+  await settle();
+  for (let attempt = 0; attempt < 20; attempt += 1) { f.harness.runTimers(); await settle(); }
+  assert.equal(f.calls.length, 6, "One initial read and at most five recovery reads");
+  assert.equal(f.harness.timerCount, 0);
+  f.harness.unmount();
+  const browser = offersStartupFixture(() => assert.fail("No host in browser"), {}, { cep: false });
+  await settle();
+  assert.equal(browser.harness.timerCount, 0);
+  assert.deepEqual(browser.calls, []);
+  browser.harness.unmount();
+});
+
+test("startup recovery defers to a pending edit and accepts that edit's selected offer", async () => {
+  const action = deferred();
+  const ready = startupSnapshot([{ index: 0 }], 17);
+  const f = offersStartupFixture(async (call) => call === 1 ? startupSnapshot() : ready,
+    { selectOfferForEditor: () => action.promise });
+  await settle();
+  const editing = f.harness.value.selectOffer(17);
+  f.harness.runTimers();
+  await settle();
+  assert.equal(f.calls.length, 1, "The retry does not race the selection action");
+  action.resolve({ ok: true, message: "Selecionada.", errors: [], selectedOfferLayerIndex: 17 });
+  await editing;
+  f.harness.runTimers();
+  await settle();
+  assert.equal(f.harness.value.snapshot, ready);
+  assert.deepEqual(f.calls, [undefined, 17]);
+  assert.equal(f.harness.timerCount, 0);
+  f.harness.unmount();
+});
+
+test("startup recovery avoids overlapping reads and ignores delayed completion after unmount", async () => {
+  const delayed = deferred();
+  const f = offersStartupFixture((call) => call === 1 ? Promise.resolve(startupSnapshot()) : delayed.promise);
+  await settle();
+  f.harness.runTimers();
+  assert.equal(f.calls.length, 2);
+  f.harness.runTimers();
+  assert.equal(f.calls.length, 2);
+  f.harness.unmount();
+  delayed.resolve(startupSnapshot([{ index: 0 }]));
+  await settle();
+  assert.equal(f.harness.timerCount, 0);
+  assert.equal(f.harness.settersAfterUnmount, 0);
+});
+
+test("a successful editor does not restart recovery after an ordinary edit removes its last product", async () => {
+  const f = offersStartupFixture(async (call) => startupSnapshot(call === 1 ? [{ index: 0 }] : []));
+  await settle();
+  assert.equal(f.harness.timerCount, 0);
+  await f.harness.value.refreshOffers();
+  f.harness.runTimers();
+  await settle();
+  assert.equal(f.calls.length, 2);
+  assert.equal(f.harness.timerCount, 0);
+  f.harness.unmount();
+});
+
+test("an older empty read cannot overwrite a newer populated selection", async () => {
+  const old = deferred();
+  const ready = startupSnapshot([{ index: 0 }], 17);
+  const f = offersStartupFixture((call) => call === 1 ? old.promise : Promise.resolve(ready));
+  await f.harness.value.refreshOffers(17);
+  assert.equal(f.harness.value.snapshot, ready);
+  assert.equal(f.harness.value.busy, true, "The older read is still in flight");
+  old.resolve(startupSnapshot());
+  await settle();
+  assert.equal(f.harness.value.snapshot, ready);
+  assert.equal(f.harness.value.busy, false);
+  assert.equal(f.harness.timerCount, 0);
+  assert.deepEqual(f.calls, [undefined, 17]);
+  f.harness.unmount();
+});
+
+test("hidden panels defer startup recovery without consuming its attempts", async () => {
+  const ready = startupSnapshot([{ index: 0 }]);
+  const f = offersStartupFixture(async (call) => call === 1 ? startupSnapshot() : ready);
+  await settle();
+  f.harness.setVisible(false);
+  for (let attempt = 0; attempt < 8; attempt += 1) { f.harness.runTimers(); await settle(); }
+  assert.equal(f.calls.length, 1);
+  f.harness.setVisible(true);
+  f.harness.runTimers();
+  await settle();
+  assert.equal(f.harness.value.snapshot, ready);
+  assert.equal(f.calls.length, 2);
+  assert.equal(f.harness.timerCount, 0);
+  f.harness.unmount();
+});
+
+test("returning focus recovers a slow project's initial empty snapshot after the bounded retry window", async () => {
+  const ready = startupSnapshot([{ index: 0 }]);
+  let hostReady = false;
+  const f = offersStartupFixture(async () => hostReady ? ready : startupSnapshot());
+  await settle();
+  for (let attempt = 0; attempt < 5; attempt += 1) { f.harness.runTimers(); await settle(); }
+  assert.equal(f.calls.length, 6);
+  assert.equal(f.harness.timerCount, 0);
+  hostReady = true;
+  f.harness.focus();
+  await settle();
+  assert.equal(f.calls.length, 7);
+  assert.equal(f.harness.value.snapshot, ready);
+  f.harness.focus();
+  f.harness.setVisible(true);
+  f.harness.runTimers();
+  await settle();
+  assert.equal(f.calls.length, 7, "A loaded editor is not refreshed again on focus");
+  f.harness.unmount();
+  assert.equal(f.harness.listenerCount, 0);
 });
 
 test("offers stay busy while concurrent edits finish, and stale callbacks cannot reach the host after unmount", async () => {

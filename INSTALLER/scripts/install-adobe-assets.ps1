@@ -401,10 +401,10 @@ if ($null -ne $destinationItem) {
 
     $installedIntegrityError = $null
     try {
-      Assert-CepInstalledReleaseIntegrity `
+      $installedVerification = Assert-CepInstalledReleaseIntegrity `
         -Directory $cepDestination `
         -ExpectedBundleId "com.arizona-carrefour.cep" `
-        -TrustedCertificateFingerprints $trustedCertificates | Out-Null
+        -TrustedCertificateFingerprints $trustedCertificates
       $installedReleaseIsIntact = $true
     } catch {
       $installedIntegrityError = $_.Exception.Message
@@ -426,9 +426,13 @@ if ($null -ne $destinationItem) {
       $cepDisposition = "update"
       Write-InstallerLog "Updating per-machine CEP $installedBundleVersion to $expectedBundleVersion." $logRoot
     } elseif ($payloadVsInstalled -eq 0) {
-      if ($installedReleaseIsIntact) {
+      if ($installedReleaseIsIntact -and
+          (Test-CepVerifiedContentEqual -Left $installedVerification -Right $contentVerification)) {
         $cepDisposition = "preserve"
-        Write-InstallerLog "Preserving intact per-machine CEP $installedBundleVersion; payload version is equal." $logRoot
+        Write-InstallerLog "Preserving intact per-machine CEP $installedBundleVersion; signed payload content is identical." $logRoot
+      } elseif ($installedReleaseIsIntact) {
+        $cepDisposition = "update-same-version"
+        Write-InstallerLog "Updating per-machine CEP $installedBundleVersion with different verified content at the same version." $logRoot
       } else {
         $cepDisposition = "repair"
         Write-InstallerLog "Repairing corrupted per-machine CEP $installedBundleVersion with the same verified version." $logRoot

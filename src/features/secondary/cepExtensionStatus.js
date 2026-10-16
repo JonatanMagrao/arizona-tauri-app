@@ -1,4 +1,7 @@
 const CEP_INSTALLATION_SCOPES = new Set(["perUser", "perMachine"]);
+const CEP_CONSOLIDATION_STATES = new Set([
+  "idle", "checking", "waitingForAfterEffects", "completed", "preservedNewerUser", "blocked",
+]);
 
 function normalizeScope(value) {
   return CEP_INSTALLATION_SCOPES.has(value) ? value : null;
@@ -31,7 +34,32 @@ export function normalizeCepExtensionStatus(status) {
     scope: normalizeScope(status?.scope),
     installations,
     hasMultipleInstallations: Boolean(status?.hasMultipleInstallations) || installedCount > 1,
+    targetScope: normalizeScope(status?.targetScope),
+    targetPath: String(status?.targetPath || "").trim(),
+    requiresElevation: status?.requiresElevation === true,
+    developmentMode: status?.developmentMode === true || Boolean(status?.isDevLink)
+      || installations.some((installation) => installation.installed && installation.isDevLink),
+    consolidationRequired: status?.consolidationRequired === true,
+    automaticConsolidation: CEP_CONSOLIDATION_STATES.has(status?.automaticConsolidation)
+      ? status.automaticConsolidation : "idle",
   };
+}
+
+export function cepConsolidationMessage(status) {
+  if (!status?.consolidationRequired) return "";
+  if (status.automaticConsolidation === "checking") {
+    return "Conferindo a instalação do Full para consolidar as cópias do painel.";
+  }
+  if (status.automaticConsolidation === "waitingForAfterEffects") {
+    return "Feche o After Effects. O Arizona consolidará as cópias do painel automaticamente.";
+  }
+  if (status.automaticConsolidation === "preservedNewerUser") {
+    return "A cópia deste usuário é mais nova e foi preservada. Use Atualizar para escolher a versão a manter.";
+  }
+  if (status.automaticConsolidation === "blocked") {
+    return "A consolidação automática não foi concluída. Use Atualizar para consolidar as cópias do painel.";
+  }
+  return "Há cópias do painel em mais de um local. Use Atualizar para consolidá-las no destino indicado na confirmação.";
 }
 
 export function cepInstallationScopeLabel(scope) {
@@ -49,6 +77,7 @@ function normalizeWindowsPath(value) {
 }
 
 export function cepInstallationLocationLabel(installation) {
+  if (installation?.isDevLink) return "Desenvolvimento";
   const scope = normalizeScope(installation?.scope);
   const path = normalizeWindowsPath(installation?.path);
 
@@ -129,21 +158,46 @@ export function cepVersionRelation(candidateVersion, installedVersion) {
   return "same";
 }
 
-export function cepDowngradeRequiresFullInstaller(selectedVersion, status) {
+export function cepInstalledVersionForUpdate(status) {
   const installations = Array.isArray(status?.installations) ? status.installations : [];
-
+  // Development builds are preserved independently and never gate a release
+  // downgrade. The backend applies the same rule to its installation inventory.
   if (installations.length > 0) {
-    return installations.some((installation) => (
-      installation?.scope === "perMachine"
-      && Boolean(installation?.installed)
-      && installation?.manifestValid === true
-      && cepVersionRelation(selectedVersion, installation?.version) === "downgrade"
-    ));
+    let version = "";
+    for (const installation of installations) {
+      if (!installation?.installed || installation.isDevLink || installation.manifestValid !== true) continue;
+      const candidateVersion = String(installation.version || "").trim();
+      const relation = cepVersionRelation(candidateVersion, version);
+      if (relation === "install" || relation === "upgrade") version = candidateVersion;
+    }
+    return version;
   }
+  return status?.installed && !status.isDevLink ? String(status.version || "").trim() : "";
+}
 
-  return Boolean(status?.installed)
-    && status?.scope === "perMachine"
-    && cepVersionRelation(selectedVersion, status?.version) === "downgrade";
+export function cepHasInstallTarget(status) {
+  return normalizeScope(status?.targetScope) !== null && Boolean(String(status?.targetPath || "").trim());
+}
+
+export function cepHasPerUserDevLink(status) {
+  const installations = Array.isArray(status?.installations) ? status.installations : [];
+  if (installations.length > 0) {
+    return installations.some((installation) => installation?.installed && installation.isDevLink && installation.scope === "perUser");
+  }
+  return Boolean(status?.isDevLink) && status?.scope === "perUser";
+}
+
+export function cepDevelopmentModePreserved(status, replaceDevLink = false) {
+  const installations = Array.isArray(status?.installations) ? status.installations : [];
+  if (installations.length > 0) {
+    return installations.some((installation) => installation?.installed && installation.isDevLink
+      && (installation.scope !== "perUser" || !replaceDevLink));
+  }
+  return Boolean(status?.developmentMode) && !(cepHasPerUserDevLink(status) && replaceDevLink);
+}
+
+export function cepDevLinkRequiresReplacement(status) {
+  return cepHasPerUserDevLink(status) && status?.targetScope === "perUser";
 }
 
 export function cepInstallActionLabel(relation) {
@@ -159,11 +213,18 @@ export function cepInstallCommandArgs({
   replaceDevLink = false,
   relation = "unknown",
   downgradeConfirmed = false,
+  targetScope,
+  targetPath,
 }) {
+  if (!cepHasInstallTarget({ targetScope, targetPath })) {
+    throw new Error("cep_install_target_changed: Atualize o destino da instalação antes de continuar.");
+  }
   return {
     path,
     expectedVersion: String(expectedVersion || "").trim(),
     replaceDevLink: Boolean(replaceDevLink),
     allowDowngrade: relation === "downgrade" && Boolean(downgradeConfirmed),
+    expectedTargetScope: targetScope,
+    expectedTargetPath: String(targetPath).trim(),
   };
 }

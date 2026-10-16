@@ -6,6 +6,8 @@ Set-StrictMode -Version Latest
 & (Join-Path $PSScriptRoot "content-signature.ps1")
 & (Join-Path $PSScriptRoot "collect-artifacts.ps1")
 & (Join-Path $PSScriptRoot "install-lifecycle.ps1")
+& (Join-Path $PSScriptRoot "cep-system-update.ps1")
+& (Join-Path $PSScriptRoot "verify-full-cep-commit.ps1")
 & (Join-Path $PSScriptRoot "release-gates.ps1")
 & (Join-Path $PSScriptRoot "test-nsis-hooks.ps1")
 

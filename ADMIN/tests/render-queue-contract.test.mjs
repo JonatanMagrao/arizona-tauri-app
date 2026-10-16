@@ -569,7 +569,7 @@ test("non-health actions cannot renew the operational worker heartbeat", () => {
   const migration = readFileSync(
     new URL("../supabase/migrations/20260811160000_render_queue.sql", import.meta.url),
     "utf8",
-  );
+  ).replace(/\r\n/g, "\n");
   const touchStart = migration.indexOf("create or replace function licensing.render_touch_worker(");
   const touchEnd = migration.indexOf(
     "create or replace function licensing.render_create_job(",

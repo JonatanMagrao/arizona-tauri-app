@@ -1,7 +1,7 @@
 # Arquitetura futura de atualizações independentes — Tauri e CEP
 
 **Status:** proposta de longo prazo — não implementar agora  
-**Atualizado em:** 04/08/2026
+**Atualizado em:** 16/10/2026
 **Escopo:** Arizona App (Tauri), extensão CEP e o contrato de licença entre eles  
 **Fora do escopo:** Admin, mudanças imediatas no instalador e rotação de chaves
 
@@ -63,10 +63,17 @@ O instalador NSIS oficial contém:
 - `.zxp` assinado da extensão CEP;
 - hooks de instalação, upgrade e desinstalação.
 
-O instalador Full extrai e valida a árvore assinada no destino `perMachine`. O
-Tauri possui também uma instalação manual separada, `per-user`, para um `.zxp`
-local já assinado. Nenhum desses fluxos consulta hoje um canal remoto de
-atualização.
+O instalador Full extrai e valida a árvore assinada no destino `perMachine`.
+Ao abrir normalmente após o Full, o Tauri 2.4.1 valida o recibo, a assinatura e
+o conteúdo instalado antes de consolidar a cópia normal redundante do usuário
+atual. Aguarda o After fechar e preserva junctions de desenvolvimento e versões
+mais novas do usuário. Essa fase pertence ao processo normal do app; os helpers
+elevados continuam sem acesso de escrita aos perfis dos usuários.
+
+Desde a versão 2.4.1, o Tauri também atualiza um `.zxp` local assinado no escopo
+existente: prefere a instalação compartilhada com elevação e consolida cópias
+normais redundantes; sem ela, usa `perUser`. O modo dev por junction é tratado
+separadamente. Nenhum desses fluxos consulta hoje um canal remoto de atualização.
 
 Executar o instalador unificado pode substituir Tauri e CEP mesmo quando apenas
 um deles mudou.
@@ -179,8 +186,9 @@ O instalador unificado permanece como rota independente para bootstrap e
 reparo. Essa rota Full é `perMachine` e instala em
 `%CommonProgramW6432%\Adobe\CEP\extensions\com.arizona-carrefour.cep` (com
 fallback para `%CommonProgramFiles%`); staging e backups ficam no irmão
-`Adobe\CEP\.arizona-install-work`. O atualizador executado pelo Tauri permanece
-per-user no caminho mostrado acima.
+`Adobe\CEP\.arizona-install-work`. O atualizador local do Tauri 2.4.1 respeita
+o escopo existente; o caminho per-user mostrado acima é utilizado quando não
+existe uma instalação compartilhada normal.
 
 ## 6. Manifesto futuro do CEP
 
@@ -362,8 +370,8 @@ Ele deverá:
 - preservar arquivo alheio fora da pasta gerenciada;
 - fazer troca e rollback com operações recuperáveis;
 - não apagar a instalação atual antes de validar completamente a nova;
-- preservar a separação entre o destino `perMachine` do Full e o destino
-  `per-user` gerenciado pelo Tauri;
+- respeitar o escopo existente, limitando a elevação aos destinos `perMachine`
+  conhecidos e deixando a gestão de `perUser` com o processo original;
 - não criar duas cópias visíveis do mesmo BundleId durante staging ou rollback.
 
 As regras criptográficas e de rotação estão em

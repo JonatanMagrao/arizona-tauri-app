@@ -138,8 +138,8 @@ try {
     })
   })
 
-  # Version lifecycle policy: automatic runs only move forward, equal intact
-  # releases are left byte-for-byte in place, and rollback is always explicit.
+  # Version lifecycle policy: lower versions require explicit rollback; equal
+  # versions are preserved only when their verified signed files are identical.
   # 2.9 -> 2.10 deliberately proves numeric SemVer ordering rather than a
   # lexical string comparison.
   $policyPayloadOld = New-SyntheticCepPayload `
@@ -148,6 +148,15 @@ try {
   $policyPayloadCurrent = New-SyntheticCepPayload `
     -PayloadRoot (Join-Path $testRoot "policy-payload-2.10.0") `
     -BundleVersion "2.10.0"
+  $policyPayloadReissued = New-SyntheticCepPayload `
+    -PayloadRoot (Join-Path $testRoot "policy-payload-2.10.0-reissued") `
+    -BundleVersion "2.10.0" `
+    -ReverseSignedEntries
+  $policyRevisedIndex = "<html>same-version correction</html>"
+  $policyPayloadRevised = New-SyntheticCepPayload `
+    -PayloadRoot (Join-Path $testRoot "policy-payload-2.10.0-revised") `
+    -BundleVersion "2.10.0" `
+    -IndexContent $policyRevisedIndex
   $policyPayloadNew = New-SyntheticCepPayload `
     -PayloadRoot (Join-Path $testRoot "policy-payload-2.11.0") `
     -BundleVersion "2.11.0"
@@ -209,18 +218,36 @@ try {
   Set-Content -LiteralPath (Join-Path $legacyBundledCep "obsolete.txt") -Value "obsolete" -Encoding UTF8
   $policyEqualExit = Invoke-TestCepInstall `
     -Script $installScript `
-    -PayloadRoot $policyPayloadCurrent.PayloadRoot `
+    -PayloadRoot $policyPayloadReissued.PayloadRoot `
     -InstallDir $policyInstallDir `
     -CepExtensionsRoot $policyCepExtensionsRoot `
     -LogRoot $policyLogRoot `
     -TrustedCertPath $trustedCertPath `
     -AfterEffectsProcessName $testAfterEffectsProcessName `
     -AdobeRoot $policyAdobeRoot
-  Assert-True ($policyEqualExit -eq 0) "an equal intact CEP release should be preserved"
+  Assert-True ($policyPayloadReissued.Zxp.Sha256 -cne $policyPayloadCurrent.Zxp.Sha256) `
+    "the reissued package must have a different signature/archive despite identical files"
+  Assert-True ($policyEqualExit -eq 0) "identical content with a different signature should be preserved"
   Assert-True ((Get-Item -LiteralPath $policyIndexPath).LastWriteTimeUtc.Ticks -eq $preservedTimestampTicks) `
     "preserving an equal intact release must not re-extract its files"
   Assert-True ($null -eq (Get-PathItem $legacyBundledCep)) `
     "an in-place upgrade should remove the exact obsolete unpacked CEP installer resource"
+
+  $policyRevisedExit = Invoke-TestCepInstall `
+    -Script $installScript `
+    -PayloadRoot $policyPayloadRevised.PayloadRoot `
+    -InstallDir $policyInstallDir `
+    -CepExtensionsRoot $policyCepExtensionsRoot `
+    -LogRoot $policyLogRoot `
+    -TrustedCertPath $trustedCertPath `
+    -AfterEffectsProcessName $testAfterEffectsProcessName `
+    -AdobeRoot $policyAdobeRoot
+  Assert-True ($policyRevisedExit -eq 0) "different signed files at the same version should be installed"
+  Assert-True ([System.IO.File]::ReadAllText($policyIndexPath) -ceq $policyRevisedIndex) `
+    "the same-version replacement must actually apply the corrected payload bytes"
+  $revisedState = Get-Content -LiteralPath $policyStatePath -Raw | ConvertFrom-Json
+  Assert-True ([string]$revisedState.cep.zxpSha256 -ceq $policyPayloadRevised.Zxp.Sha256) `
+    "same-version replacement must record the newly installed package hash"
 
   # Equal version plus invalid signed content is a repair, not a preserve.
   Set-Content -LiteralPath $policyIndexPath -Value "corrupted" -Encoding UTF8
@@ -339,6 +366,20 @@ try {
       "obsolete unpacked CEP junction should be unlinked during an in-place upgrade"
     Assert-True (Test-Path -LiteralPath $legacyBundledSentinel -PathType Leaf) `
       "cleanup of the obsolete CEP junction must preserve its external target"
+
+    $openAeSameVersionExit = Invoke-TestCepInstall `
+      -Script $installScript `
+      -PayloadRoot $policyPayloadRevised.PayloadRoot `
+      -InstallDir $policyInstallDir `
+      -CepExtensionsRoot $policyCepExtensionsRoot `
+      -LogRoot $policyLogRoot `
+      -TrustedCertPath $trustedCertPath `
+      -AfterEffectsProcessName $testAfterEffectsProcessName `
+      -AdobeRoot $policyAdobeRoot
+    Assert-True ($openAeSameVersionExit -eq 20) `
+      "After Effects must also block different signed content at the same version"
+    Assert-True ([System.IO.File]::ReadAllText($policyIndexPath) -ceq "<html></html>") `
+      "a blocked same-version correction must preserve the previous content"
 
     $openAeChangeExit = Invoke-TestCepInstall `
       -Script $installScript `

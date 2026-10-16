@@ -133,10 +133,28 @@ O staging e os backups transacionais ficam em
 `extensions`. Os helpers elevados de assets do Full não escrevem no perfil do
 usuário nem alteram HKCU.
 
-A instalação/atualização manual iniciada pelo Tauri é um fluxo separado e
-continua `per-user` em
-`%APPDATA%\Adobe\CEP\extensions\com.arizona-carrefour.cep`. Ambos os fluxos
-extraem o `.zxp` assinado; nenhum distribui a pasta crua de build.
+Após o Full, ao abrir normalmente, o Tauri 2.4.1 confere o recibo da instalação,
+a assinatura do payload e os arquivos instalados na máquina. Com o After fechado,
+consolida a cópia normal redundante do usuário atual. Se o After estiver aberto,
+aguarda seu fechamento. Junctions de desenvolvimento e cópias do usuário com versão
+mais nova são preservadas; nenhum outro perfil é alterado.
+
+A partir do Tauri 2.4.1, a atualização manual por `.zxp` usa a instalação
+compartilhada existente, com autorização de administrador do Windows, e
+consolida as cópias normais antigas. Quando existe somente uma instalação do
+usuário, ou nenhuma instalação, o destino continua sendo
+`%APPDATA%\Adobe\CEP\extensions\com.arizona-carrefour.cep`.
+
+O painel informa o destino antes da confirmação. A cópia do usuário só é
+retirada depois de a instalação compartilhada ser verificada. Os temporários
+e backups ficam fora de `extensions`. O helper elevado opera somente nas
+pastas CEP da máquina; o processo original trata os arquivos e o registro do
+usuário. Ambos os fluxos extraem o `.zxp` assinado.
+
+Uma junction de desenvolvimento é apresentada como **Modo de desenvolvimento**.
+Ela pode coexistir com a instalação compartilhada e é preservada por padrão.
+Encerrar esse modo na instalação de um `.zxp` exige escolha explícita: somente
+o link é removido, preservando `ARIZONA-EXTENSION/dist/cep` e o código-fonte.
 
 Essa validação cobre a extensão CEP. Ela não substitui a assinatura Authenticode
 do executável/setup nem o smoke test do Full em uma máquina limpa com After

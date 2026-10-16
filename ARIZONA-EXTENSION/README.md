@@ -335,8 +335,25 @@ depois de fechar o projeto anterior, o painel reflete o estado atual do After.
 Se apenas a limpeza de cache falhar, a abertura continua e exibe um aviso.
 Enquanto uma ação estiver em andamento, o botão fica indisponível.
 
-Essa atualização ocorre ao abrir pelo botão do painel; não há consulta periódica
-para detectar aberturas pelo menu do After Effects.
+O painel também consulta a identidade do projeto a cada 1,5 segundo enquanto
+está visível e o editor está livre, além de conferir ao recuperar o foco. Assim,
+projetos abertos pelo Tauri ou pelo menu do After Effects carregam automaticamente
+no CEP. As consultas não se sobrepõem e ficam suspensas durante ações do editor
+e durante a abertura pelo próprio painel. Falhas temporárias de leitura preservam
+os dados exibidos e são tentadas novamente; uma mudança de projeto confirmada
+descarta os dados anteriores. Edições no mesmo projeto não recarregam o painel.
+Se a primeira leitura das ofertas ainda vier sem produtos, o painel tenta
+novamente até cinco vezes, com intervalo de 1,5 segundo. Essa recuperação para
+assim que o conteúdo aparece e não acompanha edições normais de produtos.
+Se a abertura demorar mais, retornar o foco ou tornar o painel visível inicia
+outra tentativa somente enquanto o conteúdo inicial ainda não foi carregado.
+Ofertas que permanecem sem produtos exibem a mensagem de estado da leitura.
+
+A identificação externa usa o caminho do arquivo: reabrir o mesmo arquivo fora
+do painel pode exigir **Atualizar** se o estado sem projeto não for observado
+entre o fechamento e a abertura. Pelo botão do próprio painel, reabrir o mesmo
+arquivo sempre atualiza os dados. O botão **Atualizar** das ofertas também confere
+a identidade do projeto antes de ler os dados.
 
 ## Carregamento do roteiro
 

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -9,8 +10,14 @@ import HistoryWindow from "../history/HistoryWindow";
 import RoteiroViewer from "./RoteiroViewer";
 import {
   cepAdditionalInstallations,
-  cepDowngradeRequiresFullInstaller,
+  cepConsolidationMessage,
+  cepDevelopmentModePreserved,
+  cepDevLinkRequiresReplacement,
+  cepHasInstallTarget,
+  cepHasPerUserDevLink,
   cepInstallationLocationLabel,
+  cepInstallationScopeLabel,
+  cepInstalledVersionForUpdate,
   cepInstallActionLabel,
   cepInstallCommandArgs,
   cepVersionRelation,
@@ -124,7 +131,7 @@ const SETTINGS_TABS = Object.freeze({
 });
 
 const CEP_DEV_LINK_MESSAGE =
-  "Esta pasta é um atalho para a sua build local da extensão (máquina de desenvolvimento).";
+  "Há um atalho para a sua build local da extensão (máquina de desenvolvimento).";
 
 const NUMERIC_SETTINGS_SAVE_DELAY_MS = 1000;
 const TEXT_SETTINGS_SAVE_DELAY_MS = 1500;
@@ -1426,37 +1433,37 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
   const [isInstalling, setIsInstalling] = useState(false);
   const [isInstallConfirmOpen, setIsInstallConfirmOpen] = useState(false);
   const [isDowngradeConfirmed, setIsDowngradeConfirmed] = useState(false);
+  const [isDevLinkReplacementConfirmed, setIsDevLinkReplacementConfirmed] = useState(false);
   const [isDragActive, setIsDragActive] = useState(false);
   const dropHandlerRef = useRef(() => {});
 
-  const perUserInstallation = extensionStatus?.installations?.find(
-    (installation) => installation.scope === "perUser"
-  );
-  const isDevLink = Boolean(perUserInstallation?.isDevLink ?? extensionStatus?.isDevLink);
+  const isDevLink = Boolean(extensionStatus?.developmentMode);
+  const isPerUserDevLink = cepHasPerUserDevLink(extensionStatus);
   const installedVersion = extensionStatus?.installed ? extensionStatus.version || "" : "";
-  const versionRelation = cepVersionRelation(selectedZxp?.version, installedVersion);
+  const updateInstalledVersion = cepInstalledVersionForUpdate(extensionStatus);
+  const versionRelation = cepVersionRelation(selectedZxp?.version, updateInstalledVersion);
   const isDowngrade = versionRelation === "downgrade";
-  const downgradeRequiresFullInstaller = cepDowngradeRequiresFullInstaller(
-    selectedZxp?.version,
-    extensionStatus
-  );
+  const devLinkRequiresReplacement = cepDevLinkRequiresReplacement(extensionStatus);
   const installLabel = cepInstallActionLabel(versionRelation);
   const effectiveInstallationLabel = extensionStatus?.installed
-    ? cepInstallationLocationLabel({
-      scope: extensionStatus.scope,
-      path: extensionStatus.path,
-    })
+    ? cepInstallationLocationLabel(extensionStatus)
     : "";
   const additionalInstallations = cepAdditionalInstallations(extensionStatus);
-  // The dev link only blocks until it is explicitly replaced; installing then
-  // removes the shortcut itself and never the build folder it points at.
-  const installBlocked = isLoadingStatus;
+  const installBlocked = isLoadingStatus || !cepHasInstallTarget(extensionStatus);
 
   const refreshExtensionStatus = async ({ silent = false } = {}) => {
     if (!silent) setIsLoadingStatus(true);
     try {
-      const status = await invokeCommand(commandNames.cepExtensionStatus);
-      setExtensionStatus(normalizeCepExtensionStatus(status));
+      const [statusResult, debugResult] = await Promise.allSettled([
+        invokeCommand(commandNames.cepExtensionStatus),
+        invokeCommand(commandNames.cepDebugModeStatus),
+      ]);
+      if (debugResult.status === "fulfilled") {
+        setIsDebugEnabled(Boolean(debugResult.value?.enabled));
+        setIsDebugKnown(true);
+      }
+      if (statusResult.status === "rejected") throw statusResult.reason;
+      setExtensionStatus(normalizeCepExtensionStatus(statusResult.value));
     } catch (error) {
       if (!silent) {
         showError(cepErrorMessage(error, "Não foi possível consultar a extensão instalada."));
@@ -1468,12 +1475,16 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
 
   useEffect(() => {
     let mounted = true;
+    let unlisten;
+    let requestRevision = 0;
 
-    Promise.allSettled([
-      invokeCommand(commandNames.cepExtensionStatus),
-      invokeCommand(commandNames.cepDebugModeStatus),
-    ]).then(([statusResult, debugResult]) => {
-      if (!mounted) return;
+    const loadStatus = async () => {
+      const revision = ++requestRevision;
+      const [statusResult, debugResult] = await Promise.allSettled([
+        invokeCommand(commandNames.cepExtensionStatus),
+        invokeCommand(commandNames.cepDebugModeStatus),
+      ]);
+      if (!mounted || revision !== requestRevision) return;
 
       if (statusResult.status === "fulfilled") {
         setExtensionStatus(normalizeCepExtensionStatus(statusResult.value));
@@ -1487,10 +1498,21 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
       }
 
       setIsLoadingStatus(false);
-    });
+    };
+
+    // Register before the first read so completion during panel startup cannot
+    // leave an obsolete duplicate-installation warning on screen.
+    listen("arizona-cep:consolidation-changed", () => { if (mounted) void loadStatus(); })
+      .then((stop) => {
+        if (!mounted) { stop(); return; }
+        unlisten = stop;
+        void loadStatus();
+      })
+      .catch(() => { if (mounted) void loadStatus(); });
 
     return () => {
       mounted = false;
+      unlisten?.();
     };
   }, []);
 
@@ -1503,6 +1525,7 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
     setIsInspecting(true);
     setSelectedZxp(null);
     setIsDowngradeConfirmed(false);
+    setIsDevLinkReplacementConfirmed(false);
     try {
       const inspection = await invokeCommand(commandNames.inspectCepZxp, { path: filePath });
       setSelectedZxp({
@@ -1579,8 +1602,9 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
   };
 
   const installSelectedZxp = async () => {
-    if (!selectedZxp?.path || isInstalling) return;
-    if (downgradeRequiresFullInstaller || (isDowngrade && !isDowngradeConfirmed)) return;
+    if (!selectedZxp?.path || isInstalling || installBlocked) return;
+    if ((isDowngrade && !isDowngradeConfirmed)
+      || (devLinkRequiresReplacement && !isDevLinkReplacementConfirmed)) return;
 
     setIsInstallConfirmOpen(false);
     setIsInstalling(true);
@@ -1588,18 +1612,20 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
       const result = await invokeCommand(commandNames.installCepZxp, cepInstallCommandArgs({
         path: selectedZxp.path,
         expectedVersion: selectedZxp.version,
-        replaceDevLink: isDevLink,
+        replaceDevLink: isPerUserDevLink && isDevLinkReplacementConfirmed,
         relation: versionRelation,
         downgradeConfirmed: isDowngradeConfirmed,
+        targetScope: extensionStatus.targetScope,
+        targetPath: extensionStatus.targetPath,
       }));
       const version = String(result?.version || selectedZxp.version || "").trim();
-      showSuccess(
-        version
-          ? `Extensão v${version} instalada. Reabra o After Effects para carregar a nova versão.`
-          : "Extensão instalada. Reabra o After Effects para carregar a nova versão."
-      );
+      const installedMessage = version ? `Extensão v${version} instalada.` : "Extensão instalada.";
+      showSuccess(installedMessage + (cepDevelopmentModePreserved(extensionStatus, isDevLinkReplacementConfirmed)
+        ? " Modo de desenvolvimento preservado."
+        : " Reabra o After Effects para carregar a nova versão."));
       setSelectedZxp(null);
       setIsDowngradeConfirmed(false);
+      setIsDevLinkReplacementConfirmed(false);
       await refreshExtensionStatus({ silent: true });
     } catch (error) {
       showError(cepErrorMessage(error, "A instalação falhou."));
@@ -1607,6 +1633,7 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
         setSelectedZxp(null);
         setIsDowngradeConfirmed(false);
       }
+      setIsDevLinkReplacementConfirmed(false);
       await refreshExtensionStatus({ silent: true });
     } finally {
       setIsInstalling(false);
@@ -1637,6 +1664,7 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
       if (event.key === "Escape" && !isInstalling) {
         setIsInstallConfirmOpen(false);
         setIsDowngradeConfirmed(false);
+        setIsDevLinkReplacementConfirmed(false);
       }
     };
 
@@ -1666,7 +1694,9 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
             <dd>
               {isLoadingStatus
                 ? "Verificando..."
-                : extensionStatus?.installed
+                : isDevLink
+                  ? "Desenvolvimento"
+                  : extensionStatus?.installed
                   ? "Instalada"
                   : "Não instalada"}
             </dd>
@@ -1707,17 +1737,19 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
             </dl>
           </>
         ) : null}
-        {extensionStatus?.hasMultipleInstallations ? (
+        {extensionStatus?.consolidationRequired ? (
           <p className="settings-ext-note">
-            Há mais de uma instalação do painel. O Arizona usa a maior versão válida como
-            referência; procure o suporte ou use um instalador Full compatível para reparar ou
-            consolidar as cópias.
+            {cepConsolidationMessage(extensionStatus)}
           </p>
         ) : null}
         {isDevLink && (
           <p className="settings-ext-note">
-            {CEP_DEV_LINK_MESSAGE} Instalar um .zxp aqui substitui esse atalho pela versão do
-            arquivo; a pasta de build para onde ele aponta não é apagada.
+            {CEP_DEV_LINK_MESSAGE} {devLinkRequiresReplacement
+              ? "Para instalar um .zxp neste local, confirme a saída do modo de desenvolvimento."
+              : isPerUserDevLink
+                ? "A atualização preserva esse atalho. Você pode removê-lo na confirmação."
+                : "A atualização preserva esse atalho."}
+            {" "}A pasta da build local é preservada.
           </p>
         )}
       </div>
@@ -1756,8 +1788,8 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
               <dd>{selectedZxp.version ? `v${selectedZxp.version}` : "—"}</dd>
             </div>
             <div>
-              <dt>Versão instalada</dt>
-              <dd>{installedVersion ? `v${installedVersion}` : "Não instalada"}</dd>
+              <dt>{isDevLink ? "Versão publicada" : "Versão instalada"}</dt>
+              <dd>{updateInstalledVersion ? `v${updateInstalledVersion}` : "Não instalada"}</dd>
             </div>
           </dl>
           <div className="settings-ext-selected__actions">
@@ -1774,6 +1806,7 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
               className="btn btn-primary"
               onClick={() => {
                 setIsDowngradeConfirmed(false);
+                setIsDevLinkReplacementConfirmed(false);
                 setIsInstallConfirmOpen(true);
               }}
               disabled={installBlocked || isInstalling}
@@ -1815,23 +1848,27 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
           >
             <header className="settings-confirm-header">
               <h2 id="settingsExtensionInstallTitle">
-                {downgradeRequiresFullInstaller ? "Use o instalador completo" : `${installLabel} a extensão?`}
+                {`${installLabel} a extensão?`}
               </h2>
             </header>
-            {downgradeRequiresFullInstaller ? (
-              <p>
-                Há uma instalação válida para todos os usuários com versão superior à
-                v{selectedZxp.version}. Uma instalação somente para este usuário não substituiria
-                essa versão. Solicite ao suporte um instalador Full compatível.
-              </p>
-            ) : (
-              <p>
-                Feche o After Effects antes de continuar. A versão
-                {selectedZxp.version ? ` v${selectedZxp.version}` : " selecionada"} substituirá a
-                instalação atual da extensão Arizona.
-              </p>
-            )}
-            {isDowngrade && !downgradeRequiresFullInstaller ? (
+            <p>
+              Feche o After Effects antes de continuar. A versão
+              {selectedZxp.version ? ` v${selectedZxp.version}` : " selecionada"} será instalada
+              para {extensionStatus?.targetScope === "perMachine" ? "todos os usuários" : "este usuário"}.
+            </p>
+            <dl className="settings-ext-status">
+              <div>
+                <dt>Destino</dt>
+                <dd title={extensionStatus?.targetPath}>{cepInstallationScopeLabel(extensionStatus?.targetScope)}</dd>
+              </div>
+            </dl>
+            {extensionStatus?.requiresElevation ? (
+              <p>O Windows solicitará autorização de administrador para atualizar essa instalação.</p>
+            ) : null}
+            {extensionStatus?.consolidationRequired ? (
+              <p>As cópias adicionais serão removidas após a instalação ser verificada.</p>
+            ) : null}
+            {isDowngrade ? (
               <label className="settings-confirm-check">
                 <input
                   type="checkbox"
@@ -1839,16 +1876,27 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
                   onChange={(event) => setIsDowngradeConfirmed(event.target.checked)}
                 />
                 <span>
-                  Confirmo a troca da v{installedVersion} pela versão anterior v{selectedZxp.version}.
+                  Confirmo a troca da v{updateInstalledVersion} pela versão anterior v{selectedZxp.version}.
                 </span>
               </label>
             ) : null}
-            {isDevLink && (
-              <p className="settings-ext-note">
-                Esta máquina usa um atalho para a sua build local. Ele será removido e a pasta
-                passará a conter a versão do arquivo. A pasta de build não é apagada — para voltar
-                ao modo de desenvolvimento, rode o build da extensão novamente.
-              </p>
+            {isPerUserDevLink && (
+              <>
+                <label className="settings-confirm-check">
+                  <input
+                    type="checkbox"
+                    checked={isDevLinkReplacementConfirmed}
+                    onChange={(event) => setIsDevLinkReplacementConfirmed(event.target.checked)}
+                  />
+                  <span>Encerrar modo de desenvolvimento{devLinkRequiresReplacement ? " (obrigatório)" : ""}</span>
+                </label>
+                <p className="settings-ext-note">
+                  {devLinkRequiresReplacement
+                    ? "O atalho será substituído pelo pacote selecionado."
+                    : "Se marcado, apenas o atalho será removido após a atualização. Se desmarcado, o atalho permanece ativo."}
+                  {" "}A pasta da build local é preservada.
+                </p>
+              </>
             )}
             <div className="settings-confirm-actions">
               <button
@@ -1857,21 +1905,21 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
                 onClick={() => {
                   setIsInstallConfirmOpen(false);
                   setIsDowngradeConfirmed(false);
+                  setIsDevLinkReplacementConfirmed(false);
                 }}
                 disabled={isInstalling}
               >
-                {downgradeRequiresFullInstaller ? "Fechar" : "Cancelar"}
+                Cancelar
               </button>
-              {!downgradeRequiresFullInstaller ? (
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={installSelectedZxp}
-                  disabled={isInstalling || (isDowngrade && !isDowngradeConfirmed)}
-                >
-                  {isInstalling ? "Instalando..." : installLabel}
-                </button>
-              ) : null}
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={installSelectedZxp}
+                disabled={isInstalling || installBlocked || (isDowngrade && !isDowngradeConfirmed)
+                  || (devLinkRequiresReplacement && !isDevLinkReplacementConfirmed)}
+              >
+                {isInstalling ? "Instalando..." : installLabel}
+              </button>
             </div>
           </section>
         </div>
@@ -2506,10 +2554,17 @@ function cepErrorMessage(error, fallback = "Operação não concluída.") {
   if (code === "cep_downgrade_requires_full_installer") {
     return "A versão mais nova está instalada para todos os usuários. Solicite ao suporte um instalador Full compatível para voltar a uma versão anterior.";
   }
+  if (code === "cep_install_target_changed" || code === "cep_installation_changed") {
+    return "A instalação mudou. Atualize o status e confira o destino antes de confirmar novamente.";
+  }
+  if (code === "cep_elevation_cancelled") return "A autorização de administrador foi cancelada. A instalação foi preservada.";
+  if (code === "cep_consolidation_failed") {
+    return "A finalização da atualização ficou pendente. Confira o status e solicite suporte.";
+  }
   if (code === "cep_zxp_changed") {
     return "O arquivo ZXP mudou depois da validação. Selecione o arquivo novamente para conferir e confirmar a versão correta.";
   }
-  if (code === "cep_install_failed") return "A instalação falhou e nada foi alterado.";
+  if (code === "cep_install_failed") return "A instalação falhou. Confira o status antes de tentar novamente.";
   return publicErrorMessage(error, fallback);
 }
 

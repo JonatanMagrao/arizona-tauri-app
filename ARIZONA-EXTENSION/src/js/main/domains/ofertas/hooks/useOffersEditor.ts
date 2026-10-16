@@ -41,6 +41,8 @@ interface UseOffersEditorOptions {
 
 const UNDO_REFRESH_DELAY_MS = 180;
 const UNDO_DEDUPE_MS = 250;
+const INITIAL_SNAPSHOT_RETRY_MS = 1500;
+const INITIAL_SNAPSHOT_RETRIES = 5;
 
 const wait = (durationMs: number) =>
   new Promise((resolve) => window.setTimeout(resolve, durationMs));
@@ -73,6 +75,9 @@ export const useOffersEditor = ({
   );
   const lastUndoAtRef = useRef(0);
   const undoInFlightRef = useRef(false);
+  const snapshotReadCountRef = useRef(0);
+  const snapshotRequestIdRef = useRef(0);
+  const initialSnapshotReadyRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -112,16 +117,22 @@ export const useOffersEditor = ({
     async (offerLayerIndex = selectedOfferLayerIndexRef.current) => {
       if (!window.cep || !mountedRef.current) return false;
 
+      const requestId = ++snapshotRequestIdRef.current;
+      snapshotReadCountRef.current += 1;
       setLoading(true);
 
       try {
         const nextSnapshot = await loadOffersEditorSnapshot(offerLayerIndex);
-        if (!mountedRef.current) return false;
+        if (!mountedRef.current || requestId !== snapshotRequestIdRef.current) return false;
         selectedOfferLayerIndexRef.current =
           nextSnapshot.selectedOfferLayerIndex || offerLayerIndex;
+        if ((nextSnapshot.selectedOffer?.products?.length || 0) > 0) {
+          initialSnapshotReadyRef.current = true;
+        }
         setSnapshot(nextSnapshot);
         return true;
       } catch (caught) {
+        if (!mountedRef.current || requestId !== snapshotRequestIdRef.current) return false;
         const message = getPublicErrorMessage(
           caught,
           "Não foi possível carregar as ofertas deste projeto.",
@@ -136,7 +147,8 @@ export const useOffersEditor = ({
         );
         return false;
       } finally {
-        setLoading(false);
+        snapshotReadCountRef.current -= 1;
+        if (mountedRef.current) setLoading(snapshotReadCountRef.current > 0);
       }
     },
     [onStatus]
@@ -532,7 +544,48 @@ export const useOffersEditor = ({
   }, [appendLog, beginAction, endAction, onStatus, refreshOffers]);
 
   useEffect(() => {
-    void refreshOffers();
+    if (!window.cep) return;
+    let disposed = false;
+    let timer = 0;
+    let retries = 0;
+    const scheduleRecovery = () => {
+      if (disposed || initialSnapshotReadyRef.current || retries >= INITIAL_SNAPSHOT_RETRIES) return;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(recoverInitialSnapshot, INITIAL_SNAPSHOT_RETRY_MS);
+    };
+    const recoverInitialSnapshot = async () => {
+      window.clearTimeout(timer);
+      timer = 0;
+      if (disposed || initialSnapshotReadyRef.current) return;
+      // The path can already be known while the first offer snapshot is still
+      // empty. Retry that startup read, without polling a populated editor or
+      // racing a selection/edit, another read, or a hidden panel.
+      if (snapshotReadCountRef.current > 0 || pendingActionCountRef.current > 0 ||
+          (typeof document !== "undefined" && (document.hidden || document.visibilityState === "hidden"))) {
+        scheduleRecovery();
+        return;
+      }
+      retries += 1;
+      await refreshOffers();
+      scheduleRecovery();
+    };
+    const recoverWhenVisible = () => {
+      if (disposed || initialSnapshotReadyRef.current || document.hidden || document.visibilityState === "hidden") return;
+      // A long external open can outlast the bounded startup window. Returning
+      // to this still-empty panel gives it a fresh chance, without refreshing
+      // products that the operator has already loaded and started editing.
+      retries = 0;
+      void recoverInitialSnapshot();
+    };
+    void refreshOffers().then(scheduleRecovery);
+    window.addEventListener("focus", recoverWhenVisible);
+    document.addEventListener("visibilitychange", recoverWhenVisible);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+      window.removeEventListener("focus", recoverWhenVisible);
+      document.removeEventListener("visibilitychange", recoverWhenVisible);
+    };
   }, [refreshOffers]);
 
   return {

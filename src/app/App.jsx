@@ -933,7 +933,7 @@ function MainApp({ authSession, onAuthSessionChange = () => {} }) {
           </button>
         </aside>
 
-        <main className="content">
+        <main className={`content${activeTab === TABS.JOBS ? " content--jobs" : ""}`}>
           {activeTab === TABS.JOBS && (
             <JobPanel
               jobaoCod={jobaoCod}

@@ -70,8 +70,12 @@ interface LicensedAppProps {
 }
 
 const LicensedApp = ({ bgColor }: LicensedAppProps) => {
+  const projectActivityRef = useRef({ opening: false, busy: false });
   const { projectKey, projectName, refreshProjectIdentity } =
-    useProjectIdentity();
+    useProjectIdentity({
+      canObserve: () =>
+        !projectActivityRef.current.opening && !projectActivityRef.current.busy,
+    });
   const [activeView, setActiveView] = useState<ActiveView>("offers");
   const [projectRevision, setProjectRevision] = useState(0);
   const reloadProject = useCallback(async () => {
@@ -80,6 +84,19 @@ const LicensedApp = ({ bgColor }: LicensedAppProps) => {
     setProjectRevision((current) => current + 1);
   }, [refreshProjectIdentity]);
   const { isOpeningProject, openProject } = useProjectOpening(reloadProject);
+  const handleOpenProject = useCallback(async () => {
+    if (projectActivityRef.current.opening || projectActivityRef.current.busy) return;
+    // Pause before the modal-opening hook yields to React or the host bridge.
+    projectActivityRef.current.opening = true;
+    try {
+      await openProject();
+    } finally {
+      projectActivityRef.current.opening = false;
+    }
+  }, [openProject]);
+  const handleProjectBusyChange = useCallback((busy: boolean) => {
+    projectActivityRef.current.busy = busy;
+  }, []);
 
   return (
     <ProjectPanel
@@ -91,7 +108,8 @@ const LicensedApp = ({ bgColor }: LicensedAppProps) => {
       activeView={activeView}
       setActiveView={setActiveView}
       isOpeningProject={isOpeningProject}
-      onOpenProject={openProject}
+      onOpenProject={handleOpenProject}
+      onBusyChange={handleProjectBusyChange}
     />
   );
 };
@@ -104,6 +122,7 @@ interface ProjectPanelProps extends LicensedAppProps {
   setActiveView: (view: ActiveView) => void;
   isOpeningProject: boolean;
   onOpenProject: () => Promise<void>;
+  onBusyChange: (busy: boolean) => void;
 }
 
 const ProjectPanel = ({
@@ -115,12 +134,18 @@ const ProjectPanel = ({
   setActiveView,
   isOpeningProject,
   onOpenProject,
+  onBusyChange,
 }: ProjectPanelProps) => {
   const projectViewKey = projectKey || "no-project";
   const projectKeyRef = useRef(projectKey);
   const isOpeningProjectRef = useRef(isOpeningProject);
   isOpeningProjectRef.current = isOpeningProject;
   const [isProjectBusy, setIsProjectBusy] = useState(false);
+  const handleEditorBusyChange = useCallback((busy: boolean) => {
+    setIsProjectBusy(busy);
+    onBusyChange(busy);
+  }, [onBusyChange]);
+  useEffect(() => () => onBusyChange(false), [onBusyChange]);
   // ProjectPanel survives tab changes, but its project/revision key replaces
   // this single-document cache when switching or reopening a project.
   const [roteiroDocumentCache] = useState(createRoteiroDocumentCache);
@@ -319,7 +344,7 @@ const ProjectPanel = ({
               key={`roteiro-${projectViewKey}`}
               documentCache={roteiroDocumentCache}
               onOpenOfferInOffers={openOfferFromRoteiro}
-              onBusyChange={setIsProjectBusy}
+              onBusyChange={handleEditorBusyChange}
             />
           </div>
         ) : (
@@ -336,7 +361,7 @@ const ProjectPanel = ({
                 setRequestedOfferLayerIndex(undefined)
               }
               onStatus={setStatus}
-              onBusyChange={setIsProjectBusy}
+              onBusyChange={handleEditorBusyChange}
             />
           </div>
         )}

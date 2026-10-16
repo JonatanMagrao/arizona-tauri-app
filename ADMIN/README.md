@@ -38,6 +38,23 @@ npm run preview
 Abra a URL mostrada pelo Vite. A porta inicial do preview e `1431`.
 Ela tambÃ©m Ã© fixa pela configuraÃ§Ã£o de redirect OAuth.
 
+### Contador de vagas na Gestão do app
+
+`admin-list-members` apresenta as vagas da equipe sem contar a própria vaga do
+gestor autenticado: desconta uma unidade do total e do consumo somente quando
+esse gestor está ativo/convidado e já entra em `consumed_seats`. Outros gestores
+continuam na contagem. Uma identidade master ativa já isenta não é descontada
+novamente, inclusive quando entra pelo app como membro gestor.
+
+Exemplo: licença com 11 vagas reais, gestor e 3 pessoas cadastradas mostra
+**3 de 10 vagas em uso**, com **7 disponíveis**. A lista de membros, os papéis e
+as permissões são preservados. O limite salvo no Admin e a regra de convites
+continuam usando os valores reais; não reduza `organizations.seats_allowed`
+para obter esse efeito visual.
+
+O ajuste está somente na resposta da Edge Function e funciona nas versões já
+instaladas do app. Não exige migration nem nova versão do Tauri.
+
 Fluxo atual:
 
 1. Criar o usuÃ¡rio master no Supabase Auth e vinculÃ¡-lo explicitamente em
