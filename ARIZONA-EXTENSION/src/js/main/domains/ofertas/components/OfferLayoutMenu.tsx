@@ -46,7 +46,7 @@ export const OfferLayoutMenu = ({
   const contextRevisionRef = useRef(0);
   const mountedRef = useRef(true);
   const initialFocusRef = useRef<"current" | "first" | "last">("current");
-  const { data, loading, error, reload } = useOfferLayoutOptions(offerLayerIndex, isOpen);
+  const { data, loading, error, reload } = useOfferLayoutOptions(offerLayerIndex, isOpen, resetKey);
   const disabled = !window.cep || busy || blocked || applying;
   const disabledMessage = !window.cep
     ? "Abra este painel dentro do After Effects."

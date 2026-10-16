@@ -53,7 +53,7 @@ export const OfferMechanicMenu = ({
   const contextRevisionRef = useRef(0);
   const mountedRef = useRef(true);
   const initialFocusRef = useRef<"current" | "first" | "last">("current");
-  const { data, loading, error, reload } = useOfferMechanicOptions(offerLayerIndex, productIndex, isOpen);
+  const { data, loading, error, reload } = useOfferMechanicOptions(offerLayerIndex, productIndex, isOpen, resetKey);
   const disabled = !window.cep || busy || blocked || applying;
   const disabledMessage = !window.cep
     ? "Abra este painel dentro do After Effects."
@@ -165,10 +165,8 @@ export const OfferMechanicMenu = ({
       !mountedRef.current || !openRef.current || applyingRef.current ||
       disabled || !data?.ok || !data.context || !option.enabled || option.itemId === null
     ) return;
-    if (option.current) {
-      closeMenu(true);
-      return;
-    }
+    // Even the current family may need its own instance in an older project.
+    // The host decides whether this is a no-op or a shared source to separate.
     const request: OfferMechanicChangeRequest = {
       context: data.context,
       targetItemId: option.itemId,
@@ -236,7 +234,15 @@ export const OfferMechanicMenu = ({
           }}
         >
           <span className="offer-mechanic-trigger-label">{label}</span>
-          <span aria-hidden="true">▾</span>
+          <svg
+            className="offer-mechanic-chevron"
+            width="12" height="12" viewBox="0 0 16 16"
+            fill="none" stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round"
+            aria-hidden="true" focusable="false"
+          >
+            <path d="M4 6 8 10 12 6" />
+          </svg>
         </button>
       </span>
       {isOpen ? createPortal(

@@ -12,6 +12,7 @@ export const commandNames = Object.freeze({
   cepBridgeStatus: "cep_bridge_status",
   cepDebugModeStatus: "cep_debug_mode_status",
   cepExtensionStatus: "cep_extension_status",
+  cepRetryConsolidation: "cep_retry_consolidation",
   clearSecureAuth: "clear_secure_auth",
   duplicateIdenticalMp4: "duplicate_identical_mp4",
   diagnosticsExport: "diagnostics_export",

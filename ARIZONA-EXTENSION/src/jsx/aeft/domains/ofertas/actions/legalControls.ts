@@ -14,8 +14,8 @@ import {
 } from "../layers/legalControls";
 import { setFieldValue, setLegalText } from "../layers/textFields";
 import { applyOptionGroupSelection } from "../mechanics/shared";
-import { generateOfferData } from "../snapshot/buildOfferSnapshot";
-import { createActionResult } from "./shared";
+import { generateOfferLegalData } from "../snapshot/buildOfferSnapshot";
+import { attachOfferUpdate, createActionResult } from "./shared";
 
 export const updateOfferLegalText = (
   offerLayerIndex: number,
@@ -29,7 +29,7 @@ export const updateOfferLegalText = (
   app.beginUndoGroup("Atualizar texto legal");
 
   try {
-    const details = generateOfferData(offer);
+    const details = generateOfferLegalData(offer, result.errors);
 
     if (details.legalTextProperty === null) {
       throw new Error("Texto legal nao encontrado.");
@@ -39,6 +39,7 @@ export const updateOfferLegalText = (
     result.ok = true;
     result.selectedOfferLayerIndex = offer.index;
     result.message = "Texto legal atualizado.";
+    attachOfferUpdate(result, offer);
   } catch (error) {
     result.message =
       error instanceof Error ? error.message : "Erro ao atualizar texto legal.";
@@ -104,6 +105,7 @@ export const updateOfferLegalControl = (
     result.ok = true;
     result.selectedOfferLayerIndex = offer.index;
     result.message = control.label + (enabled ? " ativado." : " desativado.");
+    attachOfferUpdate(result, offer);
   } catch (error) {
     result.message =
       error instanceof Error
@@ -130,9 +132,8 @@ export const updateOfferLegalControlValue = (
   app.beginUndoGroup("Atualizar configuracao da oferta");
 
   try {
-    const details = generateOfferData(offer);
+    const details = generateOfferLegalData(offer, result.errors);
     const control = findInternalLegalControl(details.legalControls, controlId);
-    result.errors = details.errors.slice(0);
 
     if (control === null || !control.slider || control.slider.property === null) {
       throw new Error("Slider de " + controlId + " nao encontrado.");
@@ -142,6 +143,7 @@ export const updateOfferLegalControlValue = (
     result.ok = true;
     result.selectedOfferLayerIndex = offer.index;
     result.message = control.label + " atualizado.";
+    attachOfferUpdate(result, offer);
   } catch (error) {
     result.message =
       error instanceof Error
@@ -171,9 +173,8 @@ export const updateOfferLegalControlOption = (
   app.beginUndoGroup("Atualizar menu da oferta");
 
   try {
-    const details = generateOfferData(offer);
+    const details = generateOfferLegalData(offer, result.errors);
     const control = findInternalLegalControl(details.legalControls, controlId);
-    result.errors = details.errors.slice(0);
 
     if (control === null || !control.optionGroup) {
       throw new Error("Menu de " + controlId + " nao encontrado.");
@@ -183,6 +184,7 @@ export const updateOfferLegalControlOption = (
     result.ok = true;
     result.selectedOfferLayerIndex = offer.index;
     result.message = control.label + " atualizado.";
+    attachOfferUpdate(result, offer);
   } catch (error) {
     result.message =
       error instanceof Error
@@ -244,6 +246,7 @@ const updateBanner = (
     result.ok = true;
     result.selectedOfferLayerIndex = offer.index;
     result.message = "Eletro/Pneu atualizado.";
+    if (undoOpened) attachOfferUpdate(result, offer);
   } catch (error) {
     result.message = String(error) || "Erro ao atualizar Eletro/Pneu.";
     result.errors.push(result.message);

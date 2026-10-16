@@ -24,6 +24,7 @@ use crate::after_effects;
 use crate::AuthState;
 
 mod full_consolidation;
+mod pending_consolidation;
 pub use full_consolidation::start_full_consolidation;
 
 const CEP_BUNDLE_ID: &str = "com.arizona-carrefour.cep";
@@ -98,6 +99,7 @@ pub struct CepExtensionStatus {
     development_mode: bool,
     consolidation_required: bool,
     automatic_consolidation: String,
+    automatic_consolidation_failure_code: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -209,7 +211,19 @@ pub fn cep_extension_status() -> Result<CepExtensionStatus, String> {
             .count()
             > 1,
         automatic_consolidation: full_consolidation::status().to_string(),
+        automatic_consolidation_failure_code: full_consolidation::failure_code()
+            .map(str::to_string),
     })
+}
+
+#[tauri::command]
+pub async fn cep_retry_consolidation(app: tauri::AppHandle) -> Result<bool, String> {
+    let auth = app.state::<AuthState>();
+    crate::require_authenticated(&auth)?;
+    if cfg!(debug_assertions) {
+        return Err("cep_consolidation_development_mode: A consolidação automática fica desativada no aplicativo de desenvolvimento. Use a versão instalada do Arizona.".into());
+    }
+    full_consolidation::retry_full_consolidation(&app)
 }
 
 #[tauri::command]
@@ -236,11 +250,20 @@ pub async fn install_cep_zxp(
 ) -> Result<CepInstallResult, String> {
     let replace_dev_link = replace_dev_link.unwrap_or(false);
     let allow_downgrade = allow_downgrade.unwrap_or(false);
-    run_blocking_cep_operation(move || {
+    let operation_app = app.clone();
+    let result = run_blocking_cep_operation(move || {
+        let app = operation_app;
         let auth = app.state::<AuthState>();
         crate::require_authenticated(&auth)?;
         let _operation = lock_cep_operation()?;
         let verifier = resolve_cep_content_verifier(&app)?;
+        let pending_path = app
+            .path()
+            .app_local_data_dir()
+            .map_err(|_| {
+                "cep_install_failed: Não foi possível localizar os dados locais do aplicativo."
+            })?
+            .join(pending_consolidation::FILE_NAME);
         install_zxp_file(
             Path::new(path.trim()),
             replace_dev_link,
@@ -249,9 +272,21 @@ pub async fn install_cep_zxp(
             &expected_target_scope,
             Path::new(&expected_target_path),
             &verifier,
+            &pending_path,
         )
     })
-    .await
+    .await;
+    // A manual commit may have succeeded even if the old profile copy could
+    // not yet be retired. Resume from that commit, never from the Full payload.
+    // The operation lock above has been released before starting this worker.
+    if result.is_ok()
+        || result
+            .as_ref()
+            .is_err_and(|error| error.starts_with("cep_consolidation_failed:"))
+    {
+        let _ = full_consolidation::retry_full_consolidation(&app);
+    }
+    result
 }
 
 fn lock_cep_operation() -> Result<std::sync::MutexGuard<'static, ()>, String> {
@@ -890,6 +925,14 @@ fn archive_sha256(path: &Path) -> Result<String, String> {
     Ok(format!("{:x}", hash.finalize()))
 }
 
+fn archive_signature_digest(path: &Path) -> Result<String, String> {
+    let file = fs::File::open(path).map_err(|err| format!("cep_zxp_unreadable: {err}"))?;
+    assert_archive_file_size(&file)?;
+    let mut archive = ZipArchive::new(file).map_err(|err| format!("cep_zxp_invalid: {err}"))?;
+    let signatures = read_archive_text(&mut archive, SIGNATURES_ENTRY, MAX_ZXP_METADATA_BYTES)?;
+    Ok(hex_digest(signatures.as_bytes()))
+}
+
 fn install_system_zxp_file(
     zxp_path: &Path,
     package: &CepZxpInfo,
@@ -898,8 +941,10 @@ fn install_system_zxp_file(
     replace_dev_link: bool,
     allow_downgrade: bool,
     verifier: &CepContentVerifier,
+    pending_path: &Path,
 ) -> Result<CepInstallResult, String> {
     let sha256 = archive_sha256(zxp_path)?;
+    let signature_digest = archive_signature_digest(zxp_path)?;
     let arguments = system_update_arguments(
         verifier,
         zxp_path,
@@ -920,28 +965,78 @@ fn install_system_zxp_file(
     });
     // HKCU belongs to this unelevated process. Do not disrupt an intentionally
     // preserved development link, whose unsigned build still needs this flag.
+    let pending_user = consolidation
+        .as_ref()
+        .filter(|user| user.expected.regular_directory && !user.expected.status.is_dev_link);
+    if let Some(user) = pending_user {
+        // Record the original baseline before elevation, so a changed user
+        // copy can never be adopted as the baseline by a later Full retry.
+        pending_consolidation::prepare(pending_path, plan, package, &signature_digest, user)
+            .map_err(|_| "cep_install_failed: Não foi possível preparar a retomada segura da atualização. Nenhuma instalação foi iniciada.".to_string())?;
+    }
     run_system_update(verifier, &arguments)?;
-    finish_system_installation(inventory, consolidation.as_ref(), || {
-        if folder_is_junction(&plan.target) || !plan.target.is_dir() {
-            return Err("cep_install_failed: O destino elevado não é uma pasta normal após o commit.".to_string());
-        }
-        let actual = installed_bundle_version(&plan.target)?;
-        assert_zxp_version_unchanged(&package.version, &actual)?;
-        assert_extracted_tree_is_trusted(&plan.target)?;
-        assert_extracted_debug_file(&plan.target)?;
-        verify_cep_content_signature(verifier, CepContentTarget::Directory(&plan.target))?;
-        assert_after_effects_is_closed()
-    }, || {
-        // UAC cancellation and a failed link retirement leave HKCU untouched.
-        // A preserved development tree continues to require the debug flag.
-        let now_preserves_dev_link = cep_installation_inventory()?.iter().any(|candidate| candidate.status.is_dev_link && candidate.status.installed);
-        if !preserves_dev_link && !now_preserves_dev_link { apply_debug_mode(false)?; }
-        Ok(())
-    }).map_err(|err| {
+    if pending_user.is_some() {
+        pending_consolidation::mark_committed(pending_path)
+            .map_err(|_| "cep_consolidation_failed: O ZXP foi instalado, mas não foi possível registrar a confirmação. Instale o ZXP novamente para concluir a consolidação.".to_string())?;
+    }
+    let finish = || -> Result<(), String> {
+        let _machine_leases = full_consolidation::read_tree_leases(&plan.target)?;
+        let machine = inspect_cep_installation(CEP_SCOPE_PER_MACHINE, &plan.target);
+        let machine_digest = installation_tree_digest(&plan.target)?;
+        finish_system_installation_guarded(
+            inventory,
+            consolidation.as_ref(),
+            || {
+                if folder_is_junction(&plan.target) || !plan.target.is_dir() {
+                    return Err("cep_install_failed: O destino elevado não é uma pasta normal após o commit.".to_string());
+                }
+                let actual = installed_bundle_version(&plan.target)?;
+                assert_zxp_version_unchanged(&package.version, &actual)?;
+                assert_extracted_tree_is_trusted(&plan.target)?;
+                assert_extracted_debug_file(&plan.target)?;
+                verify_cep_content_signature(verifier, CepContentTarget::Directory(&plan.target))?;
+                let installed_signature = read_file_text_limited(
+                    &plan.target.join(SIGNATURES_ENTRY),
+                    MAX_ZXP_METADATA_BYTES,
+                )?;
+                if hex_digest(installed_signature.as_bytes()) != signature_digest
+                    || installation_tree_digest(&plan.target)? != machine_digest
+                {
+                    return Err("cep_consolidation_failed: A instalação compartilhada mudou durante a verificação. As cópias foram preservadas.".into());
+                }
+                Ok(())
+            },
+            || {
+                // UAC cancellation and a failed link retirement leave HKCU untouched.
+                // A preserved development tree continues to require the debug flag.
+                let now_preserves_dev_link = cep_installation_inventory()?
+                    .iter()
+                    .any(|candidate| candidate.status.is_dev_link && candidate.status.installed);
+                if !preserves_dev_link && !now_preserves_dev_link {
+                    apply_debug_mode(false)?;
+                }
+                Ok(())
+            },
+            || {
+                assert_after_effects_is_closed()?;
+                let current = inspect_cep_installation(CEP_SCOPE_PER_MACHINE, &plan.target);
+                if !installation_state_matches(&machine, &current)
+                    || installation_tree_digest(&plan.target)? != machine_digest
+                {
+                    return Err("cep_consolidation_failed: A instalação compartilhada mudou. A cópia do perfil foi preservada.".into());
+                }
+                Ok(())
+            },
+        )
+    };
+    finish().map_err(|err| {
         if err.starts_with("cep_consolidation_failed:") { err } else {
             format!("cep_consolidation_failed: O helper concluiu a instalação do sistema, mas a finalização falhou. A cópia do perfil foi preservada: {err}")
         }
     })?;
+    // A leftover marker is harmless (it never authorizes removing a changed
+    // copy), and must not turn a completed installation into a false failure.
+    let _ = pending_consolidation::clear(pending_path);
     Ok(CepInstallResult {
         version: package.version.clone(),
     })
@@ -974,6 +1069,7 @@ fn prepare_user_consolidation(
     }))
 }
 
+#[cfg(test)]
 fn finish_system_installation<F, G>(
     inventory: &[CepInstallationCandidate],
     consolidation: Option<&CepUserConsolidation>,
@@ -983,6 +1079,27 @@ fn finish_system_installation<F, G>(
 where
     F: FnOnce() -> Result<(), String>,
     G: FnOnce() -> Result<(), String>,
+{
+    finish_system_installation_guarded(
+        inventory,
+        consolidation,
+        verify_commit,
+        finalize_profile,
+        || Ok(()),
+    )
+}
+
+fn finish_system_installation_guarded<F, G, H>(
+    inventory: &[CepInstallationCandidate],
+    consolidation: Option<&CepUserConsolidation>,
+    verify_commit: F,
+    finalize_profile: G,
+    mut guard: H,
+) -> Result<(), String>
+where
+    F: FnOnce() -> Result<(), String>,
+    G: FnOnce() -> Result<(), String>,
+    H: FnMut() -> Result<(), String>,
 {
     // A helper exit code alone never authorizes deleting the user's copy.
     verify_commit()?;
@@ -999,7 +1116,9 @@ where
         }
     }
     if let Some(user) = consolidation {
-        retire_user_installation(user).map_err(|err| format!("cep_consolidation_failed: A versão para todos os usuários foi instalada e verificada, mas a cópia do perfil não foi totalmente consolidada: {err}"))?;
+        retire_user_installation_guarded(user, &mut guard).map_err(|err| format!("cep_consolidation_failed: A versão para todos os usuários foi instalada e verificada, mas a cópia do perfil não foi totalmente consolidada: {err}"))?;
+    } else {
+        guard()?;
     }
     finalize_profile().map_err(|err| format!("cep_consolidation_failed: A extensão foi instalada e as cópias antigas foram consolidadas, mas não foi possível finalizar o PlayerDebugMode: {err}"))
 }
@@ -1112,10 +1231,6 @@ fn installation_tree_digest(root: &Path) -> Result<String, String> {
     Ok(format!("{:x}", digest.finalize()))
 }
 
-fn retire_user_installation(consolidation: &CepUserConsolidation) -> Result<(), String> {
-    retire_user_installation_guarded(consolidation, || Ok(()))
-}
-
 fn retire_user_installation_guarded<F>(
     consolidation: &CepUserConsolidation,
     mut guard: F,
@@ -1203,6 +1318,7 @@ fn install_zxp_file(
     expected_target_scope: &str,
     expected_target_path: &Path,
     verifier: &CepContentVerifier,
+    pending_path: &Path,
 ) -> Result<CepInstallResult, String> {
     let mut inventory = cep_installation_inventory()?;
     let plan = select_install_plan(&inventory)?;
@@ -1233,6 +1349,7 @@ fn install_zxp_file(
             replace_dev_link,
             allow_downgrade,
             verifier,
+            pending_path,
         );
     }
 
@@ -1351,6 +1468,7 @@ fn install_zxp_file(
         }
     };
 
+    let _ = pending_consolidation::clear(pending_path);
     Ok(CepInstallResult { version })
 }
 
@@ -3202,6 +3320,7 @@ mod tests {
             development_mode: false,
             consolidation_required: true,
             automatic_consolidation: "idle".to_string(),
+            automatic_consolidation_failure_code: None,
         };
         let json = serde_json::to_value(status).expect("status should serialize");
 
@@ -3451,6 +3570,39 @@ mod tests {
         assert!(error.starts_with("cep_consolidation_failed:"));
         assert!(error.contains("PlayerDebugMode"));
         assert!(!user.exists());
+    }
+
+    #[test]
+    fn manual_retirement_restores_user_if_after_opens_after_quarantine() {
+        let (_root, _extensions, work_root, user) = create_install_layout("manual-after-race");
+        write_cep_manifest(&user, CEP_BUNDLE_ID, "2.5.0");
+        fs::write(user.join("panel.js"), b"preserve confirmed old copy").unwrap();
+        let inventory = vec![inspect_cep_installation(CEP_SCOPE_PER_USER, &user)];
+        let consolidation = prepare_user_consolidation(&inventory, false)
+            .unwrap()
+            .unwrap();
+        let calls = std::cell::Cell::new(0);
+        let result = super::finish_system_installation_guarded(
+            &inventory,
+            Some(&consolidation),
+            || Ok(()),
+            || panic!("profile settings must not change after failed retirement"),
+            || {
+                calls.set(calls.get() + 1);
+                if calls.get() == 2 {
+                    Err("after_effects_running: opened during retirement".into())
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert!(result.unwrap_err().starts_with("cep_consolidation_failed:"));
+        assert_eq!(calls.get(), 2);
+        assert_eq!(
+            fs::read(user.join("panel.js")).unwrap(),
+            b"preserve confirmed old copy"
+        );
+        assert_eq!(fs::read_dir(work_root).unwrap().count(), 0);
     }
 
     #[cfg(windows)]

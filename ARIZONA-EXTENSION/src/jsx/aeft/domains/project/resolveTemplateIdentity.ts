@@ -67,7 +67,7 @@ export const isTemplateProjectItemComment = (comment: string): boolean => {
   for (const key in mechanics) {
     if (!Object.prototype.hasOwnProperty.call(mechanics, key)) continue;
     if (matchesPattern(comment, mechanics[key].comment)) return true;
-    const familyNames = [key].concat(mechanics[key].sourceNames);
+    const familyNames = [key, mechanics[key].comment].concat(mechanics[key].sourceNames);
     for (let index = 0; index < familyNames.length; index += 1) {
       const literal = normalizeTemplateIdentity(familyNames[index]).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       if (new RegExp("^" + literal + "(?:\\s+\\d+)?$").test(normalizeTemplateIdentity(comment))) return true;

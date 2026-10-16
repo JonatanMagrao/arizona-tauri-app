@@ -117,6 +117,12 @@ extensão CEP, chaves públicas/privadas ou geração de tokens, leia
   conteúdo instalado antes de consolidar a cópia normal redundante do usuário
   atual. Aguarda o After fechar e preserva junctions de desenvolvimento, versões
   mais novas do usuário e outros perfis. Essa fase não usa o helper elevado.
+- A retomada de um commit manual usa `cep-pending-consolidation.json` nos dados
+  locais do Tauri antes de consultar o recibo do Full. A decisão é preparada
+  antes da elevação e confirmada após o helper concluir. O registro vincula o
+  pacote escolhido à cópia anterior do usuário; nunca substitui a verificação
+  criptográfica, autoriza apagar junctions ou autoriza limpar uma cópia alterada.
+  Falhas temporárias têm orçamento limitado de tentativas e retry explícito.
 - A atualização manual iniciada pelo Tauri respeita o escopo existente. Quando
   existe instalação normal `perMachine`, atualiza esse destino com elevação e
   consolida as cópias normais do mesmo bundle; sem ela, usa `perUser` em

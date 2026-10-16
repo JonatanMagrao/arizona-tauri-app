@@ -379,6 +379,7 @@ pub fn run() {
             cep_manager::cep_debug_mode_status,
             cep_manager::set_cep_debug_mode,
             cep_manager::cep_extension_status,
+            cep_manager::cep_retry_consolidation,
             cep_manager::inspect_cep_zxp,
             cep_manager::install_cep_zxp,
             diagnostics::diagnostics_record_event,

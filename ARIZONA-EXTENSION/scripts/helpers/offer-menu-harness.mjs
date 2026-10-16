@@ -67,7 +67,7 @@ export function createOfferMenuHarness(compiled, config, { cep = true, props: in
         : { left: 390, top: 36, right: 470, bottom: 64, width: 80, height: 28 };
     }
   }
-  const document = { ...events(), body: new Element("body"), activeElement: null,
+  const document = { ...events(), body: new Element("body"), activeElement: null, visibilityState: "visible",
     documentElement: { clientWidth: 500, clientHeight: 420 } };
   const window = { ...events(), cep: cep ? {} : undefined };
   const changed = (previous, next) => !previous || !next || previous.length !== next.length ||
@@ -124,6 +124,7 @@ export function createOfferMenuHarness(compiled, config, { cep = true, props: in
         if (specifier === "react/jsx-runtime") return { jsx, jsxs: jsx, Fragment };
         if (specifier === "react-dom") return { createPortal: (children, container) => jsx(Portal, { children, container }) };
         if (specifier === config.optionsImport) return load("options");
+        if (specifier === "../services/offerMenuCache") return load("cache");
         if (specifier.endsWith("utils/tooltips")) return load("tooltips");
         if (specifier.endsWith("utils/errors")) return load("errors");
         if (specifier === "../services/ofertas") return {
@@ -188,6 +189,7 @@ export function createOfferMenuHarness(compiled, config, { cep = true, props: in
   render();
   return {
     reads, changes, statuses, change, document, window, render,
+    cache: load("cache"),
     get value() { return output; },
     get settersAfterUnmount() { return settersAfterUnmount; },
     get trigger() { return [...nodes.values()].find((node) => node.props["aria-haspopup"] === "menu"); },

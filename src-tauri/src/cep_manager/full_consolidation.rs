@@ -2,11 +2,99 @@
 //! machine receipt lets the normal desktop process retire its own old copy.
 use super::*;
 use serde::Deserialize;
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use tauri::Emitter;
 
 const SUCCESS_MARKER: &str = "FULL CEP commit verified";
 const EVENT_NAME: &str = "arizona-cep:consolidation-changed";
-static STATE: Mutex<ConsolidationState> = Mutex::new(ConsolidationState::Idle);
+static STATE: Mutex<ConsolidationStatus> = Mutex::new(ConsolidationStatus {
+    state: ConsolidationState::Idle,
+    failure_code: None,
+});
+static WORKER_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ConsolidationStatus {
+    state: ConsolidationState,
+    failure_code: Option<&'static str>,
+}
+
+// Only enumerated, static codes cross the diagnostic/UI boundary. Original
+// errors can contain profile paths and are never retained in this state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ConsolidationFailure {
+    code: &'static str,
+    retryable: bool,
+}
+
+impl ConsolidationFailure {
+    fn transient(code: &'static str) -> Self {
+        Self {
+            code,
+            retryable: true,
+        }
+    }
+
+    fn blocked(code: &'static str) -> Self {
+        Self {
+            code,
+            retryable: false,
+        }
+    }
+}
+
+struct WorkerLease<'a>(&'a AtomicBool);
+
+impl<'a> WorkerLease<'a> {
+    fn acquire(active: &'a AtomicBool) -> Option<Self> {
+        active
+            .compare_exchange(false, true, AtomicOrdering::AcqRel, AtomicOrdering::Acquire)
+            .ok()
+            .map(|_| Self(active))
+    }
+}
+
+impl Drop for WorkerLease<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, AtomicOrdering::Release);
+    }
+}
+
+// Three failed attempts at most per run. Waiting for After is separate and
+// does not consume this budget. An explicit retry starts a new budget.
+fn failure_retry_delay(failure_count: u8, retryable: bool) -> Option<std::time::Duration> {
+    if !retryable {
+        return None;
+    }
+    match failure_count {
+        1 => Some(std::time::Duration::from_secs(5)),
+        2 => Some(std::time::Duration::from_secs(15)),
+        _ => None,
+    }
+}
+
+#[derive(Default)]
+struct RetryPolicy {
+    failures: u8,
+}
+
+impl RetryPolicy {
+    fn next_delay(
+        &mut self,
+        result: &Result<ConsolidationState, ConsolidationFailure>,
+    ) -> Option<std::time::Duration> {
+        match result {
+            Ok(ConsolidationState::WaitingForAfterEffects) => {
+                Some(std::time::Duration::from_secs(15))
+            }
+            Err(failure) => {
+                self.failures = self.failures.saturating_add(1);
+                failure_retry_delay(self.failures, failure.retryable)
+            }
+            Ok(_) => None,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ConsolidationState {
@@ -32,15 +120,29 @@ impl ConsolidationState {
 }
 
 pub(super) fn status() -> &'static str {
-    STATE.lock().map(|state| state.key()).unwrap_or("blocked")
+    STATE
+        .lock()
+        .map(|snapshot| snapshot.state.key())
+        .unwrap_or("blocked")
 }
 
-fn publish(app: &tauri::AppHandle, state: ConsolidationState) {
+pub(super) fn failure_code() -> Option<&'static str> {
+    STATE
+        .lock()
+        .map(|snapshot| snapshot.failure_code)
+        .unwrap_or(Some("cep_consolidation_state_unavailable"))
+}
+
+fn publish(app: &tauri::AppHandle, state: ConsolidationState, failure_code: Option<&'static str>) {
+    let next = ConsolidationStatus {
+        state,
+        failure_code,
+    };
     let changed = if let Ok(mut current) = STATE.lock() {
-        if *current == state {
+        if *current == next {
             false
         } else {
-            *current = state;
+            *current = next;
             true
         }
     } else {
@@ -53,7 +155,7 @@ fn publish(app: &tauri::AppHandle, state: ConsolidationState) {
     let message = match state {
         ConsolidationState::Idle | ConsolidationState::Checking => return,
         ConsolidationState::WaitingForAfterEffects => "Consolidação da extensão adiada até o After Effects fechar.",
-        ConsolidationState::Completed => "Cópia normal da extensão do perfil consolidada após verificar a instalação Full.",
+        ConsolidationState::Completed => "Cópia normal da extensão do perfil consolidada após verificar a instalação selecionada.",
         ConsolidationState::PreservedNewerUser => "Cópia mais nova da extensão no perfil preservada.",
         ConsolidationState::Blocked => "Consolidação automática da extensão com finalização pendente; confira o estado local.",
     };
@@ -69,48 +171,132 @@ fn publish(app: &tauri::AppHandle, state: ConsolidationState) {
 }
 
 pub fn start_full_consolidation(app: &tauri::AppHandle) {
+    let _ = retry_full_consolidation(app);
+}
+
+// Starting a worker never authorizes an installation or bypasses verification.
+// The caller can expose this through an authenticated, explicit retry command.
+pub fn retry_full_consolidation(app: &tauri::AppHandle) -> Result<bool, String> {
     // Development must never clean the operator's installations merely because
     // a repository happens to contain a previous Full payload or receipt.
     if cfg!(debug_assertions) || !cfg!(windows) {
-        return;
+        return Ok(false);
     }
+    let Some(worker_lease) = WorkerLease::acquire(&WORKER_ACTIVE) else {
+        return Ok(false);
+    };
     let app = app.clone();
     let failure_app = app.clone();
+    publish(&app, ConsolidationState::Checking, None);
     if std::thread::Builder::new()
         .name("arizona-cep-consolidation".into())
         .spawn(move || {
-            publish(&app, ConsolidationState::Checking);
+            let _worker_lease = worker_lease;
+            let mut retry_policy = RetryPolicy::default();
             loop {
-                let result = attempt_for_app(&app).unwrap_or(ConsolidationState::Blocked);
-                publish(&app, result);
-                if result != ConsolidationState::WaitingForAfterEffects {
-                    break;
+                // This always takes a fresh inventory and rereads the receipt;
+                // no path, version or native process state survives a retry.
+                let result = attempt_for_app(&app);
+                let delay = retry_policy.next_delay(&result);
+                match result {
+                    Ok(state) => {
+                        publish(&app, state, None);
+                        if let Some(delay) = delay {
+                            std::thread::sleep(delay);
+                        } else {
+                            break;
+                        }
+                    }
+                    Err(failure) => {
+                        crate::diagnostics::warning(
+                            &app,
+                            "extensao",
+                            "consolidar_full",
+                            if delay.is_some() { "retrying" } else { "blocked" },
+                            failure.code,
+                            "A consolidação da extensão não foi concluída nesta tentativa.",
+                            Some(serde_json::json!({ "attempt": retry_policy.failures, "willRetry": delay.is_some() })),
+                        );
+                        if let Some(delay) = delay {
+                            publish(&app, ConsolidationState::Checking, Some(failure.code));
+                            std::thread::sleep(delay);
+                        } else {
+                            publish(&app, ConsolidationState::Blocked, Some(failure.code));
+                            break;
+                        }
+                    }
                 }
-                std::thread::sleep(std::time::Duration::from_secs(15));
             }
         })
         .is_err()
     {
-        publish(&failure_app, ConsolidationState::Blocked);
+        let code = "cep_consolidation_worker_unavailable";
+        publish(&failure_app, ConsolidationState::Blocked, Some(code));
+        crate::diagnostics::warning(
+            &failure_app, "extensao", "consolidar_full", "blocked", code,
+            "Não foi possível iniciar a verificação da consolidação da extensão.", None,
+        );
+        return Err(format!("{code}: Não foi possível iniciar a consolidação da extensão."));
     }
+    Ok(true)
 }
 
-fn attempt_for_app(app: &tauri::AppHandle) -> Result<ConsolidationState, String> {
-    let _operation = lock_cep_operation()?;
+fn attempt_for_app(app: &tauri::AppHandle) -> Result<ConsolidationState, ConsolidationFailure> {
+    let _operation = lock_cep_operation()
+        .map_err(|_| ConsolidationFailure::blocked("cep_consolidation_coordination_unavailable"))?;
     let installer_root = app
         .path()
         .resource_dir()
-        .map_err(|_| "resources unavailable")?
+        .map_err(|_| ConsolidationFailure::blocked("cep_consolidation_resources_unavailable"))?
         .join("installer");
-    let inventory = cep_installation_inventory()?;
-    // Most starts have no duplicate; avoid subprocesses and signature reads.
-    if !has_normal_user_and_machine(&inventory) {
+    let inventory = cep_installation_inventory()
+        .map_err(|_| ConsolidationFailure::transient("cep_consolidation_inventory_unavailable"))?;
+    let pending_path = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|_| ConsolidationFailure::blocked("cep_consolidation_local_state_unavailable"))?
+        .join(pending_consolidation::FILE_NAME);
+    let has_pending = match fs::symlink_metadata(&pending_path) {
+        Ok(_) => true,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+        Err(_) => {
+            return Err(ConsolidationFailure::transient(
+                "cep_consolidation_pending_unavailable",
+            ));
+        }
+    };
+    // A committed manual update can temporarily have an unreadable manifest.
+    // Its journal must still be checked instead of treating this as no work.
+    // Starts with neither evidence nor duplicates avoid signature subprocesses.
+    if !has_pending && !has_normal_user_and_machine(&inventory) {
         return Ok(ConsolidationState::Idle);
     }
-    if process_is_elevated()? {
-        return Err("automatic consolidation requires the normal user process".into());
+    if process_is_elevated().map_err(|_| {
+        ConsolidationFailure::transient("cep_consolidation_process_identity_unavailable")
+    })? {
+        return Err(ConsolidationFailure::blocked(
+            "cep_consolidation_elevated_process",
+        ));
     }
-    let verifier = resolve_cep_content_verifier(app)?;
+    let verifier = resolve_cep_content_verifier(app)
+        .map_err(|_| ConsolidationFailure::transient("cep_consolidation_verifier_unavailable"))?;
+    match pending_consolidation::attempt(&pending_path, &inventory, &verifier).map_err(
+        |failure| ConsolidationFailure {
+            code: failure.code,
+            retryable: failure.retryable,
+        },
+    )? {
+        pending_consolidation::Outcome::NotApplicable => {}
+        pending_consolidation::Outcome::WaitingForAfterEffects => {
+            return Ok(ConsolidationState::WaitingForAfterEffects);
+        }
+        pending_consolidation::Outcome::Completed => return Ok(ConsolidationState::Completed),
+        pending_consolidation::Outcome::PreservedChangedUser => {
+            return Err(ConsolidationFailure::blocked(
+                "cep_consolidation_user_changed",
+            ));
+        }
+    }
     let result = consolidate_after_full(
         &installer_root,
         &inventory,
@@ -119,7 +305,11 @@ fn attempt_for_app(app: &tauri::AppHandle) -> Result<ConsolidationState, String>
     );
     // A process opening during verification/reservation is retryable. The
     // guarded retirement restores the user copy before returning this error.
-    if result.is_err() && after_effects::is_after_effects_running()? {
+    if result.is_err()
+        && after_effects::is_after_effects_running().map_err(|_| {
+            ConsolidationFailure::transient("cep_consolidation_after_process_probe_failed")
+        })?
+    {
         return Ok(ConsolidationState::WaitingForAfterEffects);
     }
     result
@@ -153,27 +343,40 @@ struct FullReceiptCep {
     bundle_version: String,
 }
 
-fn read_full_receipt(installer_root: &Path) -> Result<Option<FullReceipt>, String> {
+fn read_full_receipt(installer_root: &Path) -> Result<Option<FullReceipt>, ConsolidationFailure> {
     let path = installer_root.join("installed-assets.json");
     match fs::symlink_metadata(&path) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(_) => return Err("Full receipt is unreadable".into()),
+        Err(_) => {
+            return Err(ConsolidationFailure::transient(
+                "cep_consolidation_receipt_unreadable",
+            ))
+        }
         Ok(_) => {}
     }
-    assert_no_link_ancestors(&path)?;
-    require_regular_verifier_file(&path, "Full receipt")?;
+    assert_no_link_ancestors(&path)
+        .map_err(|_| ConsolidationFailure::blocked("cep_consolidation_receipt_path_unsafe"))?;
+    require_regular_verifier_file(&path, "Full receipt")
+        .map_err(|_| ConsolidationFailure::blocked("cep_consolidation_receipt_not_regular"))?;
     if folder_is_junction(&path) {
-        return Err("Full receipt is a link".into());
+        return Err(ConsolidationFailure::blocked(
+            "cep_consolidation_receipt_path_unsafe",
+        ));
     }
-    let text = read_file_text_limited(&path, MAX_ZXP_METADATA_BYTES)?;
+    let text = read_file_text_limited(&path, MAX_ZXP_METADATA_BYTES)
+        .map_err(|_| ConsolidationFailure::transient("cep_consolidation_receipt_unreadable"))?;
     // Windows PowerShell's UTF-8 writer prefixes the installed Full receipt
     // with a BOM. Accept that encoding without changing the signed resources.
     let json = text.strip_prefix('\u{feff}').unwrap_or(&text);
-    let receipt: FullReceipt = serde_json::from_str(json).map_err(|_| "invalid Full receipt")?;
+    let receipt: FullReceipt = serde_json::from_str(json)
+        .map_err(|_| ConsolidationFailure::blocked("cep_consolidation_receipt_invalid"))?;
     if receipt.schema_version != 2 || !Path::new(&receipt.cep.path).is_absolute() {
-        return Err("unsupported Full receipt".into());
+        return Err(ConsolidationFailure::blocked(
+            "cep_consolidation_receipt_invalid",
+        ));
     }
-    parse_cep_semver(&receipt.cep.bundle_version)?;
+    parse_cep_semver(&receipt.cep.bundle_version)
+        .map_err(|_| ConsolidationFailure::blocked("cep_consolidation_receipt_invalid"))?;
     Ok(Some(receipt))
 }
 
@@ -182,9 +385,9 @@ fn consolidate_after_full<V, A>(
     inventory: &[CepInstallationCandidate],
     verify: V,
     mut after_closed: A,
-) -> Result<ConsolidationState, String>
+) -> Result<ConsolidationState, ConsolidationFailure>
 where
-    V: FnOnce(&Path, &Path) -> Result<(), String>,
+    V: FnOnce(&Path, &Path) -> Result<(), ConsolidationFailure>,
     A: FnMut() -> Result<(), String>,
 {
     if !has_normal_user_and_machine(inventory) {
@@ -196,7 +399,9 @@ where
     let user = inventory
         .iter()
         .find(|candidate| candidate.status.scope == CEP_SCOPE_PER_USER)
-        .ok_or("user target absent")?;
+        .ok_or(ConsolidationFailure::blocked(
+            "cep_consolidation_user_identity_invalid",
+        ))?;
     let machine = inventory
         .iter()
         .find(|candidate| {
@@ -206,18 +411,27 @@ where
                 && windows_path_dedup_key(Path::new(&candidate.status.path))
                     == windows_path_dedup_key(Path::new(&receipt.cep.path))
         })
-        .ok_or("Full target is not an inventoried normal machine installation")?;
+        .ok_or(ConsolidationFailure::blocked(
+            "cep_consolidation_full_target_changed",
+        ))?;
     if machine.status.version.as_deref() != Some(receipt.cep.bundle_version.as_str()) {
-        return Err("Full target version changed".into());
+        return Err(ConsolidationFailure::blocked(
+            "cep_consolidation_full_target_changed",
+        ));
     }
     let user_version = user
         .semantic_version
         .as_ref()
-        .ok_or("user version is invalid")?;
-    let machine_version = machine
-        .semantic_version
-        .as_ref()
-        .ok_or("machine version is invalid")?;
+        .ok_or(ConsolidationFailure::blocked(
+            "cep_consolidation_user_identity_invalid",
+        ))?;
+    let machine_version =
+        machine
+            .semantic_version
+            .as_ref()
+            .ok_or(ConsolidationFailure::blocked(
+                "cep_consolidation_machine_identity_invalid",
+            ))?;
     if user_version.cmp_precedence(machine_version) == Ordering::Greater {
         return Ok(ConsolidationState::PreservedNewerUser);
     }
@@ -225,31 +439,73 @@ where
         if error.starts_with("after_effects_running:") {
             return Ok(ConsolidationState::WaitingForAfterEffects);
         }
-        return Err(error);
+        return Err(ConsolidationFailure::transient(
+            "cep_consolidation_after_process_probe_failed",
+        ));
     }
 
     let target = Path::new(&machine.status.path);
     // Freeze existing machine files and its directory against write/delete
     // while the user's copy is retired. The complete hash is checked again
     // after quarantine, so added entries also cause rollback.
-    let _machine_leases = read_tree_leases(target)?;
-    let _resource_leases = read_resource_leases(installer_root)?;
-    let machine_digest = installation_tree_digest(target)?;
-    let consolidation =
-        prepare_user_consolidation(inventory, false)?.ok_or("no normal user copy")?;
+    let _machine_leases = read_tree_leases(target)
+        .map_err(|_| ConsolidationFailure::transient("cep_consolidation_machine_read_failed"))?;
+    let _resource_leases = read_resource_leases(installer_root)
+        .map_err(|_| ConsolidationFailure::transient("cep_consolidation_resources_read_failed"))?;
+    let machine_digest = installation_tree_digest(target)
+        .map_err(|_| ConsolidationFailure::transient("cep_consolidation_machine_digest_failed"))?;
+    let consolidation = prepare_user_consolidation(inventory, false)
+        .map_err(|_| ConsolidationFailure::transient("cep_consolidation_user_read_failed"))?
+        .ok_or(ConsolidationFailure::blocked(
+            "cep_consolidation_user_identity_invalid",
+        ))?;
     verify(installer_root, target)?;
+    let guard_failure = std::cell::Cell::new(None);
     let guard = || {
-        after_closed()?;
-        if installation_tree_digest(target)? != machine_digest {
-            return Err("verified machine contents changed".into());
-        }
-        let current = inspect_cep_installation(CEP_SCOPE_PER_MACHINE, target);
-        if !installation_state_matches(machine, &current) {
-            return Err("verified machine identity changed".into());
-        }
-        Ok(())
+        let result = (|| {
+            after_closed().map_err(|_| {
+                ConsolidationFailure::transient("cep_consolidation_after_process_probe_failed")
+            })?;
+            let actual = installation_tree_digest(target).map_err(|_| {
+                ConsolidationFailure::transient("cep_consolidation_machine_digest_failed")
+            })?;
+            if actual != machine_digest {
+                return Err(ConsolidationFailure::blocked(
+                    "cep_consolidation_machine_content_changed",
+                ));
+            }
+            let current = inspect_cep_installation(CEP_SCOPE_PER_MACHINE, target);
+            if !installation_state_matches(machine, &current) {
+                return Err(ConsolidationFailure::blocked(
+                    "cep_consolidation_machine_identity_changed",
+                ));
+            }
+            Ok(())
+        })();
+        result.map_err(|failure: ConsolidationFailure| {
+            guard_failure.set(Some(failure));
+            failure.code.to_string()
+        })
     };
-    retire_user_installation_guarded(&consolidation, guard)?;
+    retire_user_installation_guarded(&consolidation, guard).map_err(|_| {
+        if let Some(failure) = guard_failure.get() {
+            return failure;
+        }
+        let user_target = Path::new(&user.status.path);
+        let current = inspect_cep_installation(CEP_SCOPE_PER_USER, user_target);
+        if current.status.installed {
+            let content_changed = consolidation
+                .content_digest
+                .as_ref()
+                .is_some_and(|expected| {
+                    installation_tree_digest(user_target).is_ok_and(|actual| &actual != expected)
+                });
+            if !installation_state_matches(user, &current) || content_changed {
+                return ConsolidationFailure::blocked("cep_consolidation_user_changed");
+            }
+        }
+        ConsolidationFailure::transient("cep_consolidation_user_retirement_failed")
+    })?;
     Ok(ConsolidationState::Completed)
 }
 
@@ -269,7 +525,7 @@ fn read_resource_leases(root: &Path) -> Result<Vec<fs::File>, String> {
     .collect()
 }
 
-fn read_tree_leases(root: &Path) -> Result<Vec<fs::File>, String> {
+pub(super) fn read_tree_leases(root: &Path) -> Result<Vec<fs::File>, String> {
     let mut pending = vec![root.to_path_buf()];
     let mut leases = Vec::new();
     while let Some(path) = pending.pop() {
@@ -329,31 +585,44 @@ fn verify_full_commit(
     verifier: &CepContentVerifier,
     root: &Path,
     target: &Path,
-) -> Result<(), String> {
+) -> Result<(), ConsolidationFailure> {
     // Check the publisher against the binary's immutable pin, independently
     // of the resource pin used by the PowerShell cryptographic verifier.
     let package = root.join("payload/cep/com.arizona-carrefour.cep.zxp");
-    inspect_zxp_file(&package)?;
-    assert_extracted_tree_is_trusted(target)?;
+    inspect_zxp_file(&package)
+        .map_err(|_| ConsolidationFailure::blocked("cep_consolidation_payload_rejected"))?;
+    assert_extracted_tree_is_trusted(target).map_err(|_| {
+        ConsolidationFailure::blocked("cep_consolidation_installed_publisher_rejected")
+    })?;
     let output = Command::new(&verifier.powershell)
-        .args(full_verifier_arguments(root, target)?)
+        .args(full_verifier_arguments(root, target).map_err(|_| {
+            ConsolidationFailure::transient("cep_consolidation_verifier_unavailable")
+        })?)
         .stdin(Stdio::null())
         .creation_flags(CREATE_NO_WINDOW)
         .output()
-        .map_err(|_| "Full commit verification could not start")?;
+        .map_err(|_| ConsolidationFailure::transient("cep_consolidation_verifier_start_failed"))?;
     if !output.status.success()
         || !decode_verifier_output(&output.stdout)
             .lines()
             .any(|line| line.trim() == SUCCESS_MARKER)
     {
-        return Err("Full commit verification rejected the installation".into());
+        return Err(ConsolidationFailure::blocked(
+            "cep_consolidation_full_verification_rejected",
+        ));
     }
     Ok(())
 }
 
 #[cfg(not(windows))]
-fn verify_full_commit(_: &CepContentVerifier, _: &Path, _: &Path) -> Result<(), String> {
-    Err("Windows required".into())
+fn verify_full_commit(
+    _: &CepContentVerifier,
+    _: &Path,
+    _: &Path,
+) -> Result<(), ConsolidationFailure> {
+    Err(ConsolidationFailure::blocked(
+        "cep_consolidation_platform_unsupported",
+    ))
 }
 
 #[cfg(windows)]
@@ -407,6 +676,73 @@ fn process_is_elevated() -> Result<bool, String> {
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn transient_retries_stop_after_three_failures_and_explicit_retry_starts_fresh() {
+        let failure = Err(ConsolidationFailure::transient(
+            "cep_consolidation_machine_read_failed",
+        ));
+        let mut policy = RetryPolicy::default();
+        assert_eq!(
+            policy.next_delay(&failure),
+            Some(std::time::Duration::from_secs(5))
+        );
+        // Keeping After open does not spend the retry budget.
+        for _ in 0..4 {
+            assert_eq!(
+                policy.next_delay(&Ok(ConsolidationState::WaitingForAfterEffects)),
+                Some(std::time::Duration::from_secs(15))
+            );
+        }
+        assert_eq!(policy.failures, 1);
+        assert_eq!(
+            policy.next_delay(&failure),
+            Some(std::time::Duration::from_secs(15))
+        );
+        assert_eq!(policy.next_delay(&failure), None);
+        assert_eq!(policy.failures, 3);
+        assert_eq!(
+            RetryPolicy::default().next_delay(&failure),
+            Some(std::time::Duration::from_secs(5))
+        );
+        assert_eq!(policy.next_delay(&Ok(ConsolidationState::Completed)), None);
+    }
+
+    #[test]
+    fn verification_and_identity_rejections_never_retry_automatically() {
+        for code in [
+            "cep_consolidation_full_verification_rejected",
+            "cep_consolidation_elevated_process",
+            "cep_consolidation_receipt_invalid",
+            "cep_consolidation_full_target_changed",
+            "cep_consolidation_user_changed",
+        ] {
+            let mut policy = RetryPolicy::default();
+            assert_eq!(
+                policy.next_delay(&Err(ConsolidationFailure::blocked(code))),
+                None
+            );
+            assert_eq!(policy.failures, 1);
+        }
+    }
+
+    #[test]
+    fn worker_is_single_flight_and_a_finished_or_unwound_run_can_be_retried() {
+        let active = AtomicBool::new(false);
+        let first = WorkerLease::acquire(&active).unwrap();
+        std::thread::scope(|scope| {
+            let other = scope.spawn(|| WorkerLease::acquire(&active).is_none());
+            assert!(other.join().unwrap());
+        });
+        drop(first);
+        assert!(WorkerLease::acquire(&active).is_some());
+        let panic = std::panic::catch_unwind(|| {
+            let _lease = WorkerLease::acquire(&active).unwrap();
+            panic!("fixture worker panic");
+        });
+        assert!(panic.is_err());
+        assert!(WorkerLease::acquire(&active).is_some());
+    }
 
     struct Fixture {
         root: PathBuf,
@@ -519,8 +855,7 @@ mod tests {
         powershell_bytes.extend(fs::read(&receipt_path).unwrap());
         fs::write(&receipt_path, &powershell_bytes).unwrap();
         assert_eq!(
-            consolidate_after_full(&f.installer, &f.inventory(), |_, _| Ok(()), || Ok(()))
-                .unwrap(),
+            consolidate_after_full(&f.installer, &f.inventory(), |_, _| Ok(()), || Ok(())).unwrap(),
             ConsolidationState::Completed
         );
         assert!(!f.user.exists());
@@ -591,7 +926,9 @@ mod tests {
         assert!(consolidate_after_full(
             &f.installer,
             &f.inventory(),
-            |_, _| Err("signature rejected".into()),
+            |_, _| Err(ConsolidationFailure::blocked(
+                "cep_consolidation_full_verification_rejected"
+            )),
             || Ok(())
         )
         .is_err());
@@ -602,29 +939,86 @@ mod tests {
     #[test]
     fn unavailable_process_check_fails_closed_without_claiming_after_is_open() {
         let f = Fixture::new("2.4.0");
-        assert!(consolidate_after_full(
+        let failure = consolidate_after_full(
             &f.installer,
             &f.inventory(),
             |_, _| panic!("process inspection failed"),
-            || Err("cep_install_failed: process check unavailable".into())
+            || Err("cep_install_failed: private-profile-path-and-sensitive-output".into()),
         )
-        .is_err());
+        .unwrap_err();
+        assert_eq!(failure.code, "cep_consolidation_after_process_probe_failed");
+        assert!(failure.retryable);
+        assert!(!format!("{failure:?}").contains("private-profile"));
         assert_eq!(f.user_content(), "old user copy");
+        assert_eq!(
+            consolidate_after_full(&f.installer, &f.inventory(), |_, _| Ok(()), || Ok(())).unwrap(),
+            ConsolidationState::Completed
+        );
+    }
+
+    #[test]
+    fn retry_rechecks_current_inventory_and_preserves_a_newer_user_copy() {
+        let f = Fixture::new("2.4.0");
+        let first = consolidate_after_full(
+            &f.installer,
+            &f.inventory(),
+            |_, _| Ok(()),
+            || Err("process check temporarily unavailable".into()),
+        )
+        .unwrap_err();
+        assert!(first.retryable);
+        fs::write(f.user.join(MANIFEST_ENTRY), format!(
+            r#"<ExtensionManifest ExtensionBundleId="{CEP_BUNDLE_ID}" ExtensionBundleVersion="2.5.0"/>"#
+        )).unwrap();
+        let current = consolidate_after_full(
+            &f.installer,
+            &f.inventory(),
+            |_, _| panic!("newer user must be preserved"),
+            || Ok(()),
+        )
+        .unwrap();
+        assert_eq!(current, ConsolidationState::PreservedNewerUser);
+        assert_eq!(f.user_content(), "old user copy");
+    }
+
+    #[test]
+    fn malformed_receipt_has_a_stable_nonretryable_code_and_preserves_both_copies() {
+        let f = Fixture::new("2.4.0");
+        fs::write(
+            f.installer.join("installed-assets.json"),
+            b"{private receipt details",
+        )
+        .unwrap();
+        let failure = consolidate_after_full(
+            &f.installer,
+            &f.inventory(),
+            |_, _| panic!("invalid receipt must stop before verification"),
+            || Ok(()),
+        )
+        .unwrap_err();
+        assert_eq!(
+            failure,
+            ConsolidationFailure::blocked("cep_consolidation_receipt_invalid")
+        );
+        assert_eq!(f.user_content(), "old user copy");
+        assert!(f.machine.is_dir());
     }
 
     #[test]
     fn user_content_changed_during_verification_is_preserved() {
         let f = Fixture::new("2.4.0");
-        assert!(consolidate_after_full(
+        let failure = consolidate_after_full(
             &f.installer,
             &f.inventory(),
             |_, _| {
                 fs::write(f.user.join("panel.js"), "concurrent edit").unwrap();
                 Ok(())
             },
-            || Ok(())
+            || Ok(()),
         )
-        .is_err());
+        .unwrap_err();
+        assert_eq!(failure.code, "cep_consolidation_user_changed");
+        assert!(!failure.retryable);
         assert_eq!(f.user_content(), "concurrent edit");
     }
 
@@ -635,8 +1029,9 @@ mod tests {
             &f.installer,
             &f.inventory(),
             |_, _| {
-                fs::write(f.machine.join("added.js"), "concurrent machine change")
-                    .map_err(|_| "machine protected".into())
+                fs::write(f.machine.join("added.js"), "concurrent machine change").map_err(|_| {
+                    ConsolidationFailure::blocked("cep_consolidation_machine_content_changed")
+                })
             },
             || Ok(())
         )

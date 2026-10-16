@@ -8,6 +8,7 @@ import { compileOfferMenu, createOfferMenuHarness, deferred, settle } from "./he
 const compiled = await compileOfferMenu(Object.fromEntries(Object.entries({
   menu: "../src/js/main/domains/ofertas/components/OfferMechanicMenu.tsx",
   options: "../src/js/main/domains/ofertas/hooks/useOfferMechanicOptions.ts",
+  cache: "../src/js/main/domains/ofertas/services/offerMenuCache.ts",
   tooltips: "../src/js/main/utils/tooltips.ts",
   errors: "../src/js/main/utils/errors.ts",
 }).map(([name, path]) => [name, new URL(path, import.meta.url)])));
@@ -75,6 +76,77 @@ test("mechanic menu reads only when opened and forwards the exact second-product
   h.unmount();
 });
 
+test("mechanic menu reuses pending and completed reads, with a readable decorative chevron", async () => {
+  const h = createHarness();
+  const chevron = h.find((node) => node.type === "svg" && node.props.className === "offer-mechanic-chevron");
+  assert.ok(chevron);
+  assert.equal(chevron.props["aria-hidden"], "true");
+  assert.equal(chevron.props.focusable, "false");
+  assert.equal(chevron.props.width, "12");
+  h.click(h.trigger); h.click(h.trigger); h.click(h.trigger);
+  assert.equal(h.reads.length, 1);
+  h.reads[0].resolve(mechanicData());
+  await settle(); h.render();
+  for (let index = 0; index < 5; index += 1) {
+    h.click(h.trigger); h.click(h.trigger);
+    assert.equal(h.options.length, 3);
+    assert.equal(h.menu.props["aria-busy"], false);
+  }
+  assert.equal(h.reads.length, 1);
+  h.unmount();
+});
+
+test("mechanic invalidation reloads an open menu and an old response cannot replace or evict the new request", async () => {
+  const h = createHarness();
+  h.click(h.trigger);
+  h.cache.invalidateOfferMenuCache(); h.render();
+  assert.equal(h.reads.length, 2);
+  h.reads[0].reject(new Error("outdated host failure"));
+  await settle(); h.render();
+  assert.equal(h.options.length, 0);
+  assert.equal(h.find((node) => node.props.role === "alert"), undefined);
+  h.click(h.trigger); h.click(h.trigger);
+  assert.equal(h.reads.length, 2, "An old rejection cannot remove the newer in-flight entry");
+  const current = mechanicData();
+  h.reads[1].resolve(current);
+  await settle(); h.render();
+  h.click(h.options[1]);
+  assert.equal(h.changes[0].context, current.context);
+  h.change.resolve(); await settle();
+  h.unmount();
+});
+
+test("mechanic cache separates product, offer and snapshot identities and does not retain missing contexts", async () => {
+  const h = createHarness();
+  const cases = [
+    [{}, 4, 1],
+    [{ productIndex: 2 }, 4, 2],
+    [{ offerLayerIndex: 5 }, 5, 2],
+    [{ resetKey: "new-project-same-layer-indices" }, 5, 2],
+  ];
+  for (const [props, offer, product] of cases) {
+    h.update(props);
+    h.click(h.trigger);
+    assert.equal(h.options.length, 0);
+    const request = h.reads.at(-1);
+    assert.equal(request.index, offer);
+    assert.equal(request.productIndex, product);
+    request.resolve(mechanicData(offer, product));
+    await settle(); h.render();
+    assert.equal(h.options.length, 3);
+    h.click(h.trigger);
+  }
+  assert.equal(h.reads.length, cases.length);
+  h.cache.invalidateOfferMenuCache(); h.render();
+  h.click(h.trigger);
+  h.reads.at(-1).resolve({ ...mechanicData(5, 2), context: null });
+  await settle(); h.render();
+  h.click(h.trigger); h.click(h.trigger);
+  assert.equal(h.reads.length, cases.length + 2);
+  assert.equal(h.options.length, 0);
+  h.unmount();
+});
+
 for (const cancellation of ["close", "product", "offer", "snapshot", "unmount"]) {
   test(`a delayed mechanic list cannot survive ${cancellation} or leak into another product`, async () => {
     const h = createHarness();
@@ -93,7 +165,8 @@ for (const cancellation of ["close", "product", "offer", "snapshot", "unmount"])
       h.click(h.trigger);
       assert.equal(h.reads.at(-1).productIndex, cancellation === "product" ? 2 : 1);
       assert.equal(h.reads.at(-1).index, cancellation === "offer" ? 5 : 4);
-      assert.equal(h.options.length, 0, "Reopening reads again instead of reusing the old context");
+      assert.equal(h.options.length, cancellation === "close" ? 3 : 0,
+        "Only reopening the same offer, product and snapshot can reuse the completed read");
       h.unmount();
     }
     assert.deepEqual(h.changes, []);
@@ -153,23 +226,31 @@ test("a missing mechanic folder exposes its exact Project-panel remedy and preve
   h.unmount();
 });
 
-test("mechanic keyboard navigation skips disabled candidates and current/Escape close without replacement", async () => {
+test("mechanic keyboard navigation skips disabled candidates, forwards the current family once and closes on Escape", async () => {
   const h = createHarness();
   h.key(h.trigger, "ArrowUp");
-  h.reads[0].resolve(mechanicData());
+  const data = mechanicData();
+  h.reads[0].resolve(data);
   await settle(); h.render();
   assert.equal(h.document.activeElement, h.options[1]);
   h.key(h.menu, "ArrowDown");
   assert.equal(h.document.activeElement, h.options[0]);
   const staleChoose = h.options[1].props.onClick;
+  assert.equal(h.options[0].disabled, false, "The current family can separate a legacy shared source");
   h.click(h.options[0]);
   assert.equal(h.menu, undefined);
   staleChoose();
-  assert.deepEqual(h.changes, []);
+  assert.equal(h.changes.length, 1, "The closed menu cannot submit another target");
+  assert.equal(h.changes[0].context, data.context);
+  assert.equal(h.changes[0].targetItemId, data.options[0].itemId);
+  assert.equal(h.trigger.disabled, true);
+  h.change.resolve();
+  await settle(); h.render();
   h.click(h.trigger);
   h.key(h.menu, "Escape");
   assert.equal(h.menu, undefined);
   assert.equal(h.document.activeElement, h.trigger);
+  assert.equal(h.changes.length, 1, "Escape never applies a mechanic");
   h.unmount();
 });
 

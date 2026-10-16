@@ -3,6 +3,7 @@ import type { MechanicSchemaId } from "../mechanics/schemaValidation";
 import { resolveOfferLayouts } from "./offerLayouts";
 import { isTemplateOfferLayerComment, isTemplateProjectItemComment, resolveTemplateIdentity } from "../../project/resolveTemplateIdentity";
 import { expandTemplateIdentity, getTemplateIdentities, withTemplateIdentities } from "../../template/templateIdentities";
+import { includeCurrentLayout, mechanicWouldCreateCycle, resolveMechanicPool } from "./mechanicInstances";
 
 interface MechanicCatalogEntry {
   family: MechanicSchemaId;
@@ -24,6 +25,9 @@ export interface ResolvedOfferMechanics {
   menu: OfferMechanicMenuData;
   mechanicLayer: AVLayer | null;
   targets: CompItem[];
+  pools: { family: MechanicSchemaId; representative: CompItem; instances: CompItem[] }[];
+  layouts: CompItem[];
+  offer: AVLayer | null;
 }
 
 const readLayerId = (layer: Layer): number => {
@@ -39,6 +43,9 @@ const createResolution = (): ResolvedOfferMechanics => ({
   menu: { ok: false, message: "", context: null, options: [], errors: [] },
   mechanicLayer: null,
   targets: [],
+  pools: [],
+  layouts: [],
+  offer: null,
 });
 
 const unavailable = (resolution: ResolvedOfferMechanics, summary: string, reason: string): ResolvedOfferMechanics => {
@@ -48,7 +55,7 @@ const unavailable = (resolution: ResolvedOfferMechanics, summary: string, reason
   return resolution;
 };
 
-const collectMechanicComps = (root: FolderItem): CompItem[] => {
+export const collectMechanicComps = (root: FolderItem): CompItem[] => {
   const comps: CompItem[] = [];
   const pending: FolderItem[] = [root];
   const visited: { [id: string]: boolean } = {};
@@ -65,23 +72,6 @@ const collectMechanicComps = (root: FolderItem): CompItem[] => {
     }
   }
   return comps;
-};
-
-const wouldCreateCycle = (target: CompItem, layoutId: number, mioloId: number): boolean => {
-  const pending: CompItem[] = [target];
-  const visited: { [id: string]: boolean } = {};
-  while (pending.length > 0) {
-    const comp = pending.pop()!;
-    if (comp.id === layoutId || comp.id === mioloId) return true;
-    const key = "$" + comp.id;
-    if (visited[key]) continue;
-    visited[key] = true;
-    for (let index = 1; index <= comp.numLayers; index += 1) {
-      const layer = comp.layer(index);
-      if (layer instanceof AVLayer && layer.source instanceof CompItem) pending.push(layer.source);
-    }
-  }
-  return false;
 };
 
 export const resolveOfferMechanics = (offerLayerIndex: number, productIndex: number): ResolvedOfferMechanics => withTemplateIdentities(() => {
@@ -149,6 +139,8 @@ export const resolveOfferMechanics = (offerLayerIndex: number, productIndex: num
     const mechanicsFolder = mechanicsFolders[0];
     const comps = collectMechanicComps(mechanicsFolder);
     const source = mechanicLayer.source as CompItem;
+    resolution.layouts = includeCurrentLayout(offerResolution.targets, layout);
+    resolution.offer = offerResolution.offer;
     resolution.menu.context = {
       offer: offerMenu.context,
       productIndex,
@@ -162,28 +154,36 @@ export const resolveOfferMechanics = (offerLayerIndex: number, productIndex: num
       const definition = MECHANIC_CATALOG[catalogIndex];
       const identity = expandTemplateIdentity(config.mechanics[definition.family], productIndex + 1);
       const comment = identity.comment;
-      const matches = resolveTemplateIdentity(comps, identity, config.fallback.projectItems, isTemplateProjectItemComment).matches;
+      const pool = resolveMechanicPool(comps, definition.family, productIndex);
+      const matches = pool.matches;
+      let cycle = false;
+      for (let index = 0; index < matches.length; index += 1) {
+        if (mechanicWouldCreateCycle(matches[index], layout.id, offerMenu.context.compItemId)) cycle = true;
+      }
       let current = false;
       for (let index = 0; index < matches.length; index += 1) if (matches[index].id === source.id) current = true;
       const option: OfferLayoutOption = {
         comment, label: definition.label, itemId: null, current, enabled: false,
       };
-      if (matches.length !== 1) {
+      if (matches.length === 0 || pool.ambiguous) {
         option.disabledSummary = matches.length === 0
           ? 'Esta mecânica não foi encontrada na oferta "' + offerMenu.context.folderComment + '".'
           : 'Há mais de uma precomp desta mecânica na oferta "' + offerMenu.context.folderComment + '".';
-        option.disabledReason = config.fallback.projectItems
+        option.disabledReason = pool.ambiguous && definition.family !== "SIMPLES"
+          ? 'Na pasta "' + mechanicsFolderComment + '", diferencie as cópias de "' + comment + '" com sufixos numéricos distintos nos nomes ou comentários.'
+          : config.fallback.projectItems
           ? 'No painel Projeto, confira o comentário ou nome "' + comment + '" na pasta "' + mechanicsFolderComment + '" e suas subpastas e elimine identidades duplicadas.'
           : matches.length === 0
           ? 'No painel Projeto, adicione o comentário "' + comment + '" à precomp na pasta de comentário "' + mechanicsFolderComment + '" ou em suas subpastas.'
           : 'Na pasta de comentário "' + mechanicsFolderComment + '" e suas subpastas, mantenha o comentário "' + comment + '" em apenas uma precomp.';
-      } else if (wouldCreateCycle(matches[0], layout.id, offerMenu.context.compItemId)) {
+      } else if (cycle) {
         option.disabledSummary = "Esta mecânica referencia a própria oferta ou o Miolo.";
         option.disabledReason = "Use uma mecânica que não contenha a oferta ou o Miolo, inclusive em precomps internas.";
       } else {
         option.enabled = true;
         option.itemId = matches[0].id;
         resolution.targets.push(matches[0]);
+        resolution.pools.push({ family: definition.family, representative: matches[0], instances: matches });
       }
       resolution.menu.options.push(option);
     }
@@ -195,6 +195,9 @@ export const resolveOfferMechanics = (offerLayerIndex: number, productIndex: num
     resolution.menu.context = null;
     resolution.menu.options = [];
     resolution.targets = [];
+    resolution.pools = [];
+    resolution.layouts = [];
+    resolution.offer = null;
     resolution.mechanicLayer = null;
     resolution.menu.errors.push(String(error));
     return unavailable(resolution, "Não foi possível ler as mecânicas deste produto.",

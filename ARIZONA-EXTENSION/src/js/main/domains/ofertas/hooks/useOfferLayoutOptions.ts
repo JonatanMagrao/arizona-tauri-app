@@ -1,51 +1,77 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getPublicErrorMessage } from "../../../utils/errors";
 import { loadOfferLayoutOptions } from "../services/ofertas";
+import {
+  getOfferMenuCacheGeneration,
+  invalidateOfferMenuCache,
+  loadOfferMenuCache,
+  readOfferMenuCache,
+  subscribeOfferMenuCache,
+} from "../services/offerMenuCache";
 import type { OfferLayoutMenuData } from "../types";
 
 export const useOfferLayoutOptions = (
   offerLayerIndex: number,
-  isOpen: boolean
+  isOpen: boolean,
+  resetKey: unknown
 ) => {
-  const [data, setData] = useState<OfferLayoutMenuData | null>(null);
+  const key = `layout:${offerLayerIndex}`;
+  const [generation, setGeneration] = useState(getOfferMenuCacheGeneration);
+  const [result, setResult] = useState<{
+    key: string; context: unknown; generation: number; data: OfferLayoutMenuData;
+  } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [revision, setRevision] = useState(0);
-  const reload = useCallback(() => setRevision((current) => current + 1), []);
+  const openContextRef = useRef<{ key: string; context: unknown } | null>(null);
+  const reload = useCallback(() => invalidateOfferMenuCache(), []);
+
+  useEffect(() => subscribeOfferMenuCache(setGeneration), []);
 
   useEffect(() => {
     let cancelled = false;
-    setData(null);
+    setResult(null);
     setError("");
     setLoading(false);
-    if (!isOpen) return;
+    if (!isOpen) {
+      openContextRef.current = null;
+      return;
+    }
+    const opened = openContextRef.current;
+    // A changed offer/snapshot closes the menu in its layout effect. Do not
+    // enqueue a read for that intermediate render before it actually reopens.
+    if (opened && (opened.key !== key || opened.context !== resetKey)) return;
+    openContextRef.current = { key, context: resetKey };
 
     if (!window.cep) {
       setError("Abra este painel dentro do After Effects.");
       return;
     }
 
+    if (readOfferMenuCache<OfferLayoutMenuData>(key, resetKey)) return;
+    const requestGeneration = getOfferMenuCacheGeneration();
+    const isCurrent = () => !cancelled && requestGeneration === getOfferMenuCacheGeneration();
     setLoading(true);
     void (async () => {
       try {
-        const result = await loadOfferLayoutOptions(offerLayerIndex);
-        if (!cancelled) setData(result);
+        const data = await loadOfferMenuCache(key, resetKey,
+          () => loadOfferLayoutOptions(offerLayerIndex));
+        if (isCurrent()) setResult({ key, context: resetKey, generation: requestGeneration, data });
       } catch (caught) {
-        if (!cancelled) {
-          setError(getPublicErrorMessage(
-            caught,
-            "Não foi possível carregar as réguas desta oferta."
-          ));
+        if (isCurrent()) {
+          setError(getPublicErrorMessage(caught, "Não foi possível carregar as réguas desta oferta."));
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (isCurrent()) setLoading(false);
       }
     })();
 
-    return () => {
-      cancelled = true;
-    };
-  }, [offerLayerIndex, isOpen, revision]);
+    return () => { cancelled = true; };
+  }, [key, resetKey, isOpen, generation]);
 
-  return { data, loading, error, reload };
+  const cached = isOpen && window.cep
+    ? readOfferMenuCache<OfferLayoutMenuData>(key, resetKey)
+    : null;
+  const current = result && result.key === key && result.context === resetKey &&
+    result.generation === getOfferMenuCacheGeneration() ? result.data : null;
+  return { data: isOpen ? cached || current : null, loading: cached ? false : loading, error, reload };
 };

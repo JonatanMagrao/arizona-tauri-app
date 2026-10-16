@@ -1405,6 +1405,33 @@
   text-align: center;
 }
 
+.offers-loading {
+  display: grid;
+  place-items: center;
+  min-height: 140px;
+  width: 100%;
+  color: var(--text-muted);
+}
+
+.offers-loading-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--line);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: offers-loading-spin 0.8s linear infinite;
+}
+
+@keyframes offers-loading-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .offers-loading-spinner {
+    animation-duration: 2s;
+  }
+}
+
 @media (min-width: 1000px) {
   .offers-list button {
     grid-template-columns: 8px minmax(0, 1fr);

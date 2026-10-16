@@ -1,9 +1,11 @@
 import type {
   InternalOfferDetails,
+  InternalLegalControl,
   InternalOfferMechanic,
   InternalOfferProduct,
   OfferDetails,
   OfferEditorSnapshot,
+  OfferEditorSelectionContext,
   OfferLegalControl,
   OfferOption,
   OfferOptionGroup,
@@ -18,7 +20,8 @@ import {
   readProductImageInfo,
   resolveSelectedOffer,
 } from "../layers/findLayers";
-import { resolveOfferProductLayers } from "../layers/offerStructure";
+import { resolveOfferProductLayers, type OfferProductLayerSet } from "../layers/offerStructure";
+import { getProjectIdentity } from "../../project/projectIdentity";
 import {
   getNestedTextProperty,
   hasPropertyExpression,
@@ -42,6 +45,8 @@ const createSnapshot = (): OfferEditorSnapshot => ({
   offers: [],
   selectedOfferLayerIndex: 0,
   selectedOffer: null,
+  selectedOfferContext: null,
+  discoveryErrors: [],
   errors: [],
 });
 
@@ -66,6 +71,7 @@ export const getOffersEditorSnapshot = (
   snapshot.ok = true;
   snapshot.compName = comp.name;
   snapshot.offers = createOfferSummaries(offers);
+  snapshot.discoveryErrors = snapshot.errors.slice(0);
 
   if (offers.length < 1) {
     snapshot.message = snapshot.errors.length > 0 ? snapshot.errors[0]
@@ -81,6 +87,7 @@ export const getOffersEditorSnapshot = (
   const details = generateOfferData(selectedOffer);
   snapshot.selectedOfferLayerIndex = selectedOffer.index;
   snapshot.selectedOffer = toPublicOfferDetails(selectedOffer, details);
+  snapshot.selectedOfferContext = readOfferSelectionContext(selectedOffer);
   snapshot.errors = snapshot.errors.concat(details.errors);
   snapshot.message =
     snapshot.selectedOffer.products.length > 0
@@ -94,73 +101,12 @@ export const generateOfferData = (offer: Layer): InternalOfferDetails => withMec
   const errors: string[] = [];
   const products: InternalOfferProduct[] = [];
   const offerSource = getLayerSource(offer, "oferta", errors);
-  const legalDisabledReasons: string[] = [];
-  const legalDisabledSummaries: string[] = [];
-  const legalSource = getLegalTextSource(offerSource, errors, legalDisabledReasons, legalDisabledSummaries);
-  const legalTextProperty = getLegalTextProperty(legalSource, errors);
-  const legalControls = readLegalControls(legalSource, errors, offer);
-  if (legalSource === null && legalDisabledReasons.length > 0) {
-    for (let index = 0; index < legalControls.length; index += 1) {
-      legalControls[index].disabledReason = legalDisabledReasons.join(" ");
-      legalControls[index].disabledSummary = legalDisabledSummaries.join(" ");
-    }
-  }
+  const legal = readOfferLegalData(offer, offerSource, errors);
+  const legalTextProperty = legal.legalTextProperty;
 
   const productLayers = resolveOfferProductLayers(offerSource, errors);
   for (let index = 0; index < productLayers.length; index += 1) {
-    const layers = productLayers[index];
-    const descriptionPrecomp = layers.descriptionLayer;
-    const descriptionProperty = getNestedTextProperty(
-      descriptionPrecomp,
-      getTemplateIdentities().named.descriptionText,
-      "descricao do produto " + layers.slot,
-      errors
-    );
-    const valueLayer = layers.mechanicLayer;
-    const mechanic: InternalOfferMechanic = valueLayer === null
-      ? {
-          type: layers.mechanicUnavailableLabel || "Mecânica do produto " + layers.slot + " indisponível",
-          fields: [],
-          optionGroups: [],
-          unsupported: true,
-        }
-      : readMechanic(valueLayer, errors);
-    const imageLayer = layers.imageLayer;
-    const image = readProductImageInfo(
-      imageLayer,
-      "imagem do produto " + layers.slot,
-      errors
-    );
-
-    products.push({
-      index: layers.slot - 1,
-      associationValid: layers.valid,
-      disabledReason: layers.disabledReason,
-      disabledSummary: layers.disabledSummary,
-      description: {
-        id: "description",
-        label: "Descricao",
-        value: readText(descriptionProperty),
-        format: "text",
-        enabled: layers.valid && descriptionProperty !== null,
-        disabledReason: layers.disabledReason || (descriptionProperty === null
-          ? 'Texto não encontrado. Confira a camada de texto "DESCRITIVO" dentro da precomp do descritivo.'
-          : undefined),
-        disabledSummary: layers.disabledSummary || (descriptionProperty === null
-          ? "O texto do descritivo não foi encontrado."
-          : undefined),
-        multiline: true,
-        hasExpression: hasPropertyExpression(descriptionProperty),
-        expressionEnabled: isPropertyExpressionEnabled(descriptionProperty),
-      },
-      descriptionLayer: descriptionPrecomp,
-      descriptionProperty,
-      mechanic,
-      mechanicLayer: valueLayer,
-      imageLayer,
-      image,
-      unsupported: !layers.valid || mechanic.unsupported === true,
-    });
+    products.push(readOfferProduct(productLayers[index], errors));
   }
 
   return {
@@ -177,11 +123,122 @@ export const generateOfferData = (offer: Layer): InternalOfferDetails => withMec
             format: "text",
             enabled: true,
           },
-    legalControls,
+    legalControls: legal.legalControls,
     legalTextProperty,
     errors,
   };
 });
+
+interface OfferLegalData {
+  legalTextProperty: Property | null;
+  legalControls: InternalLegalControl[];
+}
+
+const readOfferLegalData = (offer: Layer, source: CompItem | null, errors: string[]): OfferLegalData => {
+  const reasons: string[] = [];
+  const summaries: string[] = [];
+  const legalSource = getLegalTextSource(source, errors, reasons, summaries);
+  const legalTextProperty = getLegalTextProperty(legalSource, errors);
+  const legalControls = readLegalControls(legalSource, errors, offer);
+  if (legalSource === null && reasons.length > 0) {
+    for (let index = 0; index < legalControls.length; index += 1) {
+      legalControls[index].disabledReason = reasons.join(" ");
+      legalControls[index].disabledSummary = summaries.join(" ");
+    }
+  }
+  return { legalTextProperty, legalControls };
+};
+
+export const generateOfferLegalData = (offer: Layer, errors: string[]): OfferLegalData =>
+  withMechanicsSchema(() => readOfferLegalData(offer, getLayerSource(offer, "oferta", errors), errors));
+
+// Validate associations for every numbered slot, but only read native fields of
+// the requested product before writing. The complete offer is reread afterward
+// so expressions depending on another product still reach the panel.
+export const generateOfferProductData = (
+  offer: Layer,
+  productIndex: number,
+  errors: string[]
+): InternalOfferProduct | null => withMechanicsSchema(() => {
+  const source = getLayerSource(offer, "oferta", errors);
+  const productLayers = resolveOfferProductLayers(source, errors);
+  for (let index = 0; index < productLayers.length; index += 1) {
+    if (productLayers[index].slot - 1 === productIndex) {
+      return readOfferProduct(productLayers[index], errors);
+    }
+  }
+  return null;
+});
+
+const readOfferProduct = (layers: OfferProductLayerSet, errors: string[]): InternalOfferProduct => {
+  const descriptionPrecomp = layers.descriptionLayer;
+  const descriptionProperty = getNestedTextProperty(
+    descriptionPrecomp,
+    getTemplateIdentities().named.descriptionText,
+    "descricao do produto " + layers.slot,
+    errors
+  );
+  const valueLayer = layers.mechanicLayer;
+  const mechanic: InternalOfferMechanic = valueLayer === null
+    ? {
+        type: layers.mechanicUnavailableLabel || "Mecânica do produto " + layers.slot + " indisponível",
+        fields: [],
+        optionGroups: [],
+        unsupported: true,
+      }
+    : readMechanic(valueLayer, errors);
+  const imageLayer = layers.imageLayer;
+  const image = readProductImageInfo(
+    imageLayer,
+    "imagem do produto " + layers.slot,
+    errors
+  );
+
+  return {
+    index: layers.slot - 1,
+    associationValid: layers.valid,
+    disabledReason: layers.disabledReason,
+    disabledSummary: layers.disabledSummary,
+    description: {
+      id: "description",
+      label: "Descricao",
+      value: readText(descriptionProperty),
+      format: "text",
+      enabled: layers.valid && descriptionProperty !== null,
+      disabledReason: layers.disabledReason || (descriptionProperty === null
+        ? 'Texto não encontrado. Confira a camada de texto "DESCRITIVO" dentro da precomp do descritivo.'
+        : undefined),
+      disabledSummary: layers.disabledSummary || (descriptionProperty === null
+        ? "O texto do descritivo não foi encontrado."
+        : undefined),
+      multiline: true,
+      hasExpression: hasPropertyExpression(descriptionProperty),
+      expressionEnabled: isPropertyExpressionEnabled(descriptionProperty),
+    },
+    descriptionLayer: descriptionPrecomp,
+    descriptionProperty,
+    mechanic,
+    mechanicLayer: valueLayer,
+    imageLayer,
+    image,
+    unsupported: !layers.valid || mechanic.unsupported === true,
+  };
+};
+
+export const readOfferSelectionContext = (offer: Layer): OfferEditorSelectionContext | null => {
+  try {
+    if (app.project === null || !(offer instanceof AVLayer) || !(offer.source instanceof CompItem)) return null;
+    const projectKey = getProjectIdentity().projectKey;
+    const comp = offer.containingComp;
+    const validId = (id: number): boolean => typeof id === "number" && isFinite(id) && id > 0 && Math.floor(id) === id;
+    if (projectKey === "" || !(comp instanceof CompItem) || !validId(comp.id) ||
+      !validId(offer.id) || !validId(offer.index) || !validId(offer.source.id)) return null;
+    return { projectKey, compItemId: comp.id, offerLayerIndex: offer.index,
+      offerLayerId: offer.id, sourceItemId: offer.source.id };
+  } catch (error) {
+    return null;
+  }
+};
 
 export const toPublicOfferDetails = (
   offer: Layer,

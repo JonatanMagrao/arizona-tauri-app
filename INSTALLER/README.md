@@ -178,6 +178,12 @@ Falhas de verificação interrompem a retirada; uma falha na limpeza pode deixar
 resíduos na pasta de trabalho, fora de `extensions`. O estado local informa
 que a finalização está pendente; nenhuma informação é enviada para fora da máquina.
 
+Falhas temporárias têm até três tentativas por execução, com intervalos de 5 e
+15 segundos. A aba Extensão oferece **Tentar novamente** para iniciar outra
+execução, sem reinstalar o pacote. Existe apenas um worker por processo; o lock
+CEP não fica retido durante as esperas. Erros registram códigos estáveis por fase
+no diagnóstico local, sem caminhos, nomes de usuário ou conteúdo de projetos.
+
 Essa etapa não percorre perfis de outros usuários, não altera `PlayerDebugMode`
 e não remove junctions de desenvolvimento nem segue junctions ancestrais.
 Também não roda em `tauri dev`, sem recibo do Full ou com o aplicativo elevado.
@@ -197,6 +203,18 @@ em `%APPDATA%\Adobe\CEP\extensions\com.arizona-carrefour.cep`. O painel mostra
 o destino e a necessidade de administrador antes da confirmação; mudanças no
 destino entre a leitura e a instalação interrompem a operação. Downgrades de
 versões normais exigem autorização explícita.
+
+Antes de elevar uma atualização com cópia normal redundante do usuário, o Tauri
+registra a identidade do pacote escolhido e a cópia exata que poderá ser retirada
+em `%LOCALAPPDATA%\com.pc.arizona-app\cep-pending-consolidation.json`. O commit do
+helper é confirmado separadamente nesse registro. Uma decisão não confirmada
+não autoriza retirada nem fallback para o recibo antigo do Full; uma nova
+instalação explícita pode substituí-la. Depois do commit, a retomada revalida o
+hash de `META-INF/signatures.xml`, a versão, o publicador e todo o conteúdo
+instalado. O pacote original pode ser removido e o novo ZXP pode ter a mesma
+versão do anterior: a retomada continua vinculada ao último pacote instalado.
+Mudanças na cópia do usuário mantêm o registro como proteção contra uma limpeza
+posterior pelo Full. Junctions nunca entram nessa retomada.
 
 Junctions de desenvolvimento são diferenciadas de cópias normais e preservadas
 por padrão. Se o usuário escolher encerrar o modo dev, apenas o link é

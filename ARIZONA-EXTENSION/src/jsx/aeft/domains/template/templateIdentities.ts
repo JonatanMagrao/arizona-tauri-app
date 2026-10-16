@@ -9,6 +9,11 @@ let depth = 0;
 let pinned: TemplateIdentities | null = null;
 let failed = false;
 let failure: unknown = null;
+// Read-only JSON only: never cache native AE objects or resolution results.
+let cachedBinary: string | null = null;
+let cachedMap: TemplateIdentities | null = null;
+
+const clearCache = (): void => { cachedBinary = null; cachedMap = null; };
 
 const clear = (): void => { pinned = null; failed = false; failure = null; };
 
@@ -16,6 +21,7 @@ export const configureTemplateIdentitiesPath = (path: string): void => {
   if (depth > 0) throw new Error("Nao e possivel mudar o mapa de identidades durante uma operacao.");
   configuredPath = "";
   clear();
+  clearCache();
   if (typeof path !== "string") throw new Error("O caminho do mapa de identidades deve ser um texto.");
   if (path.replace(/^\s+|\s+$/g, "") === "") return;
   // ExtendScript's regex lexer does not reliably accept a slash inside a
@@ -66,8 +72,16 @@ const readBinaryFile = (path: string): string => {
 const load = (): TemplateIdentities => {
   if (configuredPath === "") throw new Error("Caminho de template-identities.json nao configurado. Recarregue a extensao.");
   try {
-    return parseTemplateIdentitiesJson(decodeTemplateIdentitiesUtf8(readBinaryFile(configuredPath)));
+    // A complete fresh read keeps dev edits and missing/unreadable files
+    // observable even when their size or modification date has not changed.
+    const binary = readBinaryFile(configuredPath);
+    if (cachedMap !== null && cachedBinary === binary) return cachedMap;
+    const map = parseTemplateIdentitiesJson(decodeTemplateIdentitiesUtf8(binary));
+    cachedBinary = binary;
+    cachedMap = map;
+    return map;
   } catch (error) {
+    clearCache();
     throw new Error("Mapa de identidades invalido em " + configuredPath + ": " + String(error));
   }
 };
@@ -81,7 +95,8 @@ export const getTemplateIdentities = (): TemplateIdentities => {
 };
 
 // Pin one validated map (including failures) for each complete operation.
-// The next operation reads again, so editing the source asset needs no rebuild.
+// The next operation reads again; unchanged bytes reuse parsing/validation,
+// while editing the source asset still needs no rebuild.
 export const withTemplateIdentities = <T>(callback: () => T): T => {
   const outermost = depth === 0;
   if (outermost) clear();

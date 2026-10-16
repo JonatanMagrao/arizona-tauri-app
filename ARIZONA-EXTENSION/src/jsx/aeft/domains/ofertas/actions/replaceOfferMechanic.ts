@@ -5,6 +5,12 @@ import type {
   OfferMechanicContext,
 } from "../types";
 import { resolveOfferMechanics } from "../offers/offerMechanics";
+import { withTemplateIdentities } from "../../template/templateIdentities";
+import { applyMechanicSourceChanges, assertMechanicCanDuplicate, assertOfferLayoutsPrivate, createMechanicInstance, findProductMechanicLayers,
+  prepareMechanicSourceChanges, removeUnusedCreatedMechanics,
+  rollbackMechanicSourceChanges, selectMechanicInstance, type MechanicSourceChange } from "../offers/mechanicInstances";
+import { readProjectReferenceIndex } from "../offers/projectReferenceIndex";
+import { attachOfferUpdate } from "./shared";
 
 const sameOffer = (expected: OfferLayoutContext, actual: OfferLayoutContext): boolean =>
   expected.projectKey === actual.projectKey && expected.compItemId === actual.compItemId &&
@@ -18,7 +24,7 @@ const sameContext = (expected: OfferMechanicContext, actual: OfferMechanicContex
   expected.mechanicLayerComment === actual.mechanicLayerComment &&
   expected.mechanicSourceItemId === actual.mechanicSourceItemId && expected.mechanicsFolderItemId === actual.mechanicsFolderItemId;
 
-export const replaceOfferMechanic = (request: OfferMechanicChangeRequest): OfferEditorActionResult => {
+export const replaceOfferMechanic = (request: OfferMechanicChangeRequest): OfferEditorActionResult => withTemplateIdentities(() => {
   const result: OfferEditorActionResult = { ok: false, message: "", selectedOfferLayerIndex: 0, errors: [] };
   if (!request || !request.context || !request.context.offer || typeof request.targetItemId !== "number" ||
     !isFinite(request.targetItemId) || request.targetItemId < 1 || Math.floor(request.targetItemId) !== request.targetItemId) {
@@ -27,7 +33,7 @@ export const replaceOfferMechanic = (request: OfferMechanicChangeRequest): Offer
   }
   const resolution = resolveOfferMechanics(request.context.offer.offerLayerIndex, request.context.productIndex);
   const menu = resolution.menu;
-  if (!menu.ok || menu.context === null || resolution.mechanicLayer === null) {
+  if (!menu.ok || menu.context === null || resolution.mechanicLayer === null || resolution.offer === null) {
     result.message = "Não foi possível localizar as mecânicas deste produto. Abra o seletor novamente.";
     result.errors = menu.errors.slice(0);
     if (menu.disabledReason) result.errors.push(menu.disabledReason);
@@ -42,46 +48,58 @@ export const replaceOfferMechanic = (request: OfferMechanicChangeRequest): Offer
     result.message = "A camada da mecânica está bloqueada. Desbloqueie-a no After Effects para trocar a mecânica.";
     return result;
   }
-  let target: CompItem | null = null;
-  for (let index = 0; index < resolution.targets.length; index += 1) {
-    if (resolution.targets[index].id === request.targetItemId) {
-      target = resolution.targets[index];
+  let pool: typeof resolution.pools[0] | null = null;
+  for (let index = 0; index < resolution.pools.length; index += 1) {
+    if (resolution.pools[index].representative.id === request.targetItemId) {
+      pool = resolution.pools[index];
       break;
     }
   }
-  if (target === null) {
+  if (pool === null) {
     result.message = "Esta mecânica não está disponível para o produto. Atualize a lista e confira os comentários.";
     return result;
   }
   const previousSource = layer.source as CompItem;
-  if (previousSource.id === target.id) {
-    result.ok = true;
-    result.selectedOfferLayerIndex = menu.context.offer.offerLayerIndex;
-    result.message = "Esta mecânica já está aplicada ao produto.";
-    return result;
-  }
-  const previousName = layer.name;
+  let changes: MechanicSourceChange[] = [];
+  const created: CompItem[] = [];
   let undoStarted = false;
   try {
+    const owners = findProductMechanicLayers([layer.containingComp], menu.context.productIndex);
+    // One live project scan serves all pre-mutation ownership checks. Simples
+    // only needs it when the requested source actually changes.
+    const references = pool.family === "SIMPLES" ? undefined : readProjectReferenceIndex();
+    const choice = pool.family === "SIMPLES" ? { source: pool.representative, duplicate: false }
+      : selectMechanicInstance(pool.instances, owners, previousSource, resolution.layouts, layer.containingComp, references);
+    let target = choice.source;
+    changes = prepareMechanicSourceChanges(owners, target);
+    if (!choice.duplicate && changes.length === 0) {
+      result.ok = true;
+      result.selectedOfferLayerIndex = menu.context.offer.offerLayerIndex;
+      result.message = "Esta mecânica já está aplicada ao produto.";
+      return result;
+    }
+    assertOfferLayoutsPrivate([layer.containingComp], resolution.offer, references);
+    if (choice.duplicate) {
+      for (let index = 0; index < owners.length; index += 1) {
+        if (owners[index].locked) throw new Error('A camada "' + owners[index].name + '" está bloqueada. Desbloqueie-a no After Effects.');
+      }
+      assertMechanicCanDuplicate(target);
+    }
     app.beginUndoGroup("Trocar mecânica do produto");
     undoStarted = true;
-    layer.replaceSource(target, false);
-    if (layer.name !== previousName) layer.name = previousName;
+    if (choice.duplicate) {
+      target = createMechanicInstance(target, pool.family, created);
+      changes = prepareMechanicSourceChanges(owners, target);
+    }
+    applyMechanicSourceChanges(changes);
     result.ok = true;
     result.selectedOfferLayerIndex = menu.context.offer.offerLayerIndex;
     result.message = "Mecânica do produto atualizada.";
+    attachOfferUpdate(result, resolution.offer);
   } catch (error) {
     if (undoStarted) {
-      try {
-        if (layer.source !== previousSource) layer.replaceSource(previousSource, false);
-      } catch (rollbackError) {
-        result.errors.push("Não foi possível restaurar a mecânica anterior. Use Desfazer no After Effects.");
-      }
-      try {
-        if (layer.name !== previousName) layer.name = previousName;
-      } catch (rollbackError) {
-        result.errors.push("Não foi possível restaurar o nome da camada. Use Desfazer no After Effects.");
-      }
+      rollbackMechanicSourceChanges(changes, result.errors);
+      removeUnusedCreatedMechanics(created, result.errors);
     }
     result.message = "Não foi possível trocar a mecânica do produto.";
     result.errors.push(String(error));
@@ -89,4 +107,4 @@ export const replaceOfferMechanic = (request: OfferMechanicChangeRequest): Offer
     if (undoStarted) app.endUndoGroup();
   }
   return result;
-};
+});

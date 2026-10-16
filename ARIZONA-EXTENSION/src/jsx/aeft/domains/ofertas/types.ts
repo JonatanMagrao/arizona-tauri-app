@@ -62,6 +62,20 @@ export interface OfferEditorActionResult {
   message: string;
   selectedOfferLayerIndex: number;
   errors: string[];
+  offerUpdate?: OfferEditorOfferUpdate;
+}
+
+export interface OfferEditorSelectionContext {
+  projectKey: string;
+  compItemId: number;
+  offerLayerIndex: number;
+  offerLayerId: number;
+  sourceItemId: number;
+}
+
+export interface OfferEditorOfferUpdate {
+  context: OfferEditorSelectionContext;
+  offer: OfferDetails;
 }
 
 export interface OfferLayoutContext {
@@ -132,6 +146,8 @@ export interface OfferEditorSnapshot {
   offers: OfferSummary[];
   selectedOfferLayerIndex: number;
   selectedOffer: OfferDetails | null;
+  selectedOfferContext?: OfferEditorSelectionContext | null;
+  discoveryErrors?: string[];
   errors: string[];
 }
 

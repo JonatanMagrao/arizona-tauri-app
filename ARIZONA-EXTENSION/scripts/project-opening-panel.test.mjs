@@ -9,6 +9,8 @@ const paths = {
   identity: "../src/js/main/hooks/useProjectIdentity.ts",
   offers: "../src/js/main/domains/ofertas/hooks/useOffersEditor.ts",
   offersService: "../src/js/main/domains/ofertas/services/ofertas.ts",
+  offerMenuCache: "../src/js/main/domains/ofertas/services/offerMenuCache.ts",
+  offerSnapshotUpdates: "../src/js/main/domains/ofertas/services/offerSnapshotUpdates.ts",
   errors: "../src/js/main/utils/errors.ts",
 };
 const compiled = Object.fromEntries(await Promise.all(
@@ -104,6 +106,7 @@ function createHarness({ cep = true } = {}) {
     setTimeout: (callback) => { const id = ++nextTimer; timers.set(id, callback); return id; },
     clearTimeout: (id) => timers.delete(id),
   };
+  const singletons = new Map();
   const load = (name, mocks = {}) => {
     const module = { exports: {} };
     vm.runInNewContext(compiled[name], {
@@ -114,6 +117,12 @@ function createHarness({ cep = true } = {}) {
       require: (specifier) => {
         if (specifier === "react") return react;
         if (specifier.endsWith("utils/errors")) return load("errors");
+        for (const helper of ["offerMenuCache", "offerSnapshotUpdates"]) {
+          if (specifier.endsWith("/" + helper)) {
+            if (!singletons.has(helper)) singletons.set(helper, load(helper));
+            return singletons.get(helper);
+          }
+        }
         assert.ok(Object.hasOwn(mocks, specifier), `Unexpected import: ${specifier}`);
         return mocks[specifier];
       },
@@ -145,6 +154,7 @@ function createHarness({ cep = true } = {}) {
         .reduce((count, listeners) => count + listeners.size, 0);
     },
     focus() { windowListeners.get("focus")?.forEach((callback) => callback()); },
+    blur() { windowListeners.get("blur")?.forEach((callback) => callback()); },
     setVisible(visible) {
       document.hidden = !visible;
       document.visibilityState = visible ? "visible" : "hidden";
@@ -181,6 +191,179 @@ const legalOptionsContext = () => ({
   projectKey: "C:/jobs/current.aep", offersCompId: 10, offerLayerId: 44, offerLayerIndex: 4,
   offerSourceId: 50, legalLayerId: 51, legalSourceId: 60, bannerLayerId: 61, bannerSourceId: 70,
   revision: "captured-list-before-native-edit",
+});
+
+const selectionContext = () => ({
+  projectKey: "C:/jobs/current.aep", compItemId: 10, offerLayerIndex: 4,
+  offerLayerId: 44, sourceItemId: 50,
+});
+const offerWithValues = (first, second) => ({
+  layerIndex: 4, name: "Oferta_04", legalText: null, legalControls: [], errors: [],
+  products: [first, second].map((value, index) => ({ index, description: { value },
+    mechanic: { type: "SIMPLES", fields: [{ id: "preco", value }], optionGroups: [] } })),
+});
+const completeSnapshot = () => ({
+  ok: true, message: "Oferta carregada.", compName: "Miolo", selectedOfferLayerIndex: 4,
+  selectedOfferContext: selectionContext(), selectedOffer: offerWithValues("10", "20"),
+  discoveryErrors: ["Aviso da descoberta"], errors: ["Aviso da descoberta", "Aviso antigo"],
+  offers: [{ layerIndex: 4, name: "Oferta_04", selected: true }],
+});
+const offerActionUpdate = () => ({
+  ok: true, message: "Atualizado.", selectedOfferLayerIndex: 4, errors: [],
+  offerUpdate: { context: selectionContext(), offer: offerWithValues("15", "30") },
+});
+
+function partialUpdateFixture({ delayedUndo = false } = {}) {
+  const h = createHarness();
+  const initial = completeSnapshot();
+  const snapshots = [];
+  const actions = [];
+  const undoHost = deferred();
+  const { useOffersEditor } = h.load("offers", {
+    "../../../services/localDiagnostics": {
+      createDiagnosticOperationId: () => "partial-update", recordLocalDiagnostic() {}, recordDiagnosticFailure() {},
+    },
+    "../services/ofertas": {
+      loadOffersEditorSnapshot: (index) => {
+        const read = deferred(); snapshots.push({ index, ...read });
+        return snapshots.length === 1 ? Promise.resolve(initial) : read.promise;
+      },
+      updateOfferField: (...args) => { const request = deferred(); actions.push({ args, ...request }); return request.promise; },
+      replaceOfferMechanic: (...args) => { const request = deferred(); actions.push({ args, ...request }); return request.promise; },
+      undoOffersEditorAction: () => delayedUndo ? undoHost.promise : Promise.resolve({ ok: true, message: "Undo", errors: [] }),
+    },
+  });
+  const onStatus = () => {};
+  h.mount(() => useOffersEditor({ initialOfferLayerIndex: 4, onStatus }));
+  return { h, initial, snapshots, actions, undoHost };
+}
+
+for (const kind of ["field", "mechanic"]) {
+  test(`${kind} updates consume the authoritative whole offer without another bridge snapshot`, async () => {
+    const f = partialUpdateFixture();
+    await settle();
+    const action = kind === "field"
+      ? f.h.value.updateField(4, 0, "preco", "15")
+      : f.h.value.replaceMechanic({ context: {}, targetItemId: 100 });
+    const result = offerActionUpdate();
+    result.offerUpdate.offer.errors = ["Aviso atual"];
+    f.actions[0].resolve(result);
+    await action;
+    const next = f.h.value.snapshot;
+    assert.equal(f.snapshots.length, 1, "Only the initial snapshot crosses the bridge");
+    assert.equal(next.selectedOffer, result.offerUpdate.offer);
+    assert.equal(next.selectedOffer.products[1].mechanic.fields[0].value, "30", "Dependent sibling fields use native values too");
+    assert.equal(next.offers, f.initial.offers, "Structural summaries are preserved for ordinary edits");
+    assert.deepEqual(Array.from(next.errors), ["Aviso da descoberta", "Aviso atual"]);
+    assert.equal(f.h.value.busy, false);
+    f.h.unmount();
+    assert.equal(f.h.listenerCount, 0);
+  });
+}
+
+for (const reason of ["projectKey", "compItemId", "offerLayerId", "offerLayerIndex", "sourceItemId", "missing", "invalid", "failure", "transport", "blur", "hidden"]) {
+  test(`${reason}: an unsafe offer patch falls back to a full native snapshot`, async () => {
+    const f = partialUpdateFixture();
+    await settle();
+    if (reason === "blur") { f.h.blur(); f.h.focus(); }
+    if (reason === "hidden") { f.h.setVisible(false); f.h.setVisible(true); }
+    const action = f.h.value.updateField(4, 0, "preco", "15");
+    const result = offerActionUpdate();
+    if (reason === "missing") delete result.offerUpdate;
+    else if (reason === "invalid") result.offerUpdate.offer.products = null;
+    else if (reason === "failure") result.ok = false;
+    else if (Object.hasOwn(result.offerUpdate.context, reason)) {
+      result.offerUpdate.context[reason] = reason === "projectKey" ? "C:/other.aep" : 999;
+    }
+    if (reason === "transport") f.actions[0].reject(new Error("Transport failed"));
+    else f.actions[0].resolve(result);
+    await settle();
+    assert.equal(f.snapshots.length, 2);
+    assert.equal(f.h.value.busy, true);
+    const refreshed = completeSnapshot();
+    f.snapshots[1].resolve(refreshed);
+    await action;
+    assert.equal(f.h.value.snapshot, refreshed);
+    assert.equal(f.h.value.busy, false);
+    f.h.unmount();
+  });
+}
+
+test("a manual refresh supersedes a delayed partial action without restoring its old selection", async () => {
+  const f = partialUpdateFixture(); await settle();
+  const action = f.h.value.updateField(4, 0, "preco", "15");
+  const refreshed = completeSnapshot(); refreshed.selectedOfferLayerIndex = 8;
+  const read = f.h.value.refreshOffers(8);
+  f.snapshots[1].resolve(refreshed); await read;
+  f.actions[0].resolve(offerActionUpdate()); await action;
+  assert.equal(f.h.value.snapshot, refreshed);
+  assert.equal(f.snapshots.length, 2);
+  f.h.unmount();
+});
+
+test("a full refresh completed away from the panel cannot trust later partial edits after returning", async () => {
+  const f = partialUpdateFixture(); await settle();
+  f.h.blur();
+  const read = f.h.value.refreshOffers();
+  f.snapshots[1].resolve(completeSnapshot()); await read;
+  f.h.focus();
+  const action = f.h.value.updateField(4, 0, "preco", "15");
+  f.actions[0].resolve(offerActionUpdate()); await settle();
+  assert.equal(f.snapshots.length, 3, "External changes made after the unfocused read require rediscovery");
+  const latest = completeSnapshot();
+  f.snapshots[2].resolve(latest); await action;
+  assert.equal(f.h.value.snapshot, latest);
+  f.h.unmount();
+});
+
+test("the latest overlapping edit wins and an older patch cannot overwrite its sibling values", async () => {
+  const f = partialUpdateFixture(); await settle();
+  const first = f.h.value.updateField(4, 0, "preco", "15");
+  const second = f.h.value.updateField(4, 1, "preco", "40");
+  const newest = offerActionUpdate(); newest.offerUpdate.offer.products[1].mechanic.fields[0].value = "40";
+  f.actions[1].resolve(newest); await second;
+  f.actions[0].resolve(offerActionUpdate()); await first;
+  assert.equal(f.h.value.snapshot.selectedOffer, newest.offerUpdate.offer);
+  assert.equal(f.snapshots.length, 1);
+  assert.equal(f.h.value.busy, false);
+  f.h.unmount();
+});
+
+test("undo still requires a full snapshot after successful partial edits", async () => {
+  const f = partialUpdateFixture(); await settle();
+  const action = f.h.value.updateField(4, 0, "preco", "15");
+  f.actions[0].resolve(offerActionUpdate()); await action;
+  const undo = f.h.value.undo(); await settle();
+  f.h.runTimers(); await settle();
+  assert.equal(f.snapshots.length, 2);
+  f.snapshots[1].resolve(f.initial);
+  assert.equal(await undo, true);
+  assert.equal(f.h.value.snapshot, f.initial);
+  f.h.unmount();
+});
+
+test("a delayed undo result cannot update an unmounted editor", async () => {
+  const f = partialUpdateFixture({ delayedUndo: true }); await settle();
+  const undo = f.h.value.undo();
+  f.h.unmount();
+  f.undoHost.resolve({ ok: true, message: "Undo", errors: [] });
+  assert.equal(await undo, false);
+  assert.equal(f.h.settersAfterUnmount, 0);
+  assert.equal(f.snapshots.length, 1);
+});
+
+test("the delayed undo refresh cannot supersede a newer edit", async () => {
+  const f = partialUpdateFixture(); await settle();
+  const undo = f.h.value.undo(); await settle();
+  const action = f.h.value.updateField(4, 0, "preco", "15");
+  f.actions[0].resolve(offerActionUpdate()); await settle();
+  assert.equal(f.snapshots.length, 2, "The edit refreshes after an undo invalidated the baseline");
+  const latest = completeSnapshot(); f.snapshots[1].resolve(latest); await action;
+  f.h.runTimers();
+  assert.equal(await undo, false);
+  assert.equal(f.snapshots.length, 2);
+  assert.equal(f.h.value.snapshot, latest);
+  f.h.unmount();
 });
 
 test("legal-control services preserve captured context and keep legacy calls without extra arguments", async () => {
@@ -617,12 +800,16 @@ test("startup recovers an offer list whose selected offer products were initiall
   const empty = startupSnapshot();
   const ready = startupSnapshot([{ index: 0 }, { index: 1 }, { index: 2 }]);
   const f = offersStartupFixture(async (call) => call === 1 ? empty : ready);
+  assert.equal(f.harness.value.initialRecovering, true);
   await settle();
   assert.equal(f.harness.value.snapshot, empty);
+  assert.equal(f.harness.value.loading, false);
+  assert.equal(f.harness.value.initialRecovering, true, "Keep the spinner between startup reads");
   assert.equal(f.harness.timerCount, 1);
   f.harness.runTimers();
   await settle();
   assert.equal(f.harness.value.snapshot, ready);
+  assert.equal(f.harness.value.initialRecovering, false, "Products end recovery immediately");
   assert.deepEqual(f.calls, [undefined, 19], "Recovery retains the selected offer");
   assert.equal(f.harness.timerCount, 0);
   f.harness.runTimers();
@@ -654,11 +841,13 @@ test("startup recovery is bounded for genuinely empty offers and is absent witho
   for (let attempt = 0; attempt < 20; attempt += 1) { f.harness.runTimers(); await settle(); }
   assert.equal(f.calls.length, 6, "One initial read and at most five recovery reads");
   assert.equal(f.harness.timerCount, 0);
+  assert.equal(f.harness.value.initialRecovering, false, "A genuinely empty offer must not keep spinning");
   f.harness.unmount();
   const browser = offersStartupFixture(() => assert.fail("No host in browser"), {}, { cep: false });
   await settle();
   assert.equal(browser.harness.timerCount, 0);
   assert.deepEqual(browser.calls, []);
+  assert.equal(browser.harness.value.initialRecovering, false, "No spinner without a host to read");
   browser.harness.unmount();
 });
 
@@ -677,6 +866,7 @@ test("startup recovery defers to a pending edit and accepts that edit's selected
   f.harness.runTimers();
   await settle();
   assert.equal(f.harness.value.snapshot, ready);
+  assert.equal(f.harness.value.initialRecovering, false);
   assert.deepEqual(f.calls, [undefined, 17]);
   assert.equal(f.harness.timerCount, 0);
   f.harness.unmount();
@@ -716,6 +906,7 @@ test("an older empty read cannot overwrite a newer populated selection", async (
   await f.harness.value.refreshOffers(17);
   assert.equal(f.harness.value.snapshot, ready);
   assert.equal(f.harness.value.busy, true, "The older read is still in flight");
+  assert.equal(f.harness.value.initialRecovering, false, "A stale read cannot extend startup recovery");
   old.resolve(startupSnapshot());
   await settle();
   assert.equal(f.harness.value.snapshot, ready);
@@ -749,16 +940,44 @@ test("returning focus recovers a slow project's initial empty snapshot after the
   for (let attempt = 0; attempt < 5; attempt += 1) { f.harness.runTimers(); await settle(); }
   assert.equal(f.calls.length, 6);
   assert.equal(f.harness.timerCount, 0);
+  assert.equal(f.harness.value.initialRecovering, false);
   hostReady = true;
   f.harness.focus();
+  assert.equal(f.harness.value.initialRecovering, true, "Returning to an empty panel starts a fresh bounded recovery");
   await settle();
   assert.equal(f.calls.length, 7);
   assert.equal(f.harness.value.snapshot, ready);
+  assert.equal(f.harness.value.initialRecovering, false);
   f.harness.focus();
   f.harness.setVisible(true);
   f.harness.runTimers();
   await settle();
   assert.equal(f.calls.length, 7, "A loaded editor is not refreshed again on focus");
+  f.harness.unmount();
+  assert.equal(f.harness.listenerCount, 0);
+});
+
+test("startup loading remains visible through the last pending retry, then stops on repeated bridge errors", async () => {
+  const finalRead = deferred();
+  const f = offersStartupFixture((call) => call === 6
+    ? finalRead.promise : Promise.reject(new Error("Host unavailable")));
+  await settle();
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    f.harness.runTimers();
+    await settle();
+    assert.equal(f.harness.value.loading, false);
+    assert.equal(f.harness.value.initialRecovering, true);
+  }
+  f.harness.runTimers();
+  assert.equal(f.calls.length, 6);
+  assert.equal(f.harness.value.loading, true);
+  assert.equal(f.harness.value.initialRecovering, true);
+  finalRead.reject(new Error("Host still unavailable"));
+  await settle();
+  assert.equal(f.harness.value.loading, false);
+  assert.equal(f.harness.value.initialRecovering, false);
+  assert.equal(f.harness.value.snapshot, null);
+  assert.equal(f.harness.timerCount, 0);
   f.harness.unmount();
   assert.equal(f.harness.listenerCount, 0);
 });

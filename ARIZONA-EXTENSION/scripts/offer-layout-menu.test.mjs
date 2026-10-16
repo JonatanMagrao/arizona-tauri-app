@@ -5,6 +5,7 @@ import { compileOfferMenu, createOfferMenuHarness, deferred, settle } from "./he
 const compiled = await compileOfferMenu(Object.fromEntries(Object.entries({
   menu: "../src/js/main/domains/ofertas/components/OfferLayoutMenu.tsx",
   options: "../src/js/main/domains/ofertas/hooks/useOfferLayoutOptions.ts",
+  cache: "../src/js/main/domains/ofertas/services/offerMenuCache.ts",
   tooltips: "../src/js/main/utils/tooltips.ts",
   errors: "../src/js/main/utils/errors.ts",
 }).map(([name, path]) => [name, new URL(path, import.meta.url)])));
@@ -34,7 +35,7 @@ const layoutData = (offerLayerIndex = 4) => ({
 });
 
 
-test("layout options are read lazily and reopening requests current host options", async () => {
+test("layout options are read lazily and reopening reuses the successful current snapshot", async () => {
   const h = createHarness();
   assert.equal(h.reads.length, 0);
   assert.equal(h.menu, undefined);
@@ -52,8 +53,82 @@ test("layout options are read lazily and reopening requests current host options
   h.click(h.trigger);
   assert.equal(h.menu, undefined);
   h.click(h.trigger);
-  assert.equal(h.reads.length, 2, "A later open cannot reuse stale project options");
+  assert.equal(h.reads.length, 1, "A later open avoids repeating the same host read");
+  assert.equal(h.options.length, 4);
+  assert.equal(h.menu.props["aria-busy"], false);
+  h.unmount();
+});
+
+test("a layout menu reopened during its first read shares the request and invalidation discards late responses", async () => {
+  const h = createHarness();
+  h.click(h.trigger);
+  h.click(h.trigger);
+  h.click(h.trigger);
+  assert.equal(h.reads.length, 1, "Closing does not enqueue duplicate reads");
+  h.cache.invalidateOfferMenuCache(); h.render();
+  assert.equal(h.reads.length, 2);
+  h.reads[0].resolve(layoutData());
+  await settle(); h.render();
+  assert.equal(h.options.length, 0, "A response from the invalidated generation stays invisible");
+  assert.equal(h.menu.props["aria-busy"], true);
+  const current = layoutData();
+  current.options[1].label = "Current after refresh";
+  h.reads[1].resolve(current);
+  await settle(); h.render();
+  for (let index = 0; index < 5; index += 1) {
+    h.click(h.trigger); h.click(h.trigger);
+    assert.equal(h.options.length, 4);
+    assert.equal(h.menu.props["aria-busy"], false);
+  }
+  assert.equal(h.reads.length, 2);
+  h.click(h.options[1]);
+  assert.equal(h.changes[0].context, current.context);
+  h.change.resolve(); await settle();
+  h.unmount();
+});
+
+test("layout cache resets after an external focus/visibility cycle but not on ordinary panel focus", async () => {
+  const h = createHarness();
+  const detach = h.cache.attachOfferMenuCacheFocusInvalidation();
+  h.click(h.trigger);
+  h.reads[0].resolve(layoutData());
+  await settle(); h.render();
+  h.click(h.trigger);
+  h.dispatch("focus", h.window, h.window);
+  h.dispatch("focusin", h.trigger);
+  h.click(h.trigger);
+  assert.equal(h.reads.length, 1);
+  h.dispatch("blur", h.window, h.window);
+  assert.equal(h.menu, undefined);
+  h.dispatch("focus", h.window, h.window);
+  h.click(h.trigger);
+  assert.equal(h.reads.length, 2);
+  h.reads[1].resolve(layoutData());
+  await settle(); h.render();
+  h.click(h.trigger);
+  h.document.visibilityState = "hidden";
+  h.dispatch("visibilitychange");
+  h.document.visibilityState = "visible";
+  h.dispatch("visibilitychange");
+  h.click(h.trigger);
+  assert.equal(h.reads.length, 3);
+  detach();
+  h.unmount();
+  assert.ok([...h.document.listeners.values()].every((listeners) => listeners.size === 0));
+  assert.ok([...h.window.listeners.values()].every((listeners) => listeners.size === 0));
+});
+
+test("unavailable layout DTOs are retried on reopen without preserving an obsolete failure", async () => {
+  const h = createHarness();
+  h.click(h.trigger);
+  h.reads[0].resolve({ ...layoutData(), ok: false, context: null });
+  await settle(); h.render();
+  h.click(h.trigger); h.click(h.trigger);
+  assert.equal(h.reads.length, 2);
   assert.equal(h.options.length, 0);
+  h.reads[1].resolve(layoutData());
+  await settle(); h.render();
+  assert.equal(h.options.length, 4);
   h.unmount();
 });
 

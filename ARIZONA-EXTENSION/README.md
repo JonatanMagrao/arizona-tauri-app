@@ -154,11 +154,29 @@ informadas no seletor, sem escolher um item arbitrariamente. O tooltip da
 mensagem ou da opção indisponível indica o comentário esperado e onde
 preenchê-lo no After Effects.
 
-A seleção troca somente o source da camada em `Miolo`, sem copiar conteúdo
-entre precomps, ajustar transformações ou mudar a posição na timeline. A ação
-tem undo e revalida a oferta, a pasta e a origem antes da troca. O catálogo e a
+A seleção troca o source da camada em `Miolo`, preservando transformações e
+posição na timeline. As instâncias de mecânicas dos produtos presentes nas duas
+réguas acompanham a troca; os outros conteúdos das réguas permanecem intactos.
+A ação tem undo e revalida a oferta, a pasta e a origem antes da troca. O catálogo e a
 resolução ficam em `domains/ofertas/offers/`; a mutação fica em `actions/`,
 separada da troca de conteúdo entre duas ofertas já existente.
+
+Os menus de régua e mecânica reutilizam a última consulta válida ao reabrir
+no mesmo contexto, inclusive uma consulta ainda em andamento. O cache contém
+somente DTOs; ações, atualização manual, troca de projeto e retorno ao painel
+após perda de foco/visibilidade o invalidam. Falhas não ficam retidas e respostas
+atrasadas não repovoam um cache invalidado. A ação continua revalidando o contexto
+e as referências no After antes de qualquer escrita.
+
+Edições de produto e de texto legal, além da troca efetiva de mecânica, devolvem
+uma leitura atualizada da oferta na própria resposta. O painel aplica essa
+resposta apenas quando projeto, composição, camada, source e seleção ainda
+coincidem. Todos os produtos da oferta são relidos depois da escrita, incluindo
+valores dependentes de expressões; antes da escrita, são lidos somente os dados
+do produto ou legal necessários à ação. Isso evita uma segunda chamada de
+snapshot completo. Desfazer, navegação e alterações estruturais mantêm a leitura
+completa, também usada em falhas, contexto divergente ou após trabalho fora do
+painel. Nenhum valor visual é previsto a partir do texto digitado.
 
 ## Troca de mecânicas do produto
 
@@ -173,7 +191,7 @@ das subpastas intermediárias não são usados.
 A identificação prioriza o comentário do item no painel Projeto:
 
 - **Simples:** `SIMPLES 1`, `SIMPLES 2` etc., de acordo com o número do produto.
-- **Demais mecânicas:** uma precomp por comentário: `TODOS A COM X% DESCONTO`,
+- **Demais mecânicas:** instâncias da família identificada por `TODOS A COM X% DESCONTO`,
   `DESCONTO R$ CARTAO CRF`, `DE X POR Y PARCELAMENTO`,
   `DE X POR Y MEU CRF POR Z CARTAO CRF`,
   `DE X POR Y | X% DESCONTO | LEVE X PAGUE Y` e `TODOS A COM LEVE X PAGUE Y`.
@@ -181,17 +199,37 @@ A identificação prioriza o comentário do item no painel Projeto:
 Com `fallback.projectItems` ativo, o mapa permite `_MECANICAS` e os aliases
 de precomps explicitamente declarados quando não há correspondência por
 comentário. `SIMPLES {n}` é expandido para o número do produto; os sufixos das
-outras famílias são aliases do item, não números de produto. Duplicidades de
-comentário ou nome continuam bloqueando a opção. Subpastas intermediárias
-continuam sem participar da identificação.
+outras famílias identificam cópias da mesma mecânica, não números de produto.
+O seletor continua mostrando uma opção por família. Identidades ambíguas
+continuam bloqueando a opção; subpastas intermediárias não participam da
+identificação. Cópias já existentes com o mesmo comentário de família são
+distinguidas pelos sufixos numéricos dos seus nomes; duas cópias com a mesma
+identificação de instância continuam sendo uma ambiguidade.
 
-A troca substitui somente o source da camada com comentário `MECANICA 1`,
-`MECANICA 2` etc. na régua atual, preservando nome, comentários, transformações
-e timing. Não copia valores nem cria precomps. Ausências e duplicidades deixam
-a opção indisponível com tooltip informando o comentário e o local da correção.
-A operação revalida as referências, recusa ciclos entre precomps e possui undo.
-O catálogo em `domains/ofertas/offers/` concentra a política de cópias por
-produto; atualmente apenas Simples usa essa política.
+A troca mantém fontes independentes para produtos diferentes. Se uma instância
+da família estiver livre na oferta, ela é reutilizada com seus valores atuais.
+Quando as disponíveis estiverem ocupadas por outros produtos da régua em uso,
+o host duplica apenas a precomp da mecânica, preservando valores, configurações,
+animações e expressões. A nova cópia fica na mesma pasta da origem, com nome e
+comentário numerados; os nomes existentes não são alterados. Cópias liberadas
+permanecem disponíveis, sem exclusão automática nem restauração de padrões.
+
+O uso é reconstruído pelas referências do AEP em cada ação, sem cadastro em
+memória ou arquivo externo por projeto. As verificações de ocupação e de uso
+externo compartilham uma única varredura de referências antes das escritas;
+uma nova ação relê o projeto, e a recuperação de falhas consulta o estado atual.
+Referências nas réguas inativas da
+mesma oferta não reservam uma cópia. A instância acompanha o mesmo produto
+nas réguas alternativas; ao ativar produtos adicionais, o host resolve os
+conflitos de uso que passarem a existir. Simples mantém sua identificação por
+produto (`SIMPLES 1`, `SIMPLES 2`, `SIMPLES 3`).
+
+Os sources das camadas `MECANICA 1`, `MECANICA 2` etc. são atualizados sem mudar
+nomes, comentários, transformações ou timing. A operação revalida referências,
+recusa ciclos, respeita camadas bloqueadas e possui undo e restauração em caso
+de falha. Precomps internas compartilhadas impedem a duplicação automática:
+esse fluxo duplica somente a mecânica, sem duplicar recursivamente o projeto.
+A política fica em `domains/ofertas/offers/mechanicInstances.ts`.
 
 ## Configuração das mecânicas
 
@@ -220,8 +258,11 @@ como aliases de fallback em `template-identities.json`.
 
 O host lê diretamente o arquivo, sem embutir os dados no bundle e sem módulo
 TypeScript gerado. Cada snapshot ou ação fixa uma única configuração validada;
-ela não muda no meio das escritas. A próxima operação lê novamente o asset,
-inclusive quando houve erro na leitura anterior. Um JSON inválido bloqueia os
+ela não muda no meio das escritas. A próxima operação lê novamente o asset
+inteiro, inclusive quando houve erro na leitura anterior. Quando todos os bytes
+permanecem iguais, reutiliza o objeto já decodificado, interpretado e validado;
+mudanças de conteúdo exigem nova validação, mesmo com tamanho e data iguais.
+Falhas de leitura ou validação descartam esse cache. Um JSON inválido bloqueia os
 controles da mecânica e informa o erro, sem usar uma configuração antiga.
 Descrição, imagem e texto legal continuam independentes dessa configuração.
 
@@ -278,8 +319,11 @@ segurança a posição do produto; nesses casos, preserve o comentário ou use
 um nome explicitamente mapeado. Não há inferência pela posição na timeline.
 
 Cada operação fixa uma única versão validada do mapa até terminar suas
-leituras e escritas; a próxima operação relê o asset. Arquivo ausente ou
-inválido bloqueia a resolução, sem reaproveitar versão antiga. O build e o
+leituras e escritas; a próxima operação relê o asset inteiro. Bytes idênticos
+reutilizam o mapa validado em memória; qualquer mudança de conteúdo exige nova
+decodificação e validação. Configurar novamente o caminho também limpa o cache,
+assim como no schema. Arquivo ausente ou inválido descarta o cache e bloqueia
+a resolução, sem reaproveitar versão antiga. O build e o
 host verificam versão, booleanos, chaves, aliases duplicados, colisões,
 placeholders, JSON estrito e UTF-8. `npm run template:identities` valida o
 arquivo de origem. No desenvolvimento, editar o asset em `dist` vale na próxima
@@ -347,7 +391,9 @@ novamente até cinco vezes, com intervalo de 1,5 segundo. Essa recuperação par
 assim que o conteúdo aparece e não acompanha edições normais de produtos.
 Se a abertura demorar mais, retornar o foco ou tornar o painel visível inicia
 outra tentativa somente enquanto o conteúdo inicial ainda não foi carregado.
-Ofertas que permanecem sem produtos exibem a mensagem de estado da leitura.
+Enquanto a leitura ou recuperação estiver em andamento, a área vazia exibe
+somente um ícone de carregamento. Ao esgotar as tentativas, o indicador para e
+ofertas que permanecem sem produtos exibem a mensagem de estado da leitura.
 
 A identificação externa usa o caminho do arquivo: reabrir o mesmo arquivo fora
 do painel pode exigir **Atualizar** se o estado sem projeto não for observado

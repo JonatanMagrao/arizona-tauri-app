@@ -42,24 +42,41 @@ export function normalizeCepExtensionStatus(status) {
     consolidationRequired: status?.consolidationRequired === true,
     automaticConsolidation: CEP_CONSOLIDATION_STATES.has(status?.automaticConsolidation)
       ? status.automaticConsolidation : "idle",
+    automaticConsolidationFailureCode: String(status?.automaticConsolidationFailureCode || "").trim(),
   };
+}
+
+export function cepCanRetryConsolidation(status) {
+  return Boolean(status?.consolidationRequired)
+    && ["idle", "blocked"].includes(status.automaticConsolidation)
+    && !["cep_consolidation_user_changed", "cep_consolidation_elevated_process", "cep_consolidation_commit_unconfirmed"]
+      .includes(status.automaticConsolidationFailureCode);
 }
 
 export function cepConsolidationMessage(status) {
   if (!status?.consolidationRequired) return "";
+  if (status.automaticConsolidationFailureCode === "cep_consolidation_user_changed") {
+    return "A cópia deste usuário mudou após a atualização e foi preservada. Instale o arquivo .zxp desejado para consolidar as cópias.";
+  }
+  if (status.automaticConsolidationFailureCode === "cep_consolidation_elevated_process") {
+    return "Feche o Arizona e abra-o normalmente, sem Executar como administrador, para consolidar as cópias.";
+  }
+  if (status.automaticConsolidationFailureCode === "cep_consolidation_commit_unconfirmed") {
+    return "Não foi possível confirmar a conclusão da instalação. Instale o arquivo .zxp desejado novamente para consolidar as cópias.";
+  }
   if (status.automaticConsolidation === "checking") {
-    return "Conferindo a instalação do Full para consolidar as cópias do painel.";
+    return "Conferindo a instalação para consolidar as cópias do painel.";
   }
   if (status.automaticConsolidation === "waitingForAfterEffects") {
     return "Feche o After Effects. O Arizona consolidará as cópias do painel automaticamente.";
   }
   if (status.automaticConsolidation === "preservedNewerUser") {
-    return "A cópia deste usuário é mais nova e foi preservada. Use Atualizar para escolher a versão a manter.";
+    return "A cópia deste usuário é mais nova e foi preservada. Instale o arquivo .zxp desejado para escolher a versão a manter.";
   }
   if (status.automaticConsolidation === "blocked") {
-    return "A consolidação automática não foi concluída. Use Atualizar para consolidar as cópias do painel.";
+    return "A consolidação das cópias ficou pendente. Use Tentar novamente para concluir.";
   }
-  return "Há cópias do painel em mais de um local. Use Atualizar para consolidá-las no destino indicado na confirmação.";
+  return "Há cópias do painel em mais de um local. Use Tentar novamente ou instale o arquivo .zxp desejado.";
 }
 
 export function cepInstallationScopeLabel(scope) {

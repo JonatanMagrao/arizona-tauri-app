@@ -76,16 +76,17 @@ test("explicit slot patterns preserve zero padding and cannot confuse Simples pr
 });
 
 function runtime() {
-  const state = { config: approved(), reads: 0, exists: true, raw: null, readError: "", truncate: false, closes: 0 };
+  const state = { config: approved(), reads: 0, exists: true, raw: null, readError: "", truncate: false,
+    closes: 0, paths: [], closeResult: true };
   class File {
-    constructor(path) { assert.equal(path, "C:/CEP/template-identities.json"); this.error = ""; }
+    constructor(path) { state.paths.push(path); this.error = ""; }
     get bytes() { return Buffer.from(state.raw ?? JSON.stringify(state.config), "utf8").toString("latin1"); }
     get length() { return this.bytes.length; }
     get exists() { return state.exists; }
     open(mode) { assert.equal(mode, "r"); return true; }
     seek(offset) { assert.equal(offset, 0); return true; }
     read() { assert.equal(this.encoding, "BINARY"); state.reads += 1; this.error = state.readError; return state.truncate ? this.bytes.slice(0, -1) : this.bytes; }
-    close() { state.closes += 1; return true; }
+    close() { state.closes += 1; return state.closeResult; }
   }
   const api = loadTemplateIdentitiesModule({ File });
   api.configureTemplateIdentitiesPath("C:/CEP/template-identities.json");
@@ -133,3 +134,71 @@ test("read errors and partial reads fail before a map can be used", () => {
   state.truncate = true;
   assert.throws(() => api.getTemplateIdentities(), /Leitura incompleta/);
 });
+
+test("unchanged identity bytes reuse the validated object but still read each operation", () => {
+  const { api, state } = runtime();
+  api.withTemplateIdentities(() => 42);
+  assert.equal(state.reads, 0, "the cache does not make lazy scopes eager");
+  const first = api.withTemplateIdentities(() => api.getTemplateIdentities());
+  for (let index = 0; index < 4; index += 1) {
+    assert.equal(api.withTemplateIdentities(() => api.getTemplateIdentities()), first);
+  }
+  assert.equal(api.getTemplateIdentities(), first);
+  assert.equal(state.reads, 6);
+  assert.equal(state.closes, 6);
+});
+
+test("same-size identity edits and formatting-only changes invalidate the cache", () => {
+  const { api, state } = runtime();
+  const first = api.getTemplateIdentities();
+  const size = Buffer.byteLength(JSON.stringify(state.config));
+  state.config.named.offersComp = "MIOLO";
+  assert.equal(Buffer.byteLength(JSON.stringify(state.config)), size);
+  const second = api.withTemplateIdentities(() => api.getTemplateIdentities());
+  assert.notEqual(second, first);
+  assert.equal(second.named.offersComp, "MIOLO");
+  state.raw = " " + JSON.stringify(state.config);
+  const third = api.getTemplateIdentities();
+  assert.notEqual(third, second);
+  assert.deepEqual(JSON.parse(JSON.stringify(third)), JSON.parse(JSON.stringify(second)));
+  assert.equal(api.getTemplateIdentities(), third);
+});
+
+test("all identity path reconfigurations invalidate the cache, including empty or rejected paths", () => {
+  const { api, state } = runtime();
+  const previous = api.getTemplateIdentities();
+  api.configureTemplateIdentitiesPath("C:/other/template-identities.json");
+  assert.notEqual(api.getTemplateIdentities(), previous);
+  assert.equal(state.paths.at(-1), "C:/other/template-identities.json");
+  for (const next of ["C:/CEP/template-identities.json", "", "relative.json", null]) {
+    const current = api.getTemplateIdentities();
+    if (next === null || next === "relative.json") {
+      assert.throws(() => api.configureTemplateIdentitiesPath(next));
+    } else api.configureTemplateIdentitiesPath(next);
+    if (next !== "C:/CEP/template-identities.json") assert.throws(() => api.getTemplateIdentities(), /nao configurado/);
+    api.configureTemplateIdentitiesPath("C:/CEP/template-identities.json");
+    assert.notEqual(api.getTemplateIdentities(), current);
+  }
+});
+
+for (const issue of ["exists", "truncate", "closeResult", "readError", "malformed", "invalid map"]) {
+  test(`${issue}: identity cache is discarded on failure and recovers only after a new valid read`, () => {
+    const { api, state } = runtime();
+    const previous = api.getTemplateIdentities();
+    if (issue === "malformed") state.raw = "{";
+    else if (issue === "invalid map") state.raw = '{"version":1}';
+    else if (issue === "readError") state.readError = "Native read failure";
+    else state[issue] = issue === "truncate";
+    api.withTemplateIdentities(() => {
+      assert.throws(() => api.getTemplateIdentities());
+      Object.assign(state, { raw: null, exists: true, truncate: false, closeResult: true, readError: "" });
+      assert.throws(() => api.withTemplateIdentities(() => api.getTemplateIdentities()),
+        "repairing the file cannot unpin an operation failure");
+    });
+    const recovered = api.getTemplateIdentities();
+    assert.notEqual(recovered, previous);
+    assert.equal(recovered.version, 1);
+    assert.equal(api.getTemplateIdentities(), recovered);
+    assert.equal(state.reads, issue === "exists" ? 3 : 4);
+  });
+}

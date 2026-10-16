@@ -22,10 +22,24 @@
 
 .offer-mechanic-trigger-label {
   min-width: 0;
-  overflow-wrap: break-word;
-  word-break: break-word;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.offer-mechanic-trigger > span[aria-hidden] {
-  flex: 0 0 auto;
+.offer-mechanic-chevron {
+  flex: 0 0 12px;
+  width: 12px;
+  height: 12px;
+  transition: transform 120ms ease;
+}
+
+.offer-mechanic-trigger[aria-expanded="true"] .offer-mechanic-chevron {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .offer-mechanic-chevron {
+    transition: none;
+  }
 }

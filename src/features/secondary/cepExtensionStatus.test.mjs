@@ -7,6 +7,7 @@ import * as statusHelpers from "./cepExtensionStatus.js";
 
 import {
   cepAdditionalInstallations,
+  cepCanRetryConsolidation,
   cepConsolidationMessage,
   cepDevelopmentModePreserved,
   cepDevLinkRequiresReplacement,
@@ -43,6 +44,7 @@ test("normalizes the legacy CEP status without requiring the new installation fi
       developmentMode: false,
       consolidationRequired: false,
       automaticConsolidation: "idle",
+      automaticConsolidationFailureCode: "",
     },
   );
 });
@@ -365,6 +367,8 @@ function panelHarness(status, selectedVersion = "2.4.1", installError = null) {
   const cleanups = [];
   const eventListeners = new Map();
   const statusResponses = [];
+  const retryResponses = [];
+  const dialogResponses = [];
   const calls = [];
   const errors = [];
   const successes = [];
@@ -389,11 +393,16 @@ function panelHarness(status, selectedVersion = "2.4.1", installError = null) {
     },
   };
   const jsx = (type, props) => ({ type, props });
-  const commandNames = { cepExtensionStatus: "status", cepDebugModeStatus: "debug", inspectCepZxp: "inspect", installCepZxp: "install" };
+  const commandNames = { cepExtensionStatus: "status", cepDebugModeStatus: "debug", inspectCepZxp: "inspect", installCepZxp: "install", cepRetryConsolidation: "retry" };
   const invokeCommand = async (command, args) => {
     calls.push({ command, args });
     if (command === "status") return statusResponses.length ? statusResponses.shift() : status;
     if (command === "debug") return { enabled: false };
+    if (command === "retry") {
+      const result = retryResponses.length ? retryResponses.shift() : true;
+      if (result instanceof Error) throw result;
+      return result;
+    }
     if (command === "inspect") return { bundleId: "com.arizona-carrefour.cep", version: selectedVersion, trusted: true };
     if (command === "install") {
       if (installError) throw new Error(installError);
@@ -408,7 +417,9 @@ function panelHarness(status, selectedVersion = "2.4.1", installError = null) {
     if (specifier === "./cepExtensionStatus") return statusHelpers;
     if (specifier.endsWith("/tauriCommands")) return { commandNames, invokeCommand };
     if (specifier.endsWith("/publicErrors")) return { publicErrorMessage: (_error, fallback) => fallback };
-    if (specifier === "@tauri-apps/plugin-dialog") return { open: async () => "C:\\Downloads\\extension.zxp" };
+    if (specifier === "@tauri-apps/plugin-dialog") return {
+      open: async () => dialogResponses.length ? dialogResponses.shift() : "C:\\Downloads\\extension.zxp",
+    };
     if (specifier === "@tauri-apps/api/event") return {
       listen: async (name, callback) => {
         eventListeners.set(name, callback);
@@ -449,7 +460,10 @@ function panelHarness(status, selectedVersion = "2.4.1", installError = null) {
       return elements(dialog, (node) => node.type === "button" && node.props.className === "btn btn-primary")[0];
     },
     checks() { return elements(this.tree, (node) => node.type === "input" && node.props.type === "checkbox"); },
+    button(label) { return elements(this.tree, (node) => node.type === "button" && nodeText(node) === label)[0]; },
     queueStatus(response) { statusResponses.push(response); },
+    queueRetry(response) { retryResponses.push(response); },
+    queueDialog(response) { dialogResponses.push(response); },
     emitConsolidation() { eventListeners.get("arizona-cep:consolidation-changed")?.({ payload: "completed" }); },
     get listenerCount() { return eventListeners.size; },
     unmount() { cleanups.forEach((cleanup) => cleanup()); },
@@ -470,8 +484,8 @@ test("automatic consolidation messages distinguish pending work, preserved newer
     ["checking", /Conferindo/],
     ["waitingForAfterEffects", /Feche o After Effects.*automaticamente/],
     ["preservedNewerUser", /mais nova.*preservada/],
-    ["blocked", /não foi concluída.*Atualizar/],
-    ["idle", /Use Atualizar/],
+    ["blocked", /ficou pendente.*Tentar novamente/],
+    ["idle", /Tentar novamente.*\.zxp/],
   ]) {
     const normalized = normalizeCepExtensionStatus({ consolidationRequired: true, automaticConsolidation: state });
     assert.equal(normalized.automaticConsolidation, state);
@@ -480,6 +494,120 @@ test("automatic consolidation messages distinguish pending work, preserved newer
   }
   assert.equal(normalizeCepExtensionStatus({ automaticConsolidation: "unexpected" }).automaticConsolidation, "idle");
   assert.equal(cepConsolidationMessage({ consolidationRequired: false, automaticConsolidation: "completed" }), "");
+});
+
+test("retry is reserved for pending normal consolidation and gives actionable guidance for permanent guards", () => {
+  for (const state of ["idle", "blocked"]) {
+    assert.equal(cepCanRetryConsolidation({ consolidationRequired: true, automaticConsolidation: state }), true);
+  }
+  for (const state of ["checking", "waitingForAfterEffects", "completed", "preservedNewerUser"]) {
+    assert.equal(cepCanRetryConsolidation({ consolidationRequired: true, automaticConsolidation: state }), false);
+  }
+  assert.equal(cepCanRetryConsolidation({ consolidationRequired: false, automaticConsolidation: "blocked", developmentMode: true }), false);
+  for (const [failureCode, message] of [
+    ["cep_consolidation_user_changed", /mudou.*preservada.*\.zxp/],
+    ["cep_consolidation_elevated_process", /abra-o normalmente.*administrador/],
+    ["cep_consolidation_commit_unconfirmed", /confirmar a conclusão.*\.zxp.*novamente/],
+  ]) {
+    const status = normalizeCepExtensionStatus({ consolidationRequired: true, automaticConsolidation: "blocked", automaticConsolidationFailureCode: failureCode });
+    assert.equal(status.automaticConsolidationFailureCode, failureCode);
+    assert.equal(cepCanRetryConsolidation(status), false);
+    assert.match(cepConsolidationMessage(status), message);
+  }
+});
+
+test("retry starts only consolidation once, prevents overlapping installation and clears the warning on completion", async () => {
+  const status = machineStatus({ consolidationRequired: true, automaticConsolidation: "blocked" });
+  const h = panelHarness(status);
+  h.render();
+  await new Promise((resolve) => setImmediate(resolve));
+  h.render();
+  let finishRetry;
+  h.queueRetry(new Promise((resolve) => { finishRetry = resolve; }));
+  const retry = h.button("Tentar novamente");
+  const pending = retry.props.onClick();
+  await retry.props.onClick();
+  h.render();
+  assert.equal(h.button("Tentando...").props.disabled, true);
+  assert.equal(h.button("Escolher arquivo…").props.disabled, true);
+  assert.equal(h.calls.filter(({ command }) => command === "retry").length, 1);
+  assert.equal(h.calls.some(({ command }) => command === "install" || command === "inspect"), false);
+
+  status.consolidationRequired = false;
+  status.automaticConsolidation = "completed";
+  h.emitConsolidation();
+  finishRetry(true);
+  await pending;
+  h.render();
+  assert.equal(h.button("Tentar novamente"), undefined);
+  assert.equal(h.button("Escolher arquivo…").props.disabled, false);
+  assert.doesNotMatch(nodeText(h.tree), /consolidação das cópias ficou pendente/);
+  assert.deepEqual(h.errors, []);
+  h.unmount();
+});
+
+test("retry failures refresh status and explain a development-app refusal without starting installation", async () => {
+  const h = panelHarness(machineStatus({ consolidationRequired: true, automaticConsolidation: "blocked" }));
+  h.queueRetry(new Error("cep_consolidation_development_mode: development"));
+  h.render();
+  await new Promise((resolve) => setImmediate(resolve));
+  h.render();
+  await h.button("Tentar novamente").props.onClick();
+  h.render();
+  assert.match(h.errors[0], /desativada no aplicativo de desenvolvimento.*versão instalada/);
+  assert.equal(h.button("Tentar novamente").props.disabled, false);
+  assert.equal(h.calls.filter(({ command }) => command === "status").length, 2);
+  assert.equal(h.calls.some(({ command }) => command === "install"), false);
+  assert.deepEqual(h.successes, []);
+  h.unmount();
+});
+
+test("cancelling ZXP selection preserves development mode without starting consolidation", async () => {
+  const h = panelHarness(machineStatus({ developmentMode: true, consolidationRequired: false, automaticConsolidation: "idle" }));
+  h.queueDialog(null);
+  h.render();
+  await new Promise((resolve) => setImmediate(resolve));
+  h.render();
+  await h.button("Escolher arquivo…").props.onClick();
+  h.render();
+  assert.equal(h.button("Tentar novamente"), undefined);
+  assert.equal(h.calls.some(({ command }) => ["inspect", "install", "retry"].includes(command)), false);
+  assert.match(nodeText(h.tree), /Desenvolvimento/);
+  h.unmount();
+});
+
+test("checking and waiting for After Effects cannot enqueue another retry", async () => {
+  for (const automaticConsolidation of ["checking", "waitingForAfterEffects"]) {
+    const h = panelHarness(machineStatus({ consolidationRequired: true, automaticConsolidation }));
+    h.render();
+    await new Promise((resolve) => setImmediate(resolve));
+    h.render();
+    assert.equal(h.button("Tentar novamente"), undefined);
+    assert.equal(h.button("Escolher arquivo…").props.disabled, automaticConsolidation === "checking");
+    h.unmount();
+  }
+});
+
+test("late manual refresh cannot overwrite the status delivered by consolidation completion", async () => {
+  const status = machineStatus({ consolidationRequired: true, automaticConsolidation: "blocked" });
+  const h = panelHarness(status);
+  h.render();
+  await new Promise((resolve) => setImmediate(resolve));
+  h.render();
+  let resolveOld;
+  h.queueStatus(new Promise((resolve) => { resolveOld = resolve; }));
+  const refresh = h.button("Atualizar").props.onClick();
+  status.consolidationRequired = false;
+  status.automaticConsolidation = "completed";
+  h.emitConsolidation();
+  await new Promise((resolve) => setImmediate(resolve));
+  resolveOld(machineStatus({ consolidationRequired: true, automaticConsolidation: "blocked" }));
+  await refresh;
+  h.render();
+  assert.equal(h.button("Tentar novamente"), undefined);
+  assert.equal(h.button("Atualizar").props.disabled, false);
+  assert.doesNotMatch(nodeText(h.tree), /ficou pendente/);
+  h.unmount();
 });
 
 test("the extension panel removes the duplicate warning when consolidation finishes", async () => {

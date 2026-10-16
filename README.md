@@ -139,6 +139,11 @@ consolida a cópia normal redundante do usuário atual. Se o After estiver abert
 aguarda seu fechamento. Junctions de desenvolvimento e cópias do usuário com versão
 mais nova são preservadas; nenhum outro perfil é alterado.
 
+Falhas temporárias têm até três tentativas por execução. Na aba Extensão,
+**Tentar novamente** retoma a consolidação com um inventário novo; **Atualizar**
+consulta o status. Rejeições de assinatura ou mudanças nas cópias preservam os
+arquivos e informam a ação necessária. O motivo técnico fica no diagnóstico local.
+
 A partir do Tauri 2.4.1, a atualização manual por `.zxp` usa a instalação
 compartilhada existente, com autorização de administrador do Windows, e
 consolida as cópias normais antigas. Quando existe somente uma instalação do
@@ -150,6 +155,14 @@ retirada depois de a instalação compartilhada ser verificada. Os temporários
 e backups ficam fora de `extensions`. O helper elevado opera somente nas
 pastas CEP da máquina; o processo original trata os arquivos e o registro do
 usuário. Ambos os fluxos extraem o `.zxp` assinado.
+
+O último `.zxp` instalado pelo usuário é o pacote mantido, inclusive quando tem
+a mesma versão e conteúdo atualizado (downgrades continuam exigindo confirmação).
+A retomada de uma instalação manual usa `cep-pending-consolidation.json` nos
+dados locais do Tauri, sem depender do arquivo ZXP original nem do payload antigo
+do Full. O registro guarda a decisão antes da elevação e só autoriza retomada
+depois de o helper confirmar o commit; assinatura, conteúdo e a cópia antiga do
+usuário são verificados novamente. Uma cópia alterada ou um link dev é preservado.
 
 Uma junction de desenvolvimento é apresentada como **Modo de desenvolvimento**.
 Ela pode coexistir com a instalação compartilhada e é preservada por padrão.

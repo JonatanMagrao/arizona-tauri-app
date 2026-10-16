@@ -42,6 +42,11 @@ function fixture() {
     calls.images = 0;
   };
   const mocks = {
+    "../../project/projectIdentity": {
+      // The editor module also exports context-bearing snapshots/patches now;
+      // neither plain offer data nor Roteiro's lightweight reader needs it.
+      getProjectIdentity: () => assert.fail("Lightweight product reads must not query project identity"),
+    },
     "../../template/templateIdentities": {
       withTemplateIdentities: (callback) => callback(),
       getTemplateIdentities: approvedTemplateIdentities,

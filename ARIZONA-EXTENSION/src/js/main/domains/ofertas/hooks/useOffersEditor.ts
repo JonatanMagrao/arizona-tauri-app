@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getPublicErrorMessage } from "../../../utils/errors";
+import { attachOfferMenuCacheFocusInvalidation, invalidateOfferMenuCache } from "../services/offerMenuCache";
+import { mergeOfferUpdate } from "../services/offerSnapshotUpdates";
 import {
   createDiagnosticOperationId,
   recordDiagnosticFailure,
@@ -66,6 +68,7 @@ export const useOffersEditor = ({
 }: UseOffersEditorOptions) => {
   const [snapshot, setSnapshot] = useState<OfferEditorSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
+  const [initialRecovering, setInitialRecovering] = useState(() => Boolean(window.cep));
   const [pendingActionCount, setPendingActionCount] = useState(0);
   const [actionLog, setActionLog] = useState<string[]>([]);
   const mountedRef = useRef(true);
@@ -78,11 +81,44 @@ export const useOffersEditor = ({
   const snapshotReadCountRef = useRef(0);
   const snapshotRequestIdRef = useRef(0);
   const initialSnapshotReadyRef = useRef(false);
+  const snapshotRef = useRef<OfferEditorSnapshot | null>(null);
+  const partialSnapshotTrustedRef = useRef(false);
+  const externalContextRevisionRef = useRef(0);
+  const externalContextActiveRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
+    invalidateOfferMenuCache();
+    const detachMenuFocus = window.cep ? attachOfferMenuCacheFocusInvalidation() : () => {};
+    externalContextActiveRef.current = document.hidden || document.visibilityState === "hidden";
+    const markExternalContext = () => {
+      externalContextActiveRef.current = true;
+      externalContextRevisionRef.current += 1;
+      partialSnapshotTrustedRef.current = false;
+    };
+    const markReturnedContext = () => {
+      if (!externalContextActiveRef.current || document.hidden || document.visibilityState === "hidden") return;
+      externalContextActiveRef.current = false;
+      externalContextRevisionRef.current += 1;
+      partialSnapshotTrustedRef.current = false;
+    };
+    const markHiddenContext = () => {
+      if (document.hidden || document.visibilityState === "hidden") markExternalContext();
+      else markReturnedContext();
+    };
+    if (window.cep) {
+      window.addEventListener("blur", markExternalContext);
+      window.addEventListener("focus", markReturnedContext);
+      document.addEventListener("visibilitychange", markHiddenContext);
+    }
     return () => {
       mountedRef.current = false;
+      snapshotRequestIdRef.current += 1;
+      invalidateOfferMenuCache();
+      detachMenuFocus();
+      window.removeEventListener("blur", markExternalContext);
+      window.removeEventListener("focus", markReturnedContext);
+      document.removeEventListener("visibilitychange", markHiddenContext);
     };
   }, []);
 
@@ -117,7 +153,10 @@ export const useOffersEditor = ({
     async (offerLayerIndex = selectedOfferLayerIndexRef.current) => {
       if (!window.cep || !mountedRef.current) return false;
 
+      invalidateOfferMenuCache();
       const requestId = ++snapshotRequestIdRef.current;
+      const externalRevision = externalContextRevisionRef.current;
+      partialSnapshotTrustedRef.current = false;
       snapshotReadCountRef.current += 1;
       setLoading(true);
 
@@ -128,7 +167,11 @@ export const useOffersEditor = ({
           nextSnapshot.selectedOfferLayerIndex || offerLayerIndex;
         if ((nextSnapshot.selectedOffer?.products?.length || 0) > 0) {
           initialSnapshotReadyRef.current = true;
+          setInitialRecovering(false);
         }
+        snapshotRef.current = nextSnapshot;
+        partialSnapshotTrustedRef.current = !externalContextActiveRef.current &&
+          externalRevision === externalContextRevisionRef.current;
         setSnapshot(nextSnapshot);
         return true;
       } catch (caught) {
@@ -162,6 +205,9 @@ export const useOffersEditor = ({
     ) => {
       if (!mountedRef.current) return;
 
+      invalidateOfferMenuCache();
+      // An older read or action cannot overwrite a newer selection/operation.
+      const requestId = ++snapshotRequestIdRef.current;
       beginAction();
       const operationId = createDiagnosticOperationId(`offers-${actionName}`);
       const startedAt = Date.now();
@@ -175,7 +221,7 @@ export const useOffersEditor = ({
       });
       try {
         const result = await action();
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || requestId !== snapshotRequestIdRef.current) return;
         const publicMessage = getPublicErrorMessage(
           result.message,
           result.ok
@@ -233,8 +279,21 @@ export const useOffersEditor = ({
         selectedOfferLayerIndexRef.current =
           result.selectedOfferLayerIndex ||
           selectedOfferLayerIndexRef.current;
-        await refreshOffers(selectedOfferLayerIndexRef.current);
+        const updatedSnapshot = partialSnapshotTrustedRef.current
+          ? mergeOfferUpdate(snapshotRef.current, result)
+          : null;
+        if (updatedSnapshot) {
+          snapshotRef.current = updatedSnapshot;
+          setSnapshot(updatedSnapshot);
+          if (updatedSnapshot.selectedOffer!.products.length > 0) {
+            initialSnapshotReadyRef.current = true;
+            setInitialRecovering(false);
+          }
+        } else {
+          await refreshOffers(selectedOfferLayerIndexRef.current);
+        }
       } catch (caught) {
+        if (!mountedRef.current || requestId !== snapshotRequestIdRef.current) return;
         const message = getPublicErrorMessage(
           caught,
           "Não foi possível concluir esta alteração na oferta.",
@@ -253,6 +312,8 @@ export const useOffersEditor = ({
             details: { durationMs: Date.now() - startedAt },
           }
         );
+        // Transport failure does not establish whether the native edit ran.
+        await refreshOffers(selectedOfferLayerIndexRef.current);
       } finally {
         endAction();
       }
@@ -461,6 +522,9 @@ export const useOffersEditor = ({
 
     lastUndoAtRef.current = now;
     undoInFlightRef.current = true;
+    invalidateOfferMenuCache();
+    const requestId = ++snapshotRequestIdRef.current;
+    partialSnapshotTrustedRef.current = false;
     beginAction();
     const operationId = createDiagnosticOperationId("offers-undo");
     const startedAt = Date.now();
@@ -475,6 +539,7 @@ export const useOffersEditor = ({
 
     try {
       const result = await undoOffersEditorAction();
+      if (!mountedRef.current || requestId !== snapshotRequestIdRef.current) return false;
       const publicMessage = getPublicErrorMessage(
         result.message,
         result.ok
@@ -516,8 +581,10 @@ export const useOffersEditor = ({
       });
 
       await wait(UNDO_REFRESH_DELAY_MS);
+      if (!mountedRef.current || requestId !== snapshotRequestIdRef.current) return false;
       return await refreshOffers(selectedOfferLayerIndexRef.current);
     } catch (caught) {
+      if (!mountedRef.current || requestId !== snapshotRequestIdRef.current) return false;
       const message = getPublicErrorMessage(
         caught,
         "Não foi possível desfazer a última alteração.",
@@ -548,8 +615,13 @@ export const useOffersEditor = ({
     let disposed = false;
     let timer = 0;
     let retries = 0;
+    setInitialRecovering(!initialSnapshotReadyRef.current);
     const scheduleRecovery = () => {
-      if (disposed || initialSnapshotReadyRef.current || retries >= INITIAL_SNAPSHOT_RETRIES) return;
+      if (disposed) return;
+      if (initialSnapshotReadyRef.current || retries >= INITIAL_SNAPSHOT_RETRIES) {
+        setInitialRecovering(false);
+        return;
+      }
       window.clearTimeout(timer);
       timer = window.setTimeout(recoverInitialSnapshot, INITIAL_SNAPSHOT_RETRY_MS);
     };
@@ -575,6 +647,7 @@ export const useOffersEditor = ({
       // to this still-empty panel gives it a fresh chance, without refreshing
       // products that the operator has already loaded and started editing.
       retries = 0;
+      setInitialRecovering(true);
       void recoverInitialSnapshot();
     };
     void refreshOffers().then(scheduleRecovery);
@@ -591,6 +664,7 @@ export const useOffersEditor = ({
   return {
     snapshot,
     loading,
+    initialRecovering,
     busy: loading || pendingActionCount > 0,
     actionLog,
     clearActionLog,

@@ -28,8 +28,11 @@ export const getOfferRoleIdentity = (role: string): { comment: string; names: st
   if (role === "MARCADORES") return map.markers;
   const match = /^(DESCRITIVO|MECANICA|PRODUTO) ([1-3])$/.exec(role);
   if (match === null) throw new Error("Papel de camada desconhecido: " + role);
-  const identity = match[1] === "DESCRITIVO" ? map.description
-    : match[1] === "MECANICA" ? map.mechanic : map.product;
+  // ExtendScript associates chained ternaries differently from V8. Keep this
+  // branch explicit so the packaged host cannot resolve a description as a mechanic.
+  let identity = map.product;
+  if (match[1] === "DESCRITIVO") identity = map.description;
+  else if (match[1] === "MECANICA") identity = map.mechanic;
   return expandTemplateIdentity(identity, Number(match[2]));
 };
 

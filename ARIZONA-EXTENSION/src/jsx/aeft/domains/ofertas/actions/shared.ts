@@ -5,7 +5,7 @@ import type {
   OfferEditorActionResult,
 } from "../types";
 import { getOfferByLayerIndex } from "../layers/findLayers";
-import { generateOfferData } from "../snapshot/buildOfferSnapshot";
+import { generateOfferData, generateOfferProductData, readOfferSelectionContext, toPublicOfferDetails } from "../snapshot/buildOfferSnapshot";
 import { withMechanicsSchema } from "../mechanics/schemaRuntime";
 
 export const createActionResult = (
@@ -31,9 +31,7 @@ export const updateOfferProduct = (
   app.beginUndoGroup(undoName);
 
   try {
-    const details = generateOfferData(offer);
-    const product = findOfferProductByIndex(details.products, productIndex);
-    result.errors = details.errors.slice(0);
+    const product = generateOfferProductData(offer, productIndex, result.errors);
 
     if (!product) {
       throw new Error("Produto nao encontrado.");
@@ -43,6 +41,7 @@ export const updateOfferProduct = (
     result.message = updater(product);
     result.ok = true;
     result.selectedOfferLayerIndex = offer.index;
+    attachOfferUpdate(result, offer);
   } catch (error) {
     result.message =
       error instanceof Error ? error.message : "Erro ao atualizar oferta.";
@@ -53,6 +52,26 @@ export const updateOfferProduct = (
 
   return result;
 });
+
+// A successful edit remains successful if the subsequent read fails. Omitting
+// the patch asks the panel to use its existing full-refresh recovery path.
+// Call while the action's undo group is still open: the legacy legal reader
+// also enforces visibility of fixed legal controls.
+export const attachOfferUpdate = (result: OfferEditorActionResult, offer: Layer): void => {
+  if (!result.ok) return;
+  try {
+    const before = readOfferSelectionContext(offer);
+    if (before === null || before.offerLayerIndex !== result.selectedOfferLayerIndex) return;
+    const details = generateOfferData(offer);
+    const after = readOfferSelectionContext(offer);
+    if (after === null || before.projectKey !== after.projectKey || before.compItemId !== after.compItemId ||
+      before.offerLayerIndex !== after.offerLayerIndex || before.offerLayerId !== after.offerLayerId ||
+      before.sourceItemId !== after.sourceItemId) return;
+    result.offerUpdate = { context: after, offer: toPublicOfferDetails(offer, details) };
+  } catch (error) {
+    // The write has already succeeded; a later full snapshot may recover.
+  }
+};
 
 // Product indices identify numbered comment slots, not positions in the active array.
 export const findOfferProductByIndex = (

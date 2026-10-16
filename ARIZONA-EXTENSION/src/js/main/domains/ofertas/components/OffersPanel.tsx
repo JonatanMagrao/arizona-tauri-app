@@ -196,6 +196,12 @@ const OFFER_TAB_DRAG_MIME = "application/x-arizona-offer-tab";
 const OFFER_TAB_DRAG_HOLD_MS = 350;
 const OFFER_TAB_POST_DRAG_CLICK_SUPPRESSION_MS = 250;
 
+const OffersLoadingIndicator = () => (
+  <div className="offers-loading" role="status" aria-label="Carregando ofertas" aria-busy="true">
+    <span className="offers-loading-spinner" aria-hidden="true" />
+  </div>
+);
+
 let shouldEditNextFocusedTextControl = false;
 let nextFocusedTextControlTimer = 0;
 
@@ -1881,6 +1887,7 @@ export const OffersPanel = ({
   const {
     snapshot,
     loading,
+    initialRecovering,
     busy,
     refreshOffers,
     selectOffer,
@@ -2207,10 +2214,12 @@ export const OffersPanel = ({
 
             <div className="offer-products">
               {selectedOffer.products.length === 0 ? (
-                <div className="offers-empty" role="status">
-                  {getPublicErrorMessage(snapshot?.message,
-                    "Nenhum produto ativo encontrado nesta oferta.")}
-                </div>
+                loading || initialRecovering ? <OffersLoadingIndicator /> : (
+                  <div className="offers-empty" role="status">
+                    {getPublicErrorMessage(snapshot?.message,
+                      "Nenhum produto ativo encontrado nesta oferta.")}
+                  </div>
+                )
               ) : null}
               {selectedOffer.products.map((product) => (
                 <ProductEditor
@@ -2245,6 +2254,8 @@ export const OffersPanel = ({
               ))}
             </div>
           </>
+        ) : loading || initialRecovering ? (
+          <OffersLoadingIndicator />
         ) : (
           <div className="offers-empty">
             {snapshot?.message
@@ -2254,7 +2265,7 @@ export const OffersPanel = ({
                     ? "Nenhuma oferta foi encontrada neste projeto."
                     : "Não foi possível carregar as ofertas deste projeto.",
                 )
-              : "Carregando ofertas..."}
+              : "Não foi possível carregar as ofertas deste projeto."}
           </div>
         )}
       </main>

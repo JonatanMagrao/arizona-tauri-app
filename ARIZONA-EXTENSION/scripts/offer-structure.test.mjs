@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import ts from "typescript";
+import { transformSync } from "@babel/core";
 
 const domainDirectory = fileURLToPath(new URL("../src/jsx/aeft/domains/ofertas/", import.meta.url));
 const plain = (value) => JSON.parse(JSON.stringify(value));
@@ -276,6 +277,203 @@ function assertProductUntouched(item) {
   assert.equal(item.primary.inPoint, 1.5);
   assert.equal(item.alternate.inPoint, 4.5);
 }
+
+function enableStableContext(env) {
+  env.app.project.file = { fsName: "C:/Projetos/Ofertas.aep", name: "Ofertas.aep" };
+  env.offer.containingComp.id = 101;
+  env.offer.id = 201;
+  env.source.id = 301;
+}
+
+function countValueReads(property, valueReader) {
+  const original = Object.getOwnPropertyDescriptor(Property.prototype, "value").get;
+  let reads = 0;
+  Object.defineProperty(property, "value", { configurable: true, get() {
+    reads += 1;
+    return valueReader ? valueReader() : original.call(this);
+  } });
+  return () => reads;
+}
+
+test("targeted product preflight validates all associations without reading other product fields or legal controls", () => {
+  const env = harness();
+  const reads = env.products.map((item) => countValueReads(item.descriptionText.text.sourceText));
+  const legalReads = countValueReads(env.legal.legalText.text.sourceText);
+  const errors = [];
+  const selected = env.generateOfferProductData(env.offer, 1, errors);
+  assert.equal(selected.index, 1);
+  assert.equal(selected.description.value, "DESCRICAO 2");
+  assert.deepEqual(reads.map((read) => read()), [0, 1, 0]);
+  assert.equal(legalReads(), 0);
+  const duplicate = identified(new AVLayer("Duplicada", [], env.products[1].mechanicSource), "MECANICA 2");
+  reorder(env, env.source.layers.concat(duplicate));
+  const invalid = env.generateOfferProductData(env.offer, 1, errors);
+  assert.equal(invalid.associationValid, false);
+  assert.ok(errors.some((error) => error.includes("MECANICA 2")));
+  assert.equal(env.updateOfferDescription(1, 1, "Nao escrever").ok, false);
+  env.products.forEach(assertProductUntouched);
+});
+
+test("successful field edits return a JSON-only fresh entire-offer patch including cross-product expressions", () => {
+  const env = harness();
+  enableStableContext(env);
+  const snapshot = env.getOffersEditorSnapshot(1);
+  const other = env.products[1].descriptionText.text.sourceText;
+  other.currentExpressionEnabled = true;
+  const reads = countValueReads(other, () => ({ text: "DEPENDENTE " + env.products[0].price.text.sourceText.currentValue.text }));
+  let projectReads = 0;
+  const projectItem = env.app.project.item;
+  env.app.project.item = (...args) => { projectReads += 1; return projectItem(...args); };
+  const result = env.updateOfferField(1, 0, "preco", "88,90", 0);
+  assert.equal(result.ok, true);
+  assert.equal(reads(), 1, "unrelated product is read once, after the edit, not during preflight");
+  assert.equal(projectReads, 1, "the returned patch reuses the validated offer without rediscovering Miolo");
+  assert.deepEqual(plain(result.offerUpdate.context), plain(snapshot.selectedOfferContext));
+  assert.equal(result.offerUpdate.offer.products.length, 3);
+  assert.equal(result.offerUpdate.offer.products[0].mechanic.fields[0].value, "88,90");
+  assert.equal(result.offerUpdate.offer.products[1].description.value, "DEPENDENTE 88,90");
+  assert.equal(result.offerUpdate.offer.products[1].description.expressionEnabled, true);
+  const json = JSON.stringify(result.offerUpdate);
+  assert.equal(/containingComp|descriptionProperty|controllerProperty|currentValue|sourceWrites/.test(json), false);
+  assert.deepEqual(plain(snapshot.discoveryErrors), []);
+  assertUndoClosed(env);
+});
+
+test("legal preflight avoids product reads and its patch reads expression-dependent products after the write", () => {
+  const env = harness();
+  enableStableContext(env);
+  const reads = env.products.map((item) => countValueReads(item.descriptionText.text.sourceText));
+  const details = env.generateOfferLegalData(env.offer, []);
+  assert.ok(details.legalTextProperty);
+  assert.deepEqual(reads.map((read) => read()), [0, 0, 0]);
+  const result = env.updateOfferLegalControlValue(1, "quantidade-por-cpf", "8");
+  assert.equal(result.ok, true);
+  assert.deepEqual(reads.map((read) => read()), [1, 1, 1]);
+  assert.equal(result.offerUpdate.offer.legalControls.find((control) => control.id === "quantidade-por-cpf").slider.value, "8");
+  assertUndoClosed(env);
+});
+
+test("description, expression, option, image and legal actions carry authoritative selected-offer updates", () => {
+  for (const edit of [
+    (env) => env.updateOfferDescription(1, 0, "Atualizada"),
+    (env) => env.updateOfferDescriptionExpression(1, 0, true),
+    (env) => env.updateOfferOption(1, 0, "unit", 2),
+    (env) => env.replaceOfferProductImage(1, 0, "C:/produtos/troca.png"),
+    (env) => env.updateOfferLegalText(1, "Texto atualizado"),
+    (env) => env.updateOfferLegalControl(1, "limitado-por-cpf", true),
+  ]) {
+    const env = harness();
+    enableStableContext(env);
+    const result = edit(env);
+    assert.equal(result.ok, true, result.message);
+    assert.equal(result.offerUpdate.context.offerLayerId, env.offer.id);
+    assert.deepEqual(plain(result.offerUpdate.offer), plain(env.getOffersEditorSnapshot(1).selectedOffer));
+    assertUndoClosed(env);
+  }
+});
+
+test("post-edit read failure does not turn a successful native write into an action failure", () => {
+  const env = harness();
+  enableStableContext(env);
+  const property = env.products[0].descriptionText.text.sourceText;
+  const original = property.setValue.bind(property);
+  property.setValue = (value) => {
+    original(value);
+    Object.defineProperty(env.offer, "name", { get() { throw new Error("Post-read unavailable"); } });
+  };
+  const result = env.updateOfferDescription(1, 0, "Atualizada");
+  assert.equal(result.ok, true);
+  assert.equal(result.message, "Descricao atualizada.");
+  assert.equal(property.currentValue.text, "ATUALIZADA");
+  assert.equal(result.offerUpdate, undefined);
+  assertUndoClosed(env);
+});
+
+test("missing native context or a changed source during the post-read omits only the patch", () => {
+  for (const missing of ["project", "layer", "comp", "source"]) {
+    const env = harness();
+    enableStableContext(env);
+    if (missing === "project") env.app.project.file = null;
+    if (missing === "layer") delete env.offer.id;
+    if (missing === "comp") env.offer.containingComp.id = NaN;
+    if (missing === "source") env.source.id = 0;
+    const result = env.updateOfferDescription(1, 0, "Atualizada");
+    assert.equal(result.ok, true);
+    assert.equal(result.offerUpdate, undefined);
+    assertUndoClosed(env);
+  }
+  const env = harness();
+  enableStableContext(env);
+  countValueReads(env.products[1].descriptionText.text.sourceText, () => {
+    env.source.id = 999;
+    return { text: "Alterado durante leitura" };
+  });
+  const result = env.updateOfferDescription(1, 0, "Atualizada");
+  assert.equal(result.ok, true);
+  assert.equal(result.offerUpdate, undefined);
+  assertUndoClosed(env);
+});
+
+test("description editing and its returned patch remain independent of a missing mechanic schema", () => {
+  const env = harness();
+  enableStableContext(env);
+  env.load("mechanics/schemaRuntime.ts").configureMechanicsSchemaPath("");
+  const result = env.updateOfferDescription(1, 0, "Ainda editavel");
+  assert.equal(result.ok, true);
+  assert.equal(result.offerUpdate.offer.products[0].description.value, "AINDA EDITAVEL");
+  assert.equal(result.offerUpdate.offer.products[0].description.enabled, true);
+  assert.equal(result.offerUpdate.offer.products[0].mechanic.unsupported, true);
+  assertUndoClosed(env);
+});
+
+test("description, mechanic and product roles retain distinct configured identities for every slot", () => {
+  const env = harness();
+  const { getOfferRoleIdentity, resolveOfferProductLayers } = env.load("layers/offerStructure.ts");
+  for (let slot = 1; slot <= 3; slot += 1) {
+    for (const [role, key] of [["DESCRITIVO", "description"], ["MECANICA", "mechanic"], ["PRODUTO", "product"]]) {
+      assert.deepEqual(plain(getOfferRoleIdentity(role + " " + slot)), {
+        comment: env.identities.offerLayers[key].comment.replace("{n}", String(slot)),
+        names: env.identities.offerLayers[key].names.map((name) => name.replace("{n}", String(slot))),
+      });
+    }
+  }
+  const errors = [];
+  const resolved = resolveOfferProductLayers(env.source, errors);
+  assert.deepEqual(plain(errors), []);
+  assert.equal(resolved.length, 3);
+  for (let index = 0; index < resolved.length; index += 1) {
+    assert.equal(resolved[index].descriptionLayer, env.products[index].descriptionLayer);
+    assert.equal(resolved[index].mechanicLayer, env.products[index].mechanicLayer);
+    assert.equal(resolved[index].imageLayer, env.products[index].imageLayer);
+    assertProductUntouched(env.products[index]);
+  }
+});
+
+test("production-transformed role selection avoids ExtendScript chained-conditional ambiguity", () => {
+  const filename = path.join(domainDirectory, "layers/offerStructure.ts");
+  const result = transformSync(readFileSync(filename, "utf8"), {
+    filename, babelrc: false, configFile: false,
+    caller: { name: "rollup", supportsStaticESM: true, supportsDynamicImport: true },
+    presets: ["@babel/preset-env", "@babel/preset-typescript"],
+    plugins: ["@babel/plugin-syntax-dynamic-import", "@babel/plugin-proposal-class-properties"],
+  });
+  const parsed = ts.createSourceFile("offerStructure.js", result.code, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  let selector;
+  const locate = (node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === "getOfferRoleIdentity") selector = node.initializer;
+    ts.forEachChild(node, locate);
+  };
+  locate(parsed);
+  assert.ok(selector, "the production transform retains the role selector");
+  // Native After Effects interprets a ? b : c ? d : e differently from V8.
+  // Guard the emitted code, since Babel removes redundant grouping parentheses.
+  const check = (node) => {
+    assert.ok(!(ts.isConditionalExpression(node) && ts.isConditionalExpression(node.whenFalse)),
+      "a chained ternary can redirect DESCRITIVO to MECANICA in ExtendScript");
+    ts.forEachChild(node, check);
+  };
+  check(selector);
+});
 
 test("three comment-numbered products remain associated after independent timeline permutations and renames", () => {
   for (const order of [

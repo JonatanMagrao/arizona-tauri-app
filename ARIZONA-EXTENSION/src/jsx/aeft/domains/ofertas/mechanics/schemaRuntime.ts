@@ -7,6 +7,15 @@ let scopeDepth = 0;
 let scopedSchema: MechanicsSchema | null = null;
 let scopeFailed = false;
 let scopedFailure: unknown = null;
+// Only parsed JSON lives across operations. Consumers treat it as read-only;
+// native AE objects and operation results must never be stored here.
+let cachedBinary: string | null = null;
+let cachedSchema: MechanicsSchema | null = null;
+
+const clearCache = (): void => {
+  cachedBinary = null;
+  cachedSchema = null;
+};
 
 const clearScope = (): void => {
   scopedSchema = null;
@@ -20,6 +29,7 @@ export const configureMechanicsSchemaPath = (path: string): void => {
   }
   configuredPath = "";
   clearScope();
+  clearCache();
   if (typeof path !== "string") throw new Error("O caminho do schema de mecânicas deve ser um texto.");
   if (path.replace(/^\s+|\s+$/g, "") === "") return;
   const first = path.charAt(0);
@@ -72,8 +82,16 @@ const loadSchema = (): MechanicsSchema => {
     throw new Error("Caminho do schema de mecânicas não configurado. Recarregue a extensão.");
   }
   try {
-    return parseMechanicsSchemaJson(decodeMechanicsSchemaUtf8(readBinaryFile(configuredPath)));
+    // Read and close the complete file before consulting the cache. File dates
+    // and sizes alone cannot detect every edit (including same-size edits).
+    const binary = readBinaryFile(configuredPath);
+    if (cachedSchema !== null && cachedBinary === binary) return cachedSchema;
+    const schema = parseMechanicsSchemaJson(decodeMechanicsSchemaUtf8(binary));
+    cachedBinary = binary;
+    cachedSchema = schema;
+    return schema;
   } catch (error) {
+    clearCache();
     throw new Error("Configuração das mecânicas inválida em " + configuredPath + ": " + String(error));
   }
 };
@@ -94,7 +112,8 @@ export const getMechanicsSchema = (): MechanicsSchema => {
 
 // Scope the read lazily: operations that never access a mechanic do not depend
 // on this file. The first access pins a validated result (or failure) until the
-// outer operation finishes. The next operation always reads the file again.
+// outer operation finishes. The next operation always reads the file again,
+// reusing parsing/validation only if all bytes still match the valid cache.
 export const withMechanicsSchema = <T>(callback: () => T): T => withTemplateIdentities(() => {
   const outermost = scopeDepth === 0;
   if (outermost) clearScope();

@@ -40,7 +40,7 @@ const readMechanicByIdentity = (
   for (let index = 0; index < MECHANICS.length; index += 1) {
     const mapped = config.mechanics[MECHANICS[index].family];
     const names = mapped.sourceNames;
-    let matches = byComment && (matchesFamily(identity, MECHANICS[index].family) ||
+    let matches = byComment && (matchesFamily(identity, MECHANICS[index].family) || matchesFamily(identity, mapped.comment) ||
       normalizeTemplateIdentity(identity) === normalizeTemplateIdentity(mapped.comment) ||
       matchTemplatePattern(identity, mapped.comment) !== null);
     for (let ni = 0; ni < names.length; ni += 1) {
@@ -81,7 +81,11 @@ export const readMechanic = (
 
   try {
     const config = getTemplateIdentities();
-    const candidates = config.fallback.projectItems ? identity.candidates : (identity.comment ? [identity.comment] : []);
+    // Keep this branch explicit: Babel removes grouping parentheses and the
+    // ExtendScript engine does not associate chained ternaries like modern JS.
+    let candidates: string[] = [];
+    if (config.fallback.projectItems) candidates = identity.candidates;
+    else if (identity.comment !== "") candidates = [identity.comment];
     for (let index = 0; index < candidates.length; index += 1) {
       const mechanic = readMechanicByIdentity(candidates[index], valueLayer, errors,
         identity.comment !== "" && index === 0);

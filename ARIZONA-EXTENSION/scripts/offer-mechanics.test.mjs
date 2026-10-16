@@ -22,6 +22,27 @@ class CompItem extends Item {
   constructor(name, comment = "", layers = []) { super(name, comment); this.layers = layers; this.time = 8.5; layers.forEach((layer) => { layer.containingComp = this; }); }
   get numLayers() { return this.layers.length; }
   layer(index) { return this.layers[index - 1] || null; }
+  duplicate() {
+    if (this.failDuplicate) throw new Error("Native duplication failed");
+    const layers = this.layers.map((layer) => {
+      const copy = new AVLayer(layer.name, layer.comment, layer.source);
+      for (const key of ["enabled", "locked", "startTime", "inPoint", "outPoint", "stretch"]) copy[key] = layer[key];
+      copy.values = layer.values ? plain(layer.values) : undefined;
+      return copy;
+    });
+    const copy = new CompItem(this.name + " 2", this.comment, layers);
+    copy.values = this.values ? plain(this.values) : undefined;
+    copy.testItems = this.testItems;
+    copy.parentFolder = this.parentFolder;
+    this.parentFolder.children.push(copy);
+    this.testItems.push(copy);
+    if (this.failCopyName) Object.defineProperty(copy, "name", { get: () => "Unnamed copy", set() { throw new Error("Cannot name clone"); } });
+    return copy;
+  }
+  remove() {
+    this.testItems.splice(this.testItems.indexOf(this), 1);
+    this.parentFolder.children.splice(this.parentFolder.children.indexOf(this), 1);
+  }
 }
 class FolderItem extends Item {
   constructor(name, comment = "", children = []) { super(name, comment); this.children = children; children.forEach((item) => { item.parentFolder = this; }); }
@@ -80,12 +101,15 @@ function harness(fallback = { offerLayers: false, mechanicLayers: false, project
   const offer = new AVLayer("Oferta_01", "CAMADA OFERTA 01", layout);
   const miolo = new CompItem("Miolo", "", [offer]);
   const items = [miolo, offerFolder, layout, mechanicsFolder, subgroup, deep, ...simples, ...families];
+  for (const item of items) if (item instanceof CompItem) item.testItems = items;
   const project = { file: { fsName: "C:/Projetos/Oferta.aep", name: "Oferta.aep" }, get numItems() { return items.length; }, item(index) { return items[index - 1]; } };
   const app = { project, undoEvents: [], beginUndoGroup(name) { this.undoEvents.push(["begin", name]); }, endUndoGroup() { this.undoEvents.push(["end"]); } };
   const modules = new Map();
+  let loadingDiscovery = true;
   function load(filename) {
     if (!path.isAbsolute(filename)) filename = path.join(domainDirectory, filename);
-    assert.equal(/schemaRuntime|buildOfferSnapshot|legalControls/.test(filename), false, "Discovery and replacement must not invoke mechanic readers or snapshot side effects");
+    if (loadingDiscovery) assert.equal(/schemaRuntime|buildOfferSnapshot|legalControls/.test(filename), false,
+      "Menu discovery must not invoke mechanic readers or snapshot side effects");
     if (modules.has(filename)) return modules.get(filename).exports;
     const module = { exports: {} };
     modules.set(filename, module);
@@ -97,17 +121,27 @@ function harness(fallback = { offerLayers: false, mechanicLayers: false, project
       require(specifier) {
         assert.ok(specifier.startsWith("."));
         const base = path.resolve(path.dirname(filename), specifier);
-        const target = [base, base + ".ts"].find(existsSync);
+        const target = [base, base + ".ts", base + ".js"].find(existsSync);
         assert.ok(target, specifier);
         return load(target);
       },
     }, { filename });
     return module.exports;
   }
-  const api = { ...load("offers/offerMechanics.ts"), ...load("actions/replaceOfferMechanic.ts") };
+  const discoveryApi = load("offers/offerMechanics.ts");
+  loadingDiscovery = false;
+  const api = { ...discoveryApi, ...load("actions/replaceOfferMechanic.ts"),
+    ...load("offers/offerLayouts.ts"), ...load("actions/replaceOfferLayout.ts") };
+  const referenceApi = { ...load("offers/projectReferenceIndex.ts"), ...load("offers/mechanicInstances.ts") };
   load("../template/templateIdentities.ts").configureTemplateIdentitiesPath("/template-identities.json");
-  const h = { ...api, app, items, offer, layout, miolo, offerFolder, mechanicsFolder, subgroup, deep, simples, families, mechanicLayers, identities };
+  const h = { ...api, referenceApi, app, items, offer, layout, miolo, offerFolder, mechanicsFolder, subgroup, deep, simples, families, mechanicLayers, identities };
   h.request = (productIndex = 1, targetItemId = families[0].id) => ({ context: plain(h.getOfferMechanicOptions(offer.index, productIndex).context), targetItemId });
+  h.layoutRequest = (target) => ({ context: plain(h.getOfferLayoutOptions(offer.index).context), targetItemId: target.id });
+  h.reopen = () => {
+    modules.clear();
+    Object.assign(h, load("offers/offerMechanics.ts"), load("actions/replaceOfferMechanic.ts"));
+    load("../template/templateIdentities.ts").configureTemplateIdentitiesPath("/template-identities.json");
+  };
   return h;
 }
 
@@ -124,6 +158,30 @@ const noWrites = (h) => {
 };
 const undoClosed = (h) => assert.deepEqual(h.app.undoEvents, [["begin", "Trocar mecânica do produto"], ["end"]]);
 const optionFor = (menu, comment) => menu.options.find((option) => option.comment === comment);
+
+test("mechanic replacement returns the existing offer context and a failed post-read never rolls back the edit", () => {
+  for (const failPostRead of [false, true]) {
+    const h = harness();
+    const request = h.request();
+    if (failPostRead) Object.defineProperty(h.offer, "name", { get() { throw new Error("Snapshot temporarily unavailable"); } });
+    const result = h.replaceOfferMechanic(request);
+    assert.equal(result.ok, true, result.message);
+    assert.equal(h.mechanicLayers[1].source, h.families[0]);
+    if (failPostRead) assert.equal(result.offerUpdate, undefined);
+    else {
+      assert.deepEqual(plain(result.offerUpdate.context), {
+        projectKey: h.app.project.file.fsName,
+        compItemId: h.miolo.id,
+        offerLayerIndex: h.offer.index,
+        offerLayerId: h.offer.id,
+        sourceItemId: h.layout.id,
+      });
+      assert.equal(result.offerUpdate.offer.layerIndex, h.offer.index);
+      assert.ok(Array.isArray(plain(result.offerUpdate.offer).products));
+    }
+    undoClosed(h);
+  }
+});
 
 function useOnlyNames(h) {
   h.offer.comment = "";
@@ -267,7 +325,7 @@ test("Simples names are exact product slots and do not accept arbitrary duplicat
   }
 });
 
-test("observed non-Simples suffix aliases remain family identities and duplicates are not assigned to product slots", () => {
+test("observed non-Simples suffix aliases form one family pool without assigning numeric instances to product slots", () => {
   const h = harness({});
   useOnlyNames(h);
   const family = "TODOS A COM X% DESCONTO";
@@ -280,7 +338,7 @@ test("observed non-Simples suffix aliases remain family identities and duplicate
   duplicate.parentFolder = h.mechanicsFolder;
   h.mechanicsFolder.children.push(duplicate);
   for (const productIndex of [0, 1, 2]) {
-    assert.equal(optionFor(h.getOfferMechanicOptions(1, productIndex), family).enabled, false);
+    assert.equal(optionFor(h.getOfferMechanicOptions(1, productIndex), family).enabled, true);
   }
   noWrites(h);
 });
@@ -418,7 +476,7 @@ test("duplicate matching comments across subfolders disable only the affected me
   assert.equal(option.itemId, null);
   assert.match(option.disabledSummary, /mais de uma precomp.*"OFERTA 01"/);
   assert.ok(option.disabledReason.includes('"' + FAMILIES[0] + '"'));
-  assert.match(option.disabledReason, /"MECANICAS".*subpastas/);
+  assert.match(option.disabledReason, /"MECANICAS".*sufixos numéricos/);
   assert.equal(menu.options.filter((entry) => entry.enabled).length, 6);
   assert.equal(h.replaceOfferMechanic(h.request()).ok, false);
   noWrites(h);
@@ -443,14 +501,23 @@ test("source-only replacement preserves names, comments, timing, animation, fold
   undoClosed(h);
 });
 
-test("shared unnumbered family sources remain selectable for different products without creating copies", () => {
+test("the second active product receives an independent copy preserving values and the first product", () => {
   const h = harness();
+  h.families[0].values = { price: "39,99", controller: 3, jump: true };
   const count = h.items.length;
   assert.equal(h.replaceOfferMechanic(h.request(0)).ok, true);
   assert.equal(h.replaceOfferMechanic(h.request(1)).ok, true);
   assert.equal(h.mechanicLayers[0].source, h.families[0]);
-  assert.equal(h.mechanicLayers[1].source, h.families[0]);
-  assert.equal(h.items.length, count);
+  const copy = h.mechanicLayers[1].source;
+  assert.notEqual(copy, h.families[0]);
+  assert.deepEqual(copy.values, h.families[0].values);
+  copy.values.price = "11,11";
+  assert.equal(h.families[0].values.price, "39,99");
+  assert.equal(copy.parentFolder, h.families[0].parentFolder);
+  assert.equal(copy.name, FAMILIES[0] + " 2");
+  assert.equal(copy.comment, copy.name);
+  assert.equal(h.items.length, count + 1);
+  assert.equal(h.getOfferMechanicOptions(1, 1).options.filter((option) => option.comment === FAMILIES[0]).length, 1);
 });
 
 test("same-source is a no-op and locked mechanic layers are never unlocked", () => {
@@ -566,3 +633,420 @@ for (const failure of ["before", "after", "name", "rollback"]) {
     undoClosed(h);
   });
 }
+
+const addLayout = (h, sources, comment = "OFERTA REGUA 2 PRODUTOS") => {
+  const layers = sources.map((source, index) => new AVLayer("Outra camada " + (index + 1), "MECANICA " + (index + 1), source));
+  const layout = new CompItem(comment, comment, layers);
+  layout.parentFolder = h.offerFolder;
+  layout.testItems = h.items;
+  h.offerFolder.children.push(layout);
+  h.items.push(layout);
+  return layout;
+};
+
+const addInstance = (h, familyIndex = 0, suffix = 2, canonicalComment = false) => {
+  const family = FAMILIES[familyIndex];
+  const comp = new CompItem(family + " " + suffix, canonicalComment ? family : family + " " + suffix);
+  comp.testItems = h.items;
+  comp.parentFolder = h.mechanicsFolder;
+  h.mechanicsFolder.children.push(comp);
+  h.items.push(comp);
+  return comp;
+};
+
+test("existing numbered copies with canonical family comments are reused before duplication", () => {
+  const h = harness();
+  h.families[0].name = FAMILIES[0] + " 1";
+  const second = addInstance(h, 0, 2, true);
+  const third = addInstance(h, 0, 3, true);
+  const count = h.items.length;
+  for (let index = 0; index < 3; index += 1) {
+    const menu = h.getOfferMechanicOptions(1, index);
+    assert.equal(optionFor(menu, FAMILIES[0]).enabled, true);
+    assert.equal(h.replaceOfferMechanic(h.request(index)).ok, true);
+  }
+  assert.deepEqual(h.mechanicLayers.map((layer) => layer.source), [h.families[0], second, third]);
+  assert.equal(h.items.length, count);
+  const duplicate = addInstance(h, 0, 3, true);
+  assert.equal(optionFor(h.getOfferMechanicOptions(1, 0), FAMILIES[0]).enabled, false);
+  assert.equal(duplicate.comment, FAMILIES[0]);
+});
+
+test("three active products receive independent instances and reopening derives occupancy from the AEP", () => {
+  const h = harness();
+  const before = h.items.length;
+  for (let index = 0; index < 3; index += 1) {
+    assert.equal(h.replaceOfferMechanic(h.request(index)).ok, true);
+    h.reopen();
+  }
+  const sources = h.mechanicLayers.map((layer) => layer.source);
+  assert.equal(new Set(sources).size, 3);
+  assert.equal(h.items.length, before + 2);
+  assert.deepEqual(sources.slice(1).map((source) => source.comment), [FAMILIES[0] + " 2", FAMILIES[0] + " 3"]);
+  assert.equal(h.getOfferMechanicOptions(1, 2).options.filter((option) => option.current).length, 1);
+  assert.equal(h.getOfferMechanicOptions(1, 2).options.length, 7);
+});
+
+test("switching away frees an existing copy and reuses its values without deleting or creating an instance", () => {
+  const h = harness();
+  assert.equal(h.replaceOfferMechanic(h.request(0)).ok, true);
+  assert.equal(h.replaceOfferMechanic(h.request(1)).ok, true);
+  const copy = h.mechanicLayers[1].source;
+  copy.values = { price: "13,50", enabled: false };
+  assert.equal(h.replaceOfferMechanic(h.request(1, h.families[1].id)).ok, true);
+  const count = h.items.length;
+  assert.equal(h.replaceOfferMechanic(h.request(2)).ok, true);
+  assert.equal(h.mechanicLayers[2].source, copy);
+  assert.deepEqual(copy.values, { price: "13,50", enabled: false });
+  assert.equal(h.items.length, count);
+});
+
+test("legacy active sharing is read-only until explicit same-family selection splits that product", () => {
+  const h = harness();
+  h.mechanicLayers[0].source = h.mechanicLayers[1].source = h.families[0];
+  const menu = h.getOfferMechanicOptions(1, 1);
+  assert.equal(optionFor(menu, FAMILIES[0]).current, true);
+  noWrites(h);
+  assert.equal(h.replaceOfferMechanic({ context: plain(menu.context), targetItemId: h.families[0].id }).ok, true);
+  assert.equal(h.mechanicLayers[0].source, h.families[0]);
+  assert.notEqual(h.mechanicLayers[1].source, h.families[0]);
+  undoClosed(h);
+});
+
+test("splitting an occupied current copy preserves its values instead of cloning the first family instance", () => {
+  const h = harness();
+  const second = addInstance(h);
+  h.families[0].values = { price: "10,00", controller: 1 };
+  second.values = { price: "59,90", controller: 3 };
+  h.mechanicLayers[0].source = h.families[0];
+  h.mechanicLayers[1].source = h.mechanicLayers[2].source = second;
+  const count = h.items.length;
+  assert.equal(h.replaceOfferMechanic(h.request(2)).ok, true);
+  const copy = h.mechanicLayers[2].source;
+  assert.notEqual(copy, second);
+  assert.notEqual(copy, h.families[0]);
+  assert.deepEqual(copy.values, second.values);
+  assert.notDeepEqual(copy.values, h.families[0].values);
+  assert.equal(h.mechanicLayers[1].source, second);
+  assert.equal(h.mechanicLayers[0].source, h.families[0]);
+  assert.equal(h.items.length, count + 1);
+  undoClosed(h);
+});
+
+test("inactive layouts neither reserve mechanics nor receive changes or lock current selection", () => {
+  const h = harness();
+  const inactive = addLayout(h, [h.families[0], h.families[0]]);
+  inactive.layers.forEach((layer) => { layer.locked = true; });
+  const count = h.items.length;
+  assert.equal(h.replaceOfferMechanic(h.request(0)).ok, true);
+  assert.equal(h.mechanicLayers[0].source, h.families[0]);
+  assert.equal(h.items.length, count);
+  assert.deepEqual(inactive.layers.map((layer) => layer.sourceWrites), [[], []]);
+});
+
+test("other-offer and unrecognized references reserve an instance even when the layer is disabled", () => {
+  for (const scope of ["external", "inactive-external", "active-unrecognized"]) {
+    const h = harness();
+    const reference = new AVLayer("Uso externo", "", h.families[0]);
+    reference.enabled = false;
+    if (scope === "active-unrecognized") { reference.containingComp = h.layout; h.layout.layers.push(reference); }
+    else if (scope === "inactive-external") {
+      const inactive = addLayout(h, [h.families[0]]);
+      h.items.push(new CompItem("Outra oferta", "", [new AVLayer("Regua compartilhada", "", inactive)]));
+    } else h.items.push(new CompItem("Outra oferta", "", [reference]));
+    assert.equal(h.replaceOfferMechanic(h.request(0)).ok, true, scope);
+    assert.notEqual(h.mechanicLayers[0].source, h.families[0], scope);
+    assert.equal(reference.source, h.families[0]);
+    assert.deepEqual(reference.sourceWrites, []);
+  }
+});
+
+test("an active layout shared outside this offer cannot be mutated", () => {
+  const h = harness();
+  h.items.push(new CompItem("Outra oferta", "", [new AVLayer("Regua compartilhada", "", h.layout)]));
+  assert.equal(h.replaceOfferMechanic(h.request()).ok, false);
+  noWrites(h);
+});
+
+test("duplicate cleanup restores original sources and leaves no orphan on replacement or clone metadata failure", () => {
+  for (const failure of ["duplicate", "name", "replace"]) {
+    const h = harness();
+    h.mechanicLayers[0].source = h.families[0];
+    const count = h.items.length;
+    const before = state(h);
+    if (failure === "duplicate") h.families[0].failDuplicate = true;
+    if (failure === "name") h.families[0].failCopyName = true;
+    if (failure === "replace") h.mechanicLayers[1].failAfterCall = 0;
+    const result = h.replaceOfferMechanic(h.request());
+    assert.equal(result.ok, false, failure);
+    assert.equal(h.mechanicLayers[1].source, h.simples[1]);
+    assert.equal(h.items.length, count);
+    assert.deepEqual(state(h), before);
+    undoClosed(h);
+  }
+});
+
+test("unsupported nested compositions are refused before duplicating or changing the project", () => {
+  const h = harness();
+  const nested = new CompItem("Conteudo mutavel");
+  const layer = new AVLayer("Precomp interna", "", nested);
+  layer.containingComp = h.families[0];
+  h.families[0].layers.push(layer);
+  h.items.push(nested);
+  h.mechanicLayers[0].source = h.families[0];
+  const count = h.items.length;
+  const result = h.replaceOfferMechanic(h.request());
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join(" "), /precomps internas/);
+  assert.equal(h.items.length, count);
+  noWrites(h);
+});
+
+test("duplicate mechanics preserve footage references, copied layer values and expression text", () => {
+  const h = harness();
+  const footage = new FootageItem("Produto.png");
+  const inner = new AVLayer("Imagem interna", "IMAGEM", footage);
+  inner.values = { text: "29,90", expression: 'comp("Miolo").layer(1).index', dropdown: 2 };
+  inner.containingComp = h.families[0];
+  h.families[0].layers.push(inner);
+  h.items.push(footage);
+  h.mechanicLayers[0].source = h.families[0];
+  assert.equal(h.replaceOfferMechanic(h.request()).ok, true);
+  const copy = h.mechanicLayers[1].source;
+  assert.notEqual(copy.layer(1), inner);
+  assert.equal(copy.layer(1).source, footage);
+  assert.deepEqual(copy.layer(1).values, inner.values);
+  copy.layer(1).values.text = "7,00";
+  assert.equal(inner.values.text, "29,90");
+});
+
+test("layout changes carry existing product instances and allocate only newly visible conflicting slots", () => {
+  const h = harness();
+  const single = addLayout(h, [h.families[0]], "OFERTA SIMPLES");
+  h.offer.source = single;
+  const target = addLayout(h, [h.simples[0], h.families[0]]);
+  const before = h.items.length;
+  assert.equal(h.replaceOfferLayout(h.layoutRequest(target)).ok, true);
+  assert.equal(h.offer.source, target);
+  assert.equal(target.layer(1).source, h.families[0]);
+  assert.notEqual(target.layer(2).source, h.families[0]);
+  assert.equal(h.items.length, before + 1);
+  assert.equal(single.layer(1).source, h.families[0]);
+  assert.deepEqual(single.layer(1).sourceWrites, []);
+});
+
+test("layout allocation uses projected post-transfer occupancy and reuses an instance released by carry", () => {
+  const h = harness();
+  const spare = addInstance(h);
+  const single = addLayout(h, [spare], "OFERTA SIMPLES");
+  h.offer.source = single;
+  const target = addLayout(h, [h.families[0], spare]);
+  const before = h.items.length;
+  assert.equal(h.replaceOfferLayout(h.layoutRequest(target)).ok, true);
+  assert.equal(target.layer(1).source, spare);
+  assert.equal(target.layer(2).source, h.families[0]);
+  assert.equal(h.items.length, before);
+});
+
+test("layout transfer keeps a swapped Simples source and uses an existing free Simples for a newly visible product", () => {
+  const h = harness();
+  const single = addLayout(h, [h.simples[1]], "OFERTA SIMPLES");
+  h.offer.source = single;
+  const target = addLayout(h, [h.simples[0], h.simples[1]]);
+  const before = h.items.length;
+  assert.equal(h.replaceOfferLayout(h.layoutRequest(target)).ok, true);
+  assert.equal(target.layer(1).source, h.simples[1]);
+  assert.equal(target.layer(2).source, h.simples[0]);
+  assert.equal(h.items.length, before);
+});
+
+test("3 to 1 to 3 layouts preserve hidden independent sources without generating copies", () => {
+  const h = harness();
+  const single = addLayout(h, [h.simples[2]], "OFERTA SIMPLES");
+  const before = h.items.length;
+  assert.equal(h.replaceOfferLayout(h.layoutRequest(single)).ok, true);
+  assert.equal(single.layer(1).source, h.simples[0]);
+  assert.equal(h.replaceOfferLayout(h.layoutRequest(h.layout)).ok, true);
+  assert.deepEqual(h.layout.layers.map((layer) => layer.source), h.simples);
+  assert.equal(h.items.length, before);
+});
+
+test("layout projected occupancy includes unrecognized destination layers", () => {
+  const h = harness();
+  const single = addLayout(h, [h.simples[0]], "OFERTA SIMPLES");
+  h.offer.source = single;
+  const target = addLayout(h, [h.simples[0], h.families[0]]);
+  const hidden = new AVLayer("Uso extra", "", h.families[0]);
+  hidden.enabled = false;
+  hidden.containingComp = target;
+  target.layers.push(hidden);
+  assert.equal(h.replaceOfferLayout(h.layoutRequest(target)).ok, true);
+  assert.notEqual(target.layer(2).source, h.families[0]);
+  assert.equal(hidden.source, h.families[0]);
+  assert.deepEqual(hidden.sourceWrites, []);
+});
+
+test("layout transfer fails safely for a locked destination, an external shared target or a carried source cycle", () => {
+  for (const failure of ["locked", "shared", "cycle"]) {
+    const h = harness();
+    const target = addLayout(h, [h.families[0], h.families[1]]);
+    if (failure === "locked") target.layer(1).locked = true;
+    if (failure === "shared") h.items.push(new CompItem("Outra oferta", "", [new AVLayer("Referencia", "", target)]));
+    if (failure === "cycle") {
+      const layer = new AVLayer("Ciclo", "", target);
+      layer.containingComp = h.simples[0];
+      h.simples[0].layers.push(layer);
+    }
+    const result = h.replaceOfferLayout(h.layoutRequest(target));
+    assert.equal(result.ok, false, failure);
+    assert.equal(h.offer.source, h.layout);
+    assert.equal(target.layer(1).source, h.families[0]);
+    assert.equal(target.layer(2).source, h.families[1]);
+    noWrites(h);
+  }
+});
+
+test("layout native failure rolls back carried sources, newly allocated instances and offer source together", () => {
+  const h = harness();
+  const single = addLayout(h, [h.families[0]], "OFERTA SIMPLES");
+  h.offer.source = single;
+  const target = addLayout(h, [h.simples[0], h.families[0]]);
+  h.offer.failAfterCall = 0;
+  h.offer.autoName = target.layer(1).autoName = true;
+  const before = h.items.length;
+  const result = h.replaceOfferLayout(h.layoutRequest(target));
+  assert.equal(result.ok, false);
+  assert.equal(h.offer.source, single);
+  assert.equal(h.offer.name, "Oferta_01");
+  assert.equal(target.layer(1).source, h.simples[0]);
+  assert.equal(target.layer(1).name, "Outra camada 1");
+  assert.equal(target.layer(2).source, h.families[0]);
+  assert.equal(h.items.length, before);
+  assert.deepEqual(h.app.undoEvents, [["begin", "Trocar régua da oferta"], ["end"]]);
+});
+
+test("custom family comments produce discoverable numeric copies with name fallback disabled", () => {
+  const h = harness();
+  h.identities.config.mechanics[FAMILIES[0]].comment = "BONUS CRF";
+  h.families[0].comment = "BONUS CRF";
+  h.mechanicLayers[0].source = h.families[0];
+  assert.equal(h.replaceOfferMechanic(h.request()).ok, true);
+  assert.equal(h.mechanicLayers[1].source.comment, "BONUS CRF 2");
+  h.reopen();
+  assert.equal(optionFor(h.getOfferMechanicOptions(1, 1), "BONUS CRF").current, true);
+});
+
+test("all six non-Simples families retain one current menu option after duplication and reopening, including regex punctuation", () => {
+  for (let index = 0; index < FAMILIES.length; index += 1) {
+    const h = harness();
+    const family = FAMILIES[index];
+    const original = h.families[index];
+    h.mechanicLayers[0].source = original;
+    const count = h.items.length;
+    const result = h.replaceOfferMechanic(h.request(1, original.id));
+    assert.equal(result.ok, true, family + ": " + result.errors.join(" "));
+    assert.equal(h.mechanicLayers[0].source, original, family);
+    assert.notEqual(h.mechanicLayers[1].source, original, family);
+    assert.equal(h.mechanicLayers[1].source.comment, family + " 2", family);
+    assert.equal(h.items.length, count + 1, family);
+    h.reopen();
+    const menu = h.getOfferMechanicOptions(1, 1);
+    assert.equal(menu.options.length, 7, family);
+    assert.equal(menu.options.filter((option) => option.current).length, 1, family);
+    assert.equal(optionFor(menu, family).current, true, family);
+    assert.equal(optionFor(menu, family).enabled, true, family);
+  }
+});
+
+const observeUnrelatedLayerReads = (h) => {
+  const footage = new FootageItem("Unrelated.png");
+  const layers = Array.from({ length: 40 }, () => new AVLayer("Unrelated", "", footage));
+  const unrelated = new CompItem("Unrelated composition", "", layers);
+  const observation = { reads: 0, layerCount: layers.length };
+  const originalLayer = unrelated.layer.bind(unrelated);
+  unrelated.layer = (index) => { observation.reads += 1; return originalLayer(index); };
+  h.items.push(unrelated, footage);
+  return observation;
+};
+
+test("mechanic ownership and layout privacy share one project layer scan per successful action", () => {
+  for (const action of ["mechanic", "layout"]) {
+    const h = harness();
+    const observation = observeUnrelatedLayerReads(h);
+    const target = action === "layout" ? addLayout(h, [h.families[0], h.families[1]]) : null;
+    const request = target ? h.layoutRequest(target) : h.request();
+    observation.reads = 0;
+    const result = target ? h.replaceOfferLayout(request) : h.replaceOfferMechanic(request);
+    assert.equal(result.ok, true, action + ": " + result.errors.join(" "));
+    assert.equal(observation.reads, observation.layerCount, action + " must visit unrelated layers only once");
+    if (target) assert.deepEqual(target.layers.map((layer) => layer.source), h.simples.slice(0, 2));
+    else assert.equal(h.mechanicLayers[1].source, h.families[0]);
+  }
+});
+
+test("each action recaptures external references changed since the previous action", () => {
+  const h = harness();
+  const observation = observeUnrelatedLayerReads(h);
+  const inactive = addLayout(h, [h.families[0]]);
+  const spare = addInstance(h);
+  assert.equal(h.replaceOfferMechanic(h.request(0)).ok, true);
+  assert.equal(h.mechanicLayers[0].source, h.families[0]);
+  const externallyReferenced = new AVLayer("Added manually between actions", "", spare);
+  externallyReferenced.enabled = false;
+  h.items.push(new CompItem("Foreign composition", "", [externallyReferenced]));
+  const before = h.items.length;
+  observation.reads = 0;
+  assert.equal(h.replaceOfferMechanic(h.request(1)).ok, true);
+  assert.equal(observation.reads, observation.layerCount);
+  assert.notEqual(h.mechanicLayers[1].source, spare);
+  assert.notEqual(h.mechanicLayers[1].source, h.families[0]);
+  assert.equal(h.items.length, before + 1);
+  assert.equal(inactive.layer(1).source, h.families[0]);
+  assert.equal(externallyReferenced.source, spare);
+});
+
+test("an indexed planning snapshot uses IDs and layer positions across distinct native wrappers", () => {
+  const h = harness();
+  const inactive = addLayout(h, [h.families[0]]);
+  h.mechanicLayers[0].source = h.families[0];
+  const originalItem = h.app.project.item;
+  h.app.project.item = (index) => {
+    const item = originalItem(index);
+    if (!(item instanceof CompItem)) return item;
+    const wrapper = Object.create(item);
+    wrapper.layer = (layerIndex) => {
+      const layer = item.layer(layerIndex);
+      const copy = Object.create(layer);
+      copy.source = layer.source instanceof CompItem ? Object.create(layer.source) : layer.source;
+      return copy;
+    };
+    return wrapper;
+  };
+  const index = h.referenceApi.readProjectReferenceIndex();
+  const choice = h.referenceApi.selectMechanicInstance([h.families[0]], [h.mechanicLayers[0]],
+    h.families[0], [h.layout, inactive], h.layout, index);
+  assert.equal(choice.source, h.families[0]);
+  assert.equal(choice.duplicate, false);
+  assert.doesNotThrow(() => h.referenceApi.assertOfferLayoutsPrivate([h.layout], h.offer, index));
+  assert.equal(h.referenceApi.readReferencedCompIds(h.offer, index)["$" + h.layout.id], undefined);
+  // Live cleanup also compares source IDs rather than wrapper identity.
+  assert.equal(h.referenceApi.isMechanicInstanceAvailable(h.families[0], []), false);
+  noWrites(h);
+});
+
+test("rollback cleanup reads new references after mutation and preserves a clone still in use", () => {
+  const h = harness();
+  h.mechanicLayers[0].source = h.families[0];
+  h.mechanicLayers[1].failAfterCall = 0;
+  h.mechanicLayers[1].failBeforeCall = 1;
+  const count = h.items.length;
+  const result = h.replaceOfferMechanic(h.request(1));
+  assert.equal(result.ok, false);
+  assert.equal(h.items.length, count + 1, "failed rollback must retain the referenced clone");
+  const copy = h.mechanicLayers[1].source;
+  assert.notEqual(copy, h.families[0]);
+  assert.equal(h.items.includes(copy), true);
+  assert.equal(h.mechanicsFolder.children.includes(copy), true);
+  assert.ok(result.errors.some((message) => message.includes("Use Desfazer")));
+  undoClosed(h);
+});

@@ -10,6 +10,7 @@ import HistoryWindow from "../history/HistoryWindow";
 import RoteiroViewer from "./RoteiroViewer";
 import {
   cepAdditionalInstallations,
+  cepCanRetryConsolidation,
   cepConsolidationMessage,
   cepDevelopmentModePreserved,
   cepDevLinkRequiresReplacement,
@@ -1431,11 +1432,15 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
   const [selectedZxp, setSelectedZxp] = useState(null);
   const [isInspecting, setIsInspecting] = useState(false);
   const [isInstalling, setIsInstalling] = useState(false);
+  const [isRetryingConsolidation, setIsRetryingConsolidation] = useState(false);
   const [isInstallConfirmOpen, setIsInstallConfirmOpen] = useState(false);
   const [isDowngradeConfirmed, setIsDowngradeConfirmed] = useState(false);
   const [isDevLinkReplacementConfirmed, setIsDevLinkReplacementConfirmed] = useState(false);
   const [isDragActive, setIsDragActive] = useState(false);
   const dropHandlerRef = useRef(() => {});
+  const consolidationRetryRef = useRef(false);
+  const statusRequestRef = useRef(0);
+  const statusMountedRef = useRef(false);
 
   const isDevLink = Boolean(extensionStatus?.developmentMode);
   const isPerUserDevLink = cepHasPerUserDevLink(extensionStatus);
@@ -1449,15 +1454,19 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
     ? cepInstallationLocationLabel(extensionStatus)
     : "";
   const additionalInstallations = cepAdditionalInstallations(extensionStatus);
-  const installBlocked = isLoadingStatus || !cepHasInstallTarget(extensionStatus);
+  const consolidationChecking = isRetryingConsolidation || extensionStatus?.automaticConsolidation === "checking";
+  const canRetryConsolidation = cepCanRetryConsolidation(extensionStatus);
+  const installBlocked = isLoadingStatus || consolidationChecking || !cepHasInstallTarget(extensionStatus);
 
   const refreshExtensionStatus = async ({ silent = false } = {}) => {
+    const revision = ++statusRequestRef.current;
     if (!silent) setIsLoadingStatus(true);
     try {
       const [statusResult, debugResult] = await Promise.allSettled([
         invokeCommand(commandNames.cepExtensionStatus),
         invokeCommand(commandNames.cepDebugModeStatus),
       ]);
+      if (!statusMountedRef.current || revision !== statusRequestRef.current) return;
       if (debugResult.status === "fulfilled") {
         setIsDebugEnabled(Boolean(debugResult.value?.enabled));
         setIsDebugKnown(true);
@@ -1465,40 +1474,19 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
       if (statusResult.status === "rejected") throw statusResult.reason;
       setExtensionStatus(normalizeCepExtensionStatus(statusResult.value));
     } catch (error) {
-      if (!silent) {
+      if (!silent && statusMountedRef.current && revision === statusRequestRef.current) {
         showError(cepErrorMessage(error, "Não foi possível consultar a extensão instalada."));
       }
     } finally {
-      if (!silent) setIsLoadingStatus(false);
+      if (statusMountedRef.current && revision === statusRequestRef.current) setIsLoadingStatus(false);
     }
   };
 
   useEffect(() => {
     let mounted = true;
     let unlisten;
-    let requestRevision = 0;
-
-    const loadStatus = async () => {
-      const revision = ++requestRevision;
-      const [statusResult, debugResult] = await Promise.allSettled([
-        invokeCommand(commandNames.cepExtensionStatus),
-        invokeCommand(commandNames.cepDebugModeStatus),
-      ]);
-      if (!mounted || revision !== requestRevision) return;
-
-      if (statusResult.status === "fulfilled") {
-        setExtensionStatus(normalizeCepExtensionStatus(statusResult.value));
-      } else {
-        showError(cepErrorMessage(statusResult.reason, "Não foi possível consultar a extensão instalada."));
-      }
-
-      if (debugResult.status === "fulfilled") {
-        setIsDebugEnabled(Boolean(debugResult.value?.enabled));
-        setIsDebugKnown(true);
-      }
-
-      setIsLoadingStatus(false);
-    };
+    statusMountedRef.current = true;
+    const loadStatus = () => refreshExtensionStatus();
 
     // Register before the first read so completion during panel startup cannot
     // leave an obsolete duplicate-installation warning on screen.
@@ -1512,9 +1500,29 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
 
     return () => {
       mounted = false;
+      statusMountedRef.current = false;
+      statusRequestRef.current += 1;
       unlisten?.();
     };
   }, []);
+
+  const retryConsolidation = async () => {
+    if (consolidationRetryRef.current || isInstalling || isInspecting || isInstallConfirmOpen
+      || isLoadingStatus || !canRetryConsolidation) return;
+    consolidationRetryRef.current = true;
+    setIsRetryingConsolidation(true);
+    try {
+      await invokeCommand(commandNames.cepRetryConsolidation);
+    } catch (error) {
+      if (statusMountedRef.current) {
+        showError(cepErrorMessage(error, "Não foi possível tentar a consolidação novamente."));
+      }
+    } finally {
+      if (statusMountedRef.current) await refreshExtensionStatus({ silent: true });
+      consolidationRetryRef.current = false;
+      if (statusMountedRef.current) setIsRetryingConsolidation(false);
+    }
+  };
 
   const selectZxpFile = async (path) => {
     const filePath = String(path || "").trim();
@@ -1682,7 +1690,7 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
               type="button"
               className="btn btn-outline"
               onClick={() => refreshExtensionStatus()}
-              disabled={isLoadingStatus || isInstalling}
+              disabled={isLoadingStatus || isInstalling || isRetryingConsolidation}
             >
               {isLoadingStatus ? "..." : "Atualizar"}
             </button>
@@ -1741,6 +1749,18 @@ function ExtensionSettingsPanel({ showError, showSuccess }) {
           <p className="settings-ext-note">
             {cepConsolidationMessage(extensionStatus)}
           </p>
+        ) : null}
+        {canRetryConsolidation ? (
+          <div className="settings-ext-card__header-actions">
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={retryConsolidation}
+              disabled={isLoadingStatus || isInstalling || isInspecting || isInstallConfirmOpen || isRetryingConsolidation}
+            >
+              {isRetryingConsolidation ? "Tentando..." : "Tentar novamente"}
+            </button>
+          </div>
         ) : null}
         {isDevLink && (
           <p className="settings-ext-note">
@@ -2559,7 +2579,10 @@ function cepErrorMessage(error, fallback = "Operação não concluída.") {
   }
   if (code === "cep_elevation_cancelled") return "A autorização de administrador foi cancelada. A instalação foi preservada.";
   if (code === "cep_consolidation_failed") {
-    return "A finalização da atualização ficou pendente. Confira o status e solicite suporte.";
+    return "A finalização da atualização ficou pendente. Confira a orientação no status da extensão.";
+  }
+  if (code === "cep_consolidation_development_mode") {
+    return "A consolidação automática fica desativada no aplicativo de desenvolvimento. Use a versão instalada do Arizona.";
   }
   if (code === "cep_zxp_changed") {
     return "O arquivo ZXP mudou depois da validação. Selecione o arquivo novamente para conferir e confirmar a versão correta.";

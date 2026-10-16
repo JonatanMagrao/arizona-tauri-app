@@ -3,11 +3,12 @@ import {
   getOfferByLayerIndex,
   openOfferSourceInViewer,
 } from "../layers/findLayers";
-import { generateOfferData } from "../snapshot/buildOfferSnapshot";
+import { generateOfferProductData } from "../snapshot/buildOfferSnapshot";
+import { withMechanicsSchema } from "../mechanics/schemaRuntime";
 import {
   assertOfferProductAssociation,
   createActionResult,
-  findOfferProductByIndex,
+  attachOfferUpdate,
 } from "./shared";
 
 export const replaceOfferProductImage = (
@@ -15,7 +16,7 @@ export const replaceOfferProductImage = (
   productIndex: number,
   filePath: string,
   openOfferPrecomp?: boolean
-): OfferEditorActionResult => {
+): OfferEditorActionResult => withMechanicsSchema(() => {
   const result = createActionResult();
   const offer = getOfferByLayerIndex(offerLayerIndex, result);
 
@@ -24,9 +25,7 @@ export const replaceOfferProductImage = (
   app.beginUndoGroup("Substituir imagem da oferta");
 
   try {
-    const details = generateOfferData(offer);
-    const product = findOfferProductByIndex(details.products, productIndex);
-    result.errors = details.errors.slice(0);
+    const product = generateOfferProductData(offer, productIndex, result.errors);
 
     if (!product) {
       throw new Error("Produto da oferta nao encontrado.");
@@ -60,6 +59,7 @@ export const replaceOfferProductImage = (
     result.ok = true;
     result.selectedOfferLayerIndex = offer.index;
     result.message = "Imagem da oferta substituida por " + footage.name + ".";
+    attachOfferUpdate(result, offer);
   } catch (error) {
     result.message =
       error instanceof Error
@@ -71,4 +71,4 @@ export const replaceOfferProductImage = (
   }
 
   return result;
-};
+});

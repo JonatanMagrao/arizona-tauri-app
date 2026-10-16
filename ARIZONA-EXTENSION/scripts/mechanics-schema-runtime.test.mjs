@@ -127,9 +127,10 @@ function installmentProduct(slot = 1) {
 function harness({ configured = true, products = [simpleProduct()] } = {}) {
   const templateAssets = createTemplateTestAssets({ mechanicLayers: false, offerLayers: false });
   const file = { bytes: Buffer.from(JSON.stringify(approved()), "utf8"), exists: true, readable: true, seekable: true,
-    reads: 0, opens: 0, closes: 0, seeks: [], encodingChanges: [], readError: "", readException: null };
+    reads: 0, opens: 0, closes: 0, seeks: [], paths: [], encodingChanges: [], readError: "", readException: null,
+    truncate: false, closeResult: true };
   class File {
-    constructor(filePath) { this.fsName = filePath; this.currentEncoding = ""; this.opened = false; this.currentError = ""; }
+    constructor(filePath) { this.fsName = filePath; file.paths.push(filePath); this.currentEncoding = ""; this.opened = false; this.currentError = ""; }
     get length() { return file.bytes.length; }
     get exists() { return this.fsName === schemaFilePath ? file.exists : true; }
     get error() { return this.currentError; }
@@ -144,9 +145,10 @@ function harness({ configured = true, products = [simpleProduct()] } = {}) {
       file.reads += 1;
       if (file.readException) throw file.readException;
       this.currentError = file.readError;
-      return file.bytes.toString("latin1");
+      const bytes = file.bytes.toString("latin1");
+      return file.truncate ? bytes.slice(0, -1) : bytes;
     }
-    close() { file.closes += 1; this.opened = false; return true; }
+    close() { file.closes += 1; this.opened = false; return file.closeResult; }
   }
   const legalText = new TextLayer("Texto Legal", "Legal existente");
   const cpf = effect("Limitado por CPF", 0, "ADBE Checkbox Control-0001");
@@ -271,6 +273,88 @@ test("a scope without mechanic reads stays lazy and does not open the schema fil
   assert.equal(h.file.opens, 0);
   assert.equal(h.file.reads, 0);
 });
+
+test("unchanged bytes reuse the validated schema across operations after a complete fresh read", () => {
+  const h = harness();
+  const first = h.withMechanicsSchema(() => h.getMechanicsSchema());
+  for (let index = 0; index < 4; index += 1) {
+    assert.equal(h.withMechanicsSchema(() => h.getMechanicsSchema()), first);
+  }
+  assert.equal(h.getMechanicsSchema(), first, "unscoped reads follow the same freshness rule");
+  assert.equal(h.file.reads, 6);
+  assert.equal(h.file.closes, 6);
+  assert.deepEqual(h.file.seeks, [0, 0, 0, 0, 0, 0]);
+});
+
+test("same-size edits and byte-only formatting changes invalidate the schema cache", () => {
+  const h = harness();
+  const first = h.getMechanicsSchema();
+  const size = h.file.bytes.length;
+  const edited = approved();
+  edited.SIMPLES.effects.unit.options[0].label = "Item";
+  writeSchema(h, edited);
+  assert.equal(h.file.bytes.length, size);
+  const second = h.withMechanicsSchema(() => h.getMechanicsSchema());
+  assert.notEqual(second, first);
+  assert.equal(second.SIMPLES.effects.unit.options[0].label, "Item");
+  h.file.bytes = Buffer.concat([Buffer.from(" "), h.file.bytes]);
+  const third = h.getMechanicsSchema();
+  assert.notEqual(third, second);
+  assert.deepEqual(plain(third), plain(second));
+  assert.equal(h.getMechanicsSchema(), third);
+});
+
+test("reconfiguring any schema path clears the previous validated cache", () => {
+  const h = harness();
+  let previous = h.getMechanicsSchema();
+  h.configureMechanicsSchemaPath("C:/other/schema.json");
+  const other = h.getMechanicsSchema();
+  assert.notEqual(other, previous);
+  assert.equal(h.file.paths.at(-1), "C:/other/schema.json");
+  for (const next of [schemaFilePath, "", "relative.json", null]) {
+    previous = h.getMechanicsSchema();
+    if (next === null || next === "relative.json") {
+      assert.throws(() => h.configureMechanicsSchemaPath(next));
+    } else h.configureMechanicsSchemaPath(next);
+    if (next !== schemaFilePath) assert.throws(() => h.getMechanicsSchema(), /configurado/);
+    h.configureMechanicsSchemaPath(schemaFilePath);
+    assert.notEqual(h.getMechanicsSchema(), previous);
+  }
+});
+
+test("snapshot DTO edits and native actions cannot mutate cached schema or identity objects", () => {
+  const product = installmentProduct();
+  const h = harness({ products: [product] });
+  const identities = h.load(path.resolve(domainDirectory, "../template/templateIdentities.ts"));
+  const schema = h.getMechanicsSchema();
+  const map = identities.getTemplateIdentities();
+  const originalSchema = JSON.stringify(schema);
+  const originalMap = JSON.stringify(map);
+  const snapshot = h.getOffersEditorSnapshot(1).selectedOffer.products[0];
+  snapshot.mechanic.optionGroups[0].options[0].label = "DTO only";
+  assert.equal(h.updateOfferField(1, 0, "preco", "41,90", 0).ok, true);
+  assert.equal(h.updateOfferOption(1, 0, "mechanicCondition", 0).ok, true);
+  assert.equal(h.updateOfferInstallmentJump(1, 0, "preco-cheio").ok, true);
+  assert.equal(h.getMechanicsSchema(), schema);
+  assert.equal(identities.getTemplateIdentities(), map);
+  assert.equal(JSON.stringify(schema), originalSchema);
+  assert.equal(JSON.stringify(map), originalMap);
+  assert.notEqual(h.getOffersEditorSnapshot(1).selectedOffer.products[0].mechanic.optionGroups[0].options[0].label, "DTO only");
+  assertUndoClosed(h);
+});
+
+for (const failure of ["truncate", "closeResult"]) {
+  test(`${failure}: even matching cached bytes cannot bypass an incomplete read or close failure`, () => {
+    const h = harness();
+    const previous = h.getMechanicsSchema();
+    h.file[failure] = failure === "truncate";
+    assert.throws(() => h.getMechanicsSchema(), /incompleta|fechar/);
+    h.file[failure] = failure !== "truncate";
+    assert.notEqual(h.getMechanicsSchema(), previous, "the failed read discarded the valid cache");
+    assert.equal(h.file.reads, 3);
+    assert.equal(h.file.closes, 3);
+  });
+}
 
 test("a field action pins its schema even when a native write edits the JSON before readback", () => {
   const h = harness();
