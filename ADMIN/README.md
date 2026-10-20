@@ -55,6 +55,28 @@ para obter esse efeito visual.
 O ajuste está somente na resposta da Edge Function e funciona nas versões já
 instaladas do app. Não exige migration nem nova versão do Tauri.
 
+### Permissão exclusiva para gerenciar gestores no app
+
+A identidade do app `jonatan.silva.ext@arizona.global` tem uma concessão explícita
+para liberar dispositivos, emitir códigos para outros gestores e removê-los na
+própria organização. `app-management-permissions.ts` fixa o UUID do usuário Auth,
+o membro, a organização e os e-mails autenticado e cadastrado. A concessão exige
+membro `admin` ativo e sessão originada por código de ativação (`otp`/`magiclink`),
+sem OAuth; recriar uma conta com o mesmo e-mail não transfere a permissão.
+
+`admin-list-members` informa `canManageManagers` e os endpoints
+`admin-release-device`, `admin-generate-activation-code` e `admin-remove-member`
+repetem a mesma autorização. Os outros gestores mantêm as restrições atuais.
+O ator continua sendo membro da organização: não pode remover a si mesmo,
+emitir código para si nem administrar uma identidade master pelo app. Validade,
+intervalos de troca, rate limits e auditoria continuam sendo aplicados.
+
+Essa identidade do app é separada do login master Google. A concessão não cria
+uma conta master global, não muda `members.role`, não permite nomear gestores e
+não altera o OAuth exigido pelos endpoints `master-*` ou pelo painel web.
+O rótulo mostrado pelo app continua sendo **Gestor**. Não há migration, alteração
+de secrets nem atualização do Tauri; publique somente os quatro endpoints acima.
+
 Fluxo atual:
 
 1. Criar o usuÃ¡rio master no Supabase Auth e vinculÃ¡-lo explicitamente em

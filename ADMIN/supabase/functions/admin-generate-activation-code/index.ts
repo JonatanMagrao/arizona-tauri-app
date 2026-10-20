@@ -11,6 +11,7 @@ import {
   requirePublishableKey,
 } from "../_shared/supabase.ts";
 import { resolveMaster, resolveMember } from "../_shared/actors.ts";
+import { canManageManagersFromApp } from "../_shared/app-management-permissions.ts";
 import {
   ACCESS_POLICY_SELECT,
   accessPolicy,
@@ -23,6 +24,7 @@ import {
   adminGoogleOAuthNotBefore,
   enforceRateLimit,
   hasOAuthSignIn,
+  jwtClaims,
   rateLimitResponse,
   requestIp,
   requireRecentGoogleOAuth,
@@ -74,6 +76,8 @@ Deno.serve(async (req) => {
     if (!actor || (actor.kind === "member" && actor.role !== "admin")) {
       return errorResponse("forbidden", "Access denied.", 403);
     }
+    const canManageManagers = actor.kind === "master"
+      || canManageManagersFromApp(user, actor, jwtClaims(req));
 
     const { data: organization, error: organizationError } = await admin
       .schema("licensing")
@@ -112,7 +116,7 @@ Deno.serve(async (req) => {
     if (!target || !["invited", "active"].includes(target.status)) {
       return errorResponse("member_not_found", "Member was not found.", 404);
     }
-    if (actor.kind === "member" && (target.role === "admin" || target.id === actor.id)) {
+    if (actor.kind === "member" && (target.id === actor.id || (!canManageManagers && target.role === "admin"))) {
       return errorResponse("forbidden", "Managers cannot issue codes for this account.", 403);
     }
     // A gestor minting a code in a master identity's name would only ever
@@ -230,6 +234,9 @@ Deno.serve(async (req) => {
     }
     if (message === "invalid_user_token" || message === "missing_bearer_token") {
       return errorResponse("invalid_user_token", "Session is invalid.", 401);
+    }
+    if (message === "invalid_publishable_key") {
+      return errorResponse("invalid_publishable_key", "Invalid publishable key.", 401);
     }
     return errorResponse("internal_error", "Unable to generate an activation code.", 500);
   }

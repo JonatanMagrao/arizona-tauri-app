@@ -11,6 +11,7 @@ import {
   requirePublishableKey,
 } from "../_shared/supabase.ts";
 import { resolveMaster, resolveMember } from "../_shared/actors.ts";
+import { canManageManagersFromApp } from "../_shared/app-management-permissions.ts";
 import {
   ACCESS_POLICY_SELECT,
   accessPolicy,
@@ -21,6 +22,7 @@ import {
   adminGoogleOAuthNotBefore,
   enforceRateLimit,
   hasOAuthSignIn,
+  jwtClaims,
   rateLimitResponse,
   requireRecentGoogleOAuth,
 } from "../_shared/security.ts";
@@ -61,6 +63,8 @@ Deno.serve(async (req) => {
     if (!actor || (actor.kind === "member" && actor.role !== "admin")) {
       return errorResponse("forbidden", "Only masters or organization admins can release devices.", 403);
     }
+    const canManageManagers = actor.kind === "master"
+      || canManageManagersFromApp(user, actor, jwtClaims(req));
 
     const { data: organization, error: organizationError } = await admin
       .schema("licensing")
@@ -97,7 +101,7 @@ Deno.serve(async (req) => {
     if (memberError) throw memberError;
     if (!member) return errorResponse("member_not_found", "Member was not found.", 404);
 
-    if (actor.kind === "member" && member.role === "admin" && member.id !== actor.id) {
+    if (!canManageManagers && member.role === "admin" && actor.kind === "member" && member.id !== actor.id) {
       return errorResponse("forbidden", "Organization admins cannot release manager devices.", 403);
     }
     if (actor.kind === "member" && member.id !== actor.id) {

@@ -41,7 +41,9 @@ export function signedInAt(req: Request): Date | null {
 
 // A Google OAuth session comes from the standalone ADMIN panel, where a master
 // wields master powers. A Tauri activation session never carries an oauth AMR,
-// so a master identity using the app acts as a regular org admin there.
+// so it normally acts as a regular org admin. The explicit, identity-pinned
+// app management grant lives in app-management-permissions.ts and does not
+// change the OAuth requirement of standalone master endpoints.
 export function hasOAuthSignIn(req: Request): boolean {
   return authMethodAt(jwtClaims(req), "oauth") !== null;
 }

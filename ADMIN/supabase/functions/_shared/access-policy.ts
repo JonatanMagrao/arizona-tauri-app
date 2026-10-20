@@ -1,16 +1,6 @@
-export const ACCESS_POLICY_SELECT = [
-  "activation_code_ttl_minutes",
-  "activation_attempt_limit",
-  "activation_attempt_window_minutes",
-  "activation_generation_limit",
-  "activation_generation_window_minutes",
-  "device_release_limit",
-  "device_release_window_minutes",
-  "device_switch_interval_days",
-  "device_switch_cooldown_days",
-  "device_switch_cooldown_minutes",
-  "device_recovery_window_minutes",
-].join(",");
+// Keep a literal type so Supabase can infer fields in interpolated selects.
+export const ACCESS_POLICY_SELECT =
+  "activation_code_ttl_minutes,activation_attempt_limit,activation_attempt_window_minutes,activation_generation_limit,activation_generation_window_minutes,device_release_limit,device_release_window_minutes,device_switch_interval_days,device_switch_cooldown_days,device_switch_cooldown_minutes,device_recovery_window_minutes";
 
 export type AccessPolicy = {
   activationCodeTtlMinutes: number;

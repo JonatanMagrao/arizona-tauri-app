@@ -180,6 +180,35 @@ isenta. O gestor autenticado que consome vaga sai tanto do total exibido quanto
 do consumo exibido; a disponibilidade permanece igual à calculada pelo banco.
 Não há migration, alteração de secrets ou atualização do Tauri para esse ajuste.
 
+### Concessão exclusiva de gestão pelo app
+
+`_shared/app-management-permissions.ts` contém a concessão explícita para a
+identidade existente de `jonatan.silva.ext@arizona.global`. Ela fixa Auth UUID,
+membro e organização, exige ambos os e-mails conferidos no servidor, membro
+gestor ativo e sessão de ativação sem OAuth. A capacidade é exclusiva da Gestão
+daquela organização; os endpoints `master-*` continuam exigindo Google OAuth.
+Suspender/revogar o membro ou retirar seu papel de gestor desabilita a concessão.
+
+A interface já entende `canManageManagers`; o backend aplica a mesma regra às
+ações de liberar dispositivo, gerar código e remover outro gestor, preservando
+as proteções do próprio usuário e das identidades master, intervalos e limites.
+Nenhuma chave, secret, migration ou atualização do app é necessária.
+
+Após `npm test`, publique explicitamente os endpoints, preservando o
+`verify_jwt` de produção (`true` para listagem; `false` para as três ações):
+
+```powershell
+cd ADMIN
+npx supabase functions deploy admin-release-device --project-ref nizchnscqkixawqxrwzd --use-api --no-verify-jwt
+npx supabase functions deploy admin-generate-activation-code --project-ref nizchnscqkixawqxrwzd --use-api --no-verify-jwt
+npx supabase functions deploy admin-remove-member --project-ref nizchnscqkixawqxrwzd --use-api --no-verify-jwt
+npx supabase functions deploy admin-list-members --project-ref nizchnscqkixawqxrwzd --use-api
+```
+
+Publique as ações antes da listagem para só habilitar os botões quando todas as
+operações já aceitarem a concessão. Confirme `ACTIVE` e `verify_jwt` com
+`supabase functions list` após a publicação.
+
 ### Fila distribuida de renderizacao
 
 A fila usa as migrations aditivas `20260811160000_render_queue.sql`,

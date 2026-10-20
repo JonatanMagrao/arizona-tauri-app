@@ -11,11 +11,13 @@ import {
   requirePublishableKey,
 } from "../_shared/supabase.ts";
 import { resolveMaster, resolveMember } from "../_shared/actors.ts";
+import { canManageManagersFromApp } from "../_shared/app-management-permissions.ts";
 import { managementSeatCounter } from "../_shared/management-seat-counter.ts";
 import {
   adminGoogleOAuthNotBefore,
   enforceRateLimit,
   hasOAuthSignIn,
+  jwtClaims,
   requireRecentGoogleOAuth,
 } from "../_shared/security.ts";
 
@@ -49,6 +51,8 @@ Deno.serve(async (req) => {
     if (!actor || (actor.kind === "member" && actor.role !== "admin")) {
       return errorResponse("forbidden", "Only masters or organization admins can list members.", 403);
     }
+    const canManageManagers = actor.kind === "master"
+      || canManageManagersFromApp(user, actor, jwtClaims(req));
 
     const { data: organization, error: organizationError } = await admin
       .schema("licensing")
@@ -128,7 +132,7 @@ Deno.serve(async (req) => {
         licenseExpiresOn: organization.license_expires_on,
       },
       currentMemberId: actor.kind === "member" ? actor.id : null,
-      canManageManagers: actor.kind === "master",
+      canManageManagers,
       users,
       consumedSeats: seatCounter.consumedSeats,
       availableSeats: seatCounter.availableSeats,

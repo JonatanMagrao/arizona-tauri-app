@@ -11,11 +11,13 @@ import {
   requirePublishableKey,
 } from "../_shared/supabase.ts";
 import { resolveMaster, resolveMember } from "../_shared/actors.ts";
+import { canManageManagersFromApp } from "../_shared/app-management-permissions.ts";
 import { clearDeviceBindGrant } from "../_shared/device-bind-grant.ts";
 import {
   adminGoogleOAuthNotBefore,
   enforceRateLimit,
   hasOAuthSignIn,
+  jwtClaims,
   requireRecentGoogleOAuth,
 } from "../_shared/security.ts";
 
@@ -53,6 +55,8 @@ Deno.serve(async (req) => {
     if (!actor || (actor.kind === "member" && actor.role !== "admin")) {
       return errorResponse("forbidden", "Only masters or organization admins can remove members.", 403);
     }
+    const canManageManagers = actor.kind === "master"
+      || canManageManagersFromApp(user, actor, jwtClaims(req));
 
     const { data: organization, error: organizationError } = await admin
       .schema("licensing")
@@ -92,7 +96,7 @@ Deno.serve(async (req) => {
     if (memberError) throw memberError;
     if (!member) return errorResponse("member_not_found", "Member was not found.", 404);
 
-    if (actor.kind === "member" && member.role === "admin") {
+    if (!canManageManagers && member.role === "admin") {
       return errorResponse("forbidden", "Organization admins cannot remove managers.", 403);
     }
     if (actor.kind === "member") {

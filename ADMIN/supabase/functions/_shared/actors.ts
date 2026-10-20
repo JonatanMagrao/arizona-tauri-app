@@ -13,6 +13,7 @@ export type MemberActor = {
   organizationId: string;
   email: string;
   role: "admin" | "user";
+  status: "invited" | "active";
 };
 
 export async function resolveMaster(admin: SupabaseClient, user: AuthUser): Promise<MasterActor | null> {
@@ -73,5 +74,6 @@ export async function resolveMember(
     organizationId: data.organization_id,
     email: data.email,
     role: data.role,
+    status: data.status,
   };
 }

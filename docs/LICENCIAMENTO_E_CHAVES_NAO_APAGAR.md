@@ -477,6 +477,17 @@ somente os eventos de rate limit atribuíveis ao ID, e-mail e identidade de ator
 daquele membro. Ela não muda a configuração das políticas, não remove dados de
 acesso e preserva os limites globais de IP e de outros atores.
 
+A Gestão do Tauri tem uma concessão explícita para a identidade existente de
+`jonatan.silva.ext@arizona.global`, definida em
+`ADMIN/supabase/functions/_shared/app-management-permissions.ts`. Ela exige os
+UUIDs fixados de Auth, membro e organização, ambos os e-mails conferidos pelo
+servidor, membro gestor ativo e sessão por código de ativação sem OAuth. Permite
+gerenciar outros gestores da mesma organização nas ações já disponíveis na
+Gestão (liberar dispositivo, gerar código e remover), preservando proteções de
+identidades master, do próprio usuário, intervalos e limites. O ator permanece
+um membro; as demais contas e os endpoints master mantêm suas regras de OAuth.
+Essa concessão não altera chaves, recibos, papéis do banco nem o app distribuído.
+
 O ciclo de autenticação diária é separado do refresh token do Supabase. Cada
 licença possui `daily_auth_reset_hour`, configurável no painel Admin como
 “Renovação diária”, em `America/Sao_Paulo`. O padrão é `04:00`; horários
