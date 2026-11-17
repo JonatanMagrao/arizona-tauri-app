@@ -496,10 +496,17 @@ anteriores ao corte ainda pertencem ao ciclo do dia anterior. A Edge Function
 próximo corte ou da validade da licença.
 
 `validate-license` também recusa com `clock_suspicious` diferenças ou
-retrocessos de relógio superiores a cinco minutos. A evidência permanece em
-`licensing.clock_audits`, separada da auditoria administrativa, e as ocorrências
-`suspicious` aparecem para a conta master na view somente leitura
-`licensing.activity_log`. Repetições do mesmo estado são limitadas a uma por
+retrocessos de relógio superiores à tolerância da licença. O painel Admin
+configura esse valor em **Políticas de acesso > Relógio do computador**, pelo
+campo **Tolerância do relógio**, em minutos inteiros de 1 a 1.440. A coluna
+`licensing.organizations.clock_tolerance_minutes` usa 60 minutos como padrão,
+inclusive para licenças existentes. A mesma tolerância vale para adiantamento,
+atraso e retrocesso. Ela passa a valer na próxima validação, com os aplicativos
+já instalados.
+
+A evidência permanece em `licensing.clock_audits`, separada da auditoria
+administrativa, e as ocorrências `suspicious` aparecem para a conta master na
+view somente leitura `licensing.activity_log`. Repetições do mesmo estado são limitadas a uma por
 hora por dispositivo. Uma falha ao gravar essa observabilidade é registrada nos
 logs da Function, mas nunca muda nem bloqueia a decisão de licenciamento.
 

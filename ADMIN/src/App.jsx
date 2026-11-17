@@ -114,6 +114,20 @@ const accessPolicyGroups = [
     ],
   },
   {
+    title: "Relógio do computador",
+    description: "Margem permitida para diferenças no horário informado pelo computador.",
+    fields: [
+      {
+        key: "clockToleranceMinutes",
+        label: "Tolerância do relógio",
+        unit: "min",
+        min: 1,
+        max: 1440,
+        description: "Limite, em minutos, para adiantamento, atraso e retrocesso do relógio.",
+      },
+    ],
+  },
+  {
     title: "Troca de máquina",
     description: "Limites para liberar um dispositivo e cadastrar outro.",
     fields: [
@@ -159,6 +173,7 @@ const productionAccessPolicy = {
   activationAttemptWindowMinutes: "60",
   activationGenerationLimit: "3",
   activationGenerationWindowMinutes: "60",
+  clockToleranceMinutes: "60",
   deviceReleaseLimit: "10",
   deviceReleaseWindowMinutes: "60",
   deviceSwitchIntervalDays: "7",
@@ -170,6 +185,7 @@ const testAccessPolicy = {
   activationAttemptWindowMinutes: "5",
   activationGenerationLimit: "10",
   activationGenerationWindowMinutes: "5",
+  clockToleranceMinutes: "60",
   deviceReleaseLimit: "20",
   deviceReleaseWindowMinutes: "5",
   deviceSwitchIntervalDays: "0",
@@ -1249,6 +1265,7 @@ export default function AdminApp() {
       activationGenerationWindowMinutes: String(
         data.organization?.activation_generation_window_minutes ?? 60,
       ),
+      clockToleranceMinutes: String(data.organization?.clock_tolerance_minutes ?? 60),
       deviceReleaseLimit: String(data.organization?.device_release_limit ?? 10),
       deviceReleaseWindowMinutes: String(
         data.organization?.device_release_window_minutes ?? 60,
@@ -2586,7 +2603,7 @@ function AccessPolicyPage({
           <span className="eyebrow">Segurança e limites</span>
           <h2 id="policyPageTitle">Políticas de acesso</h2>
           <p>
-            Controle a geração de códigos, as tentativas de ativação e a troca de dispositivos.
+            Controle códigos de acesso, tentativas de ativação, tolerância do relógio e troca de dispositivos.
           </p>
         </div>
         <div className="policy-page__save-state">

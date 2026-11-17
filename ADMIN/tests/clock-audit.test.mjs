@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { stripTypeScriptTypes } from "node:module";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
+import { accessPolicy } from "../supabase/functions/_shared/access-policy.ts";
 import {
   boundedClockSkewSeconds,
   CLOCK_AUDIT_INTERVAL_MS,
@@ -10,6 +12,107 @@ import {
 } from "../supabase/functions/_shared/clock-audit.ts";
 
 const nowMillis = Date.parse("2026-08-24T12:00:00.000Z");
+const validateLicenseSource = readFileSync(
+  new URL("../supabase/functions/validate-license/index.ts", import.meta.url),
+  "utf8",
+);
+
+// Execute the endpoint's actual clock checks without its network calls or
+// Deno server. Keep the production policy and date parsing in this fixture.
+const parseDateStart = validateLicenseSource.indexOf("function parseDate(");
+const parseDateEnd = validateLicenseSource.indexOf("\nDeno.serve(", parseDateStart);
+const clockChecksStart = validateLicenseSource.indexOf("    const clockToleranceSeconds =");
+const clockChecksEnd = validateLicenseSource.indexOf("\n    await admin", clockChecksStart);
+assert.ok(parseDateStart >= 0 && parseDateEnd > parseDateStart);
+assert.ok(clockChecksStart >= 0 && clockChecksEnd > clockChecksStart);
+const clockCheckSource = stripTypeScriptTypes([
+  validateLicenseSource.slice(parseDateStart, parseDateEnd),
+  validateLicenseSource.slice(clockChecksStart, clockChecksEnd),
+].join("\n"));
+const evaluateClock = new Function(
+  "accessPolicy",
+  "body",
+  "now",
+  "organization = {}",
+  `${clockCheckSource}\nreturn { clockStatus, clockSkewSeconds };`,
+).bind(null, accessPolicy);
+
+function clockTime(offsetSeconds) {
+  return new Date(nowMillis + offsetSeconds * 1000).toISOString();
+}
+
+test("license validation accepts clock differences through one hour in either direction", () => {
+  for (const offsetSeconds of [-3600, -627, 0, 627, 3600]) {
+    assert.deepEqual(
+      evaluateClock({ clientLocalTime: clockTime(offsetSeconds) }, new Date(nowMillis)),
+      { clockStatus: "ok", clockSkewSeconds: offsetSeconds },
+      `clock offset ${offsetSeconds}s`,
+    );
+  }
+});
+
+test("license validation rejects clocks more than one hour ahead or behind", () => {
+  for (const offsetSeconds of [-3601, 3601]) {
+    assert.deepEqual(
+      evaluateClock({ clientLocalTime: clockTime(offsetSeconds) }, new Date(nowMillis)),
+      { clockStatus: "suspicious", clockSkewSeconds: offsetSeconds },
+      `clock offset ${offsetSeconds}s`,
+    );
+  }
+});
+
+test("license validation allows one hour of rollback against each saved clock marker", () => {
+  for (const marker of ["lastLocalTimeSeen", "lastServerTimeSeen"]) {
+    for (const secondsAhead of [627, 3600, 3601]) {
+      assert.deepEqual(
+        evaluateClock({
+          clientLocalTime: clockTime(0),
+          [marker]: clockTime(secondsAhead),
+        }, new Date(nowMillis)),
+        {
+          clockStatus: secondsAhead > 3600 ? "suspicious" : "ok",
+          clockSkewSeconds: 0,
+        },
+        `${marker} ${secondsAhead}s ahead of the current clock`,
+      );
+    }
+  }
+});
+
+test("license validation applies the configured tolerance to offsets and saved clock markers", () => {
+  for (const minutes of [1, 5, 15, 120, 1440]) {
+    const organization = { clock_tolerance_minutes: minutes };
+    const boundarySeconds = minutes * 60;
+    for (const direction of [-1, 1]) {
+      for (const excessSeconds of [0, 1]) {
+        const offsetSeconds = direction * (boundarySeconds + excessSeconds);
+        assert.deepEqual(
+          evaluateClock({ clientLocalTime: clockTime(offsetSeconds) }, new Date(nowMillis), organization),
+          {
+            clockStatus: excessSeconds ? "suspicious" : "ok",
+            clockSkewSeconds: offsetSeconds,
+          },
+          `${minutes}min tolerance, offset ${offsetSeconds}s`,
+        );
+      }
+    }
+    for (const marker of ["lastLocalTimeSeen", "lastServerTimeSeen"]) {
+      for (const excessSeconds of [0, 1]) {
+        assert.deepEqual(
+          evaluateClock({
+            clientLocalTime: clockTime(0),
+            [marker]: clockTime(boundarySeconds + excessSeconds),
+          }, new Date(nowMillis), organization),
+          {
+            clockStatus: excessSeconds ? "suspicious" : "ok",
+            clockSkewSeconds: 0,
+          },
+          `${minutes}min tolerance, ${marker} ${boundarySeconds + excessSeconds}s ahead`,
+        );
+      }
+    }
+  }
+});
 
 function decision(overrides = {}) {
   return shouldRecordClockAudit({

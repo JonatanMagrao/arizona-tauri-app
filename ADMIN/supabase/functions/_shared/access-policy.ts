@@ -1,6 +1,6 @@
 // Keep a literal type so Supabase can infer fields in interpolated selects.
 export const ACCESS_POLICY_SELECT =
-  "activation_code_ttl_minutes,activation_attempt_limit,activation_attempt_window_minutes,activation_generation_limit,activation_generation_window_minutes,device_release_limit,device_release_window_minutes,device_switch_interval_days,device_switch_cooldown_days,device_switch_cooldown_minutes,device_recovery_window_minutes";
+  "activation_code_ttl_minutes,activation_attempt_limit,activation_attempt_window_minutes,activation_generation_limit,activation_generation_window_minutes,device_release_limit,device_release_window_minutes,device_switch_interval_days,device_switch_cooldown_days,device_switch_cooldown_minutes,device_recovery_window_minutes,clock_tolerance_minutes";
 
 export type AccessPolicy = {
   activationCodeTtlMinutes: number;
@@ -12,6 +12,7 @@ export type AccessPolicy = {
   deviceReleaseWindowMinutes: number;
   deviceSwitchIntervalDays: number;
   deviceRecoveryWindowMinutes: number;
+  clockToleranceMinutes: number;
 };
 
 export const DEFAULT_ACCESS_POLICY: AccessPolicy = Object.freeze({
@@ -24,6 +25,7 @@ export const DEFAULT_ACCESS_POLICY: AccessPolicy = Object.freeze({
   deviceReleaseWindowMinutes: 60,
   deviceSwitchIntervalDays: 7,
   deviceRecoveryWindowMinutes: 15,
+  clockToleranceMinutes: 60,
 });
 
 type PolicyRow = Record<string, unknown> | null | undefined;
@@ -106,6 +108,12 @@ export function accessPolicy(row: PolicyRow): AccessPolicy {
       5,
       60,
     ),
+    clockToleranceMinutes: boundedInteger(
+      row?.clock_tolerance_minutes,
+      DEFAULT_ACCESS_POLICY.clockToleranceMinutes,
+      1,
+      1440,
+    ),
   };
 }
 
@@ -120,5 +128,6 @@ export function accessPolicyColumns(policy: AccessPolicy): Record<string, number
     device_release_window_minutes: policy.deviceReleaseWindowMinutes,
     device_switch_interval_days: policy.deviceSwitchIntervalDays,
     device_recovery_window_minutes: policy.deviceRecoveryWindowMinutes,
+    clock_tolerance_minutes: policy.clockToleranceMinutes,
   };
 }

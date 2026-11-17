@@ -11,6 +11,7 @@ import {
   requirePublishableKey,
 } from "../_shared/supabase.ts";
 import { resolveMaster, resolveMember } from "../_shared/actors.ts";
+import { accessPolicy } from "../_shared/access-policy.ts";
 import {
   licenseExpiryInstant,
   nextAuthDayStart,
@@ -39,8 +40,6 @@ type ValidateLicenseBody = {
   lastLocalTimeSeen?: unknown;
 };
 
-const MAX_CLOCK_BACKWARDS_SECONDS = 300;
-const MAX_CLOCK_SKEW_SECONDS = 300;
 const ARIZONA_ORGANIZATION_SLUG = "arizona";
 
 function cleanString(value: unknown, maxLength: number): string {
@@ -108,7 +107,7 @@ Deno.serve(async (req) => {
       .schema("licensing")
       .from("organizations")
       .select(
-        "id,name,status,seats_allowed,license_expires_on,daily_auth_reset_hour,receipt_ttl_seconds",
+        "id,name,status,seats_allowed,license_expires_on,daily_auth_reset_hour,receipt_ttl_seconds,clock_tolerance_minutes",
       )
       .eq("id", member.organizationId)
       .maybeSingle();
@@ -230,6 +229,7 @@ Deno.serve(async (req) => {
       return errorResponse("device_not_active", "Device identity mismatch.", 403);
     }
 
+    const clockToleranceSeconds = accessPolicy(organization).clockToleranceMinutes * 60;
     const clientLocalTime = parseDate(body.clientLocalTime);
     const lastServerTimeSeen = parseDate(body.lastServerTimeSeen);
     const lastLocalTimeSeen = parseDate(body.lastLocalTimeSeen);
@@ -239,20 +239,20 @@ Deno.serve(async (req) => {
     if (clientLocalTime) {
       clockSkewSeconds = Math.round((clientLocalTime.getTime() - now.getTime()) / 1000);
     }
-    if (clockSkewSeconds !== null && Math.abs(clockSkewSeconds) > MAX_CLOCK_SKEW_SECONDS) {
+    if (clockSkewSeconds !== null && Math.abs(clockSkewSeconds) > clockToleranceSeconds) {
       clockStatus = "suspicious";
     }
     if (
       lastLocalTimeSeen
       && clientLocalTime
-      && clientLocalTime.getTime() + MAX_CLOCK_BACKWARDS_SECONDS * 1000 < lastLocalTimeSeen.getTime()
+      && clientLocalTime.getTime() + clockToleranceSeconds * 1000 < lastLocalTimeSeen.getTime()
     ) {
       clockStatus = "suspicious";
     }
     if (
       lastServerTimeSeen
       && clientLocalTime
-      && clientLocalTime.getTime() + MAX_CLOCK_BACKWARDS_SECONDS * 1000 < lastServerTimeSeen.getTime()
+      && clientLocalTime.getTime() + clockToleranceSeconds * 1000 < lastServerTimeSeen.getTime()
     ) {
       clockStatus = "suspicious";
     }

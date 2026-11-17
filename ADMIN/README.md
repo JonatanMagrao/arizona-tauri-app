@@ -38,6 +38,23 @@ npm run preview
 Abra a URL mostrada pelo Vite. A porta inicial do preview e `1431`.
 Ela tambÃ©m Ã© fixa pela configuraÃ§Ã£o de redirect OAuth.
 
+### Tolerância do relógio
+
+Em **Políticas de acesso > Relógio do computador**, o campo **Tolerância do
+relógio** aceita de 1 a 1.440 minutos. O padrão é 60 minutos, tanto para
+licenças existentes quanto novas. A tolerância vale para adiantamento, atraso
+e retrocesso do relógio do computador.
+
+Use **Aplicar à licença** e depois **Salvar alterações** em **Licença e
+usuários**. O valor salvo passa a valer na próxima validação dos aplicativos
+instalados.
+
+O backend lê `licensing.organizations.clock_tolerance_minutes`. A migration
+`20261117180000_configurable_clock_tolerance.sql` deve ser aplicada antes de
+publicar `master-get-license`, `master-create-organization` e
+`validate-license`. Clientes antigos do Admin que omitem o campo ao salvar
+uma licença existente preservam sua tolerância atual.
+
 ### Contador de vagas na Gestão do app
 
 `admin-list-members` apresenta as vagas da equipe sem contar a própria vaga do

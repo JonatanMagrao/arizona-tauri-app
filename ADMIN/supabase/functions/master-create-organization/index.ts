@@ -41,6 +41,7 @@ type CreateOrganizationBody = {
   deviceSwitchCooldownDays?: unknown;
   deviceSwitchCooldownMinutes?: unknown;
   deviceRecoveryWindowMinutes?: unknown;
+  clockToleranceMinutes?: unknown;
   users?: unknown;
   managers?: unknown;
   adminName?: unknown;
@@ -108,6 +109,15 @@ function cleanLicenseUsers(body: CreateOrganizationBody): LicenseUserInput[] {
 }
 
 function parseAccessPolicy(body: CreateOrganizationBody): AccessPolicy | null {
+  const clockTolerance = body.clockToleranceMinutes;
+  if (
+    clockTolerance !== undefined
+    && (
+      (typeof clockTolerance !== "number" && typeof clockTolerance !== "string")
+      || (typeof clockTolerance === "string" && !clockTolerance.trim())
+    )
+  ) return null;
+
   const values = {
     activation_code_ttl_minutes: Number(
       body.activationCodeTtlMinutes ?? DEFAULT_ACCESS_POLICY.activationCodeTtlMinutes,
@@ -143,6 +153,9 @@ function parseAccessPolicy(body: CreateOrganizationBody): AccessPolicy | null {
     ),
     device_recovery_window_minutes: Number(
       body.deviceRecoveryWindowMinutes ?? DEFAULT_ACCESS_POLICY.deviceRecoveryWindowMinutes,
+    ),
+    clock_tolerance_minutes: Number(
+      clockTolerance ?? DEFAULT_ACCESS_POLICY.clockToleranceMinutes,
     ),
   };
   const policy = accessPolicy(values);
@@ -318,13 +331,19 @@ Deno.serve(async (req) => {
     // Saving the license must never touch the status: it is owned by
     // master-set-organization-status, and writing it back here — even with the
     // value read moments ago — could silently lift a concurrent suspension.
+    const policyColumns = accessPolicyColumns(policy);
+    if (existingOrganization && body.clockToleranceMinutes === undefined) {
+      // Older Admin clients omit this field. Leave it out of the UPDATE so a
+      // concurrent policy change is preserved as well as the value read above.
+      delete policyColumns.clock_tolerance_minutes;
+    }
     const organizationColumns = {
       name,
       seats_allowed: seatsAllowed,
       allowed_email_domain: allowedEmailDomain,
       license_expires_on: licenseExpiresOn,
       daily_auth_reset_hour: dailyAuthResetHour,
-      ...accessPolicyColumns(policy),
+      ...policyColumns,
       created_by_master_id: master.id,
     };
     const organizationSelect =
@@ -488,7 +507,7 @@ Deno.serve(async (req) => {
       allowedEmailDomain,
       licenseExpiresOn,
       dailyAuthResetHour,
-      accessPolicy: policy,
+      accessPolicy: accessPolicy(organization),
       status: organization.status,
     };
     const auditRows: Record<string, unknown>[] = [
